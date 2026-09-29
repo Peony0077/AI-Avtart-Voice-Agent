@@ -19,7 +19,8 @@ from pathlib import Path
 import websockets
 
 ROOT = Path(__file__).resolve().parents[1]
-DECLINE = re.compile(r"don't have|do not have|not (?:in|mentioned|included|available|listed|specified)|no information|couldn't find|can't find|isn't in", re.I)
+DECLINE = re.compile(r"don't have|do not have|does not have|doesn't have|not (?:in|mentioned|included|available|listed|specified)"
+                     r"|no information|couldn't find|can't find|isn't in|\bnot\b.{0,40}\blisted\b", re.I)
 
 
 async def ask(ws, text: str) -> dict:

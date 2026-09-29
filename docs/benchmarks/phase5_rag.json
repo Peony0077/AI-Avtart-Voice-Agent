@@ -1,0 +1,117 @@
+{
+  "summary": {
+    "questions": 8,
+    "passed": 8,
+    "embed_ms_p50": 20.049999999999997,
+    "search_ms_p50": 5.85,
+    "retrieval_ms_max": 66.6
+  },
+  "rows": [
+    {
+      "question": "What are the opening hours of the Moonlight Bakery on Sundays?",
+      "ok": true,
+      "expected_source": "moonlight_bakery.md",
+      "cited": [
+        "moonlight_bakery.md",
+        "moonlight_bakery.md"
+      ],
+      "top_score": 0.886,
+      "embed_ms": 19.4,
+      "search_ms": 6.5,
+      "first_text_ms": 605.6,
+      "reply": "On Sundays, Moonlight Bakery is open from 9:00 to 13:00."
+    },
+    {
+      "question": "How much is the equipment allowance at Orion Labs?",
+      "ok": true,
+      "expected_source": "orion_remote_work_policy.docx",
+      "cited": [
+        "orion_remote_work_policy.docx"
+      ],
+      "top_score": 0.885,
+      "embed_ms": 17.5,
+      "search_ms": 5.7,
+      "first_text_ms": 192.2,
+      "reply": "Orion Labs offers a one-time equipment allowance of 450 euros every two years for items like a desk, chair, or monitor. Receipts must be submitted within 30 days."
+    },
+    {
+      "question": "How do I pair the Aurora X2 lamp?",
+      "ok": true,
+      "expected_source": "aurora_x2_manual.pdf",
+      "cited": [
+        "aurora_x2_manual.pdf"
+      ],
+      "top_score": 0.853,
+      "embed_ms": 22.9,
+      "search_ms": 5.5,
+      "first_text_ms": 261.0,
+      "reply": "Hold the power button for seven seconds until the light blinks purple three times. Then open the Aurora app and select the lamp within two minutes."
+    },
+    {
+      "question": "How long is the Riverton Ridge Trail?",
+      "ok": true,
+      "expected_source": "riverton_trail.txt",
+      "cited": [
+        "riverton_trail.txt"
+      ],
+      "top_score": 0.855,
+      "embed_ms": 19.9,
+      "search_ms": 5.2,
+      "first_text_ms": 242.8,
+      "reply": "The Riverton Ridge Trail is 11.4 kilometres long with 380 metres of elevation gain. Most hikers complete it in about four hours."
+    },
+    {
+      "question": "Who founded the Moonlight Bakery?",
+      "ok": true,
+      "expected_source": "moonlight_bakery.md",
+      "cited": [
+        "moonlight_bakery.md",
+        "moonlight_bakery.md"
+      ],
+      "top_score": 0.811,
+      "embed_ms": 60.1,
+      "search_ms": 6.5,
+      "first_text_ms": 460.3,
+      "reply": "Moonlight Bakery was founded in 2011 by Amara Okafor, who still bakes the morning bread herself."
+    },
+    {
+      "question": "What are the core hours for remote employees at Orion Labs?",
+      "ok": true,
+      "expected_source": "orion_remote_work_policy.docx",
+      "cited": [
+        "orion_remote_work_policy.docx",
+        "orion_remote_work_policy.docx"
+      ],
+      "top_score": 0.771,
+      "embed_ms": 20.2,
+      "search_ms": 6.0,
+      "first_text_ms": 245.5,
+      "reply": "Remote employees at Orion Labs must be available during core hours from 10:00 to 15:00 Riverton time."
+    },
+    {
+      "question": "What is the Wi-Fi password of the Moonlight Bakery?",
+      "ok": true,
+      "expected_source": null,
+      "cited": [
+        "moonlight_bakery.md",
+        "moonlight_bakery.md"
+      ],
+      "top_score": 0.748,
+      "embed_ms": 18.8,
+      "search_ms": 5.1,
+      "first_text_ms": 229.8,
+      "reply": "The Moonlight Bakery does not have a public Wi-Fi password available."
+    },
+    {
+      "question": "What is the capital of France?",
+      "ok": true,
+      "expected_source": null,
+      "cited": [],
+      "top_score": 0.369,
+      "embed_ms": 21.7,
+      "search_ms": 6.4,
+      "first_text_ms": 218.5,
+      "reply": "The capital of France is Paris."
+    }
+  ]
+}

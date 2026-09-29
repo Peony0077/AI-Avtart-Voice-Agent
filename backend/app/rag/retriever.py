@@ -20,7 +20,8 @@ class Embedder:
 
         torch.set_num_threads(max(2, (torch.get_num_threads() or 4) // 2))
         self.model = SentenceTransformer(model, device="cpu")
-        self.dim = self.model.get_sentence_embedding_dimension()
+        get_dim = getattr(self.model, "get_embedding_dimension", None) or self.model.get_sentence_embedding_dimension
+        self.dim = get_dim()
 
     def passages(self, texts: list[str]) -> np.ndarray:
         return self.model.encode(texts, batch_size=32, normalize_embeddings=True, show_progress_bar=False)

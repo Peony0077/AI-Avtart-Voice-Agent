@@ -32,7 +32,7 @@ Browser (owner's PC) ──HTTPS/WSS──► P1 backend (FastAPI, .venv torch 2
 | 2 Voice pipeline | done | see "Phase 2 results" |
 | 3 Interruption | done | see "Phase 3 results" |
 | 4 Realistic avatar | done | see "Phase 4 results" |
-| 5 RAG | pending | |
+| 5 RAG | done | see "Phase 5 results" |
 | 6 Hardening | pending | |
 
 ## Phase 0 results (measured on POOH-PC, 2026-09-29)
@@ -211,6 +211,35 @@ Raw data: [phase4_musetalk_engine.json](benchmarks/phase4_musetalk_engine.json),
 - MuseTalk renders the mouth at 256×256 inside a 512×512 frame; larger output needs a stronger GPU.
 - The development photo is AI-generated (from OpenAvatarChat's resources). Build your own avatar with
   `build_avatar.py --photo <your photo> --id <name>` and set `avatar.avatar_id`.
+
+## Phase 5 results (document-grounded answers)
+
+Pipeline: `scripts/ingest.py` parses PDF (pypdf), DOCX (python-docx), Markdown/TXT and HTML → cleans
+(PDF hyphenation, whitespace) → heading-aware chunks (~220 words, 30-word overlap, source/section/page
+metadata) → bge-small-en-v1.5 embeddings on CPU → LanceDB. Per turn: embed the question → top-k (4)
+cosine search → passages with similarity ≥ 0.62 go into the latest user message as numbered KNOWLEDGE
+(keeps the cached prompt prefix intact); if the best match is only 0.50–0.62 the model is told the
+documents do not contain the answer; below 0.50 the question is treated as general conversation.
+Citations (source, section, page, score) are sent to the UI and shown under the answer — not spoken.
+
+Test set: a deliberately **fictional** knowledge base (bakery, company policy, lamp manual, hiking trail)
+in all four formats, so correct answers can only come from retrieval
+(`scripts/make_knowledge_fixtures.py`; the PDF is printed by Playwright's Chromium).
+
+| Metric | Value |
+|---|---|
+| Questions answered correctly with the right source cited | 6/6 |
+| Unanswerable question ("Wi-Fi password") declined without inventing | yes |
+| General question ("capital of France") answered, no citation | yes |
+| Total | **8/8** (`scripts/bench_rag.py`) |
+| Retrieval latency (CPU) | embed p50 20 ms + search ~6 ms (max 67 ms incl. first call) |
+| Spoken question in the browser (Playwright, `mic_rag.wav`) | exact transcript, correct answer, citation shown, first audio 1,290 ms |
+| Index build (10 chunks, 4 files) | 18.8 s (mostly loading the embedding model) |
+
+Raw data: [phase5_rag.json](benchmarks/phase5_rag.json), [phase5_rag_browser.json](benchmarks/phase5_rag_browser.json).
+
+Add your own documents: put files in `data/knowledge/` and run `.venv\Scripts\python scripts\ingest.py`
+(the backend loads the index at start-up).
 
 ## Running
 

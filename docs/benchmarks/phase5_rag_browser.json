@@ -1,0 +1,22 @@
+{
+  "test": "phase5_rag",
+  "transcript": "What are the opening hours of the Moonlight Bakery on Sundays?",
+  "reply": "On Sundays, Moonlight Bakery is open from 9:00 to 13:00.",
+  "sources": [
+    [
+      "moonlight_bakery.md",
+      0.886
+    ],
+    [
+      "moonlight_bakery.md",
+      0.76
+    ]
+  ],
+  "rag": {
+    "embed_ms": 32.8,
+    "search_ms": 7.7,
+    "top_score": 0.886,
+    "used": 2
+  },
+  "first_audio_ms": 1290.1
+}

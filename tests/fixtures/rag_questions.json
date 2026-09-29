@@ -1,0 +1,61 @@
+[
+  {
+    "q": "What are the opening hours of the Moonlight Bakery on Sundays?",
+    "source": "moonlight_bakery.md",
+    "expect": [
+      "9",
+      "13"
+    ]
+  },
+  {
+    "q": "How much is the equipment allowance at Orion Labs?",
+    "source": "orion_remote_work_policy.docx",
+    "expect": [
+      "450"
+    ]
+  },
+  {
+    "q": "How do I pair the Aurora X2 lamp?",
+    "source": "aurora_x2_manual.pdf",
+    "expect": [
+      "seven",
+      "purple"
+    ]
+  },
+  {
+    "q": "How long is the Riverton Ridge Trail?",
+    "source": "riverton_trail.txt",
+    "expect": [
+      "11.4"
+    ]
+  },
+  {
+    "q": "Who founded the Moonlight Bakery?",
+    "source": "moonlight_bakery.md",
+    "expect": [
+      "Amara"
+    ]
+  },
+  {
+    "q": "What are the core hours for remote employees at Orion Labs?",
+    "source": "orion_remote_work_policy.docx",
+    "expect": [
+      "10",
+      "15"
+    ]
+  },
+  {
+    "q": "What is the Wi-Fi password of the Moonlight Bakery?",
+    "source": null,
+    "expect": [],
+    "unanswerable": true
+  },
+  {
+    "q": "What is the capital of France?",
+    "source": null,
+    "expect": [
+      "Paris"
+    ],
+    "general": true
+  }
+]
