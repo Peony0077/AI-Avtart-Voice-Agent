@@ -13,6 +13,8 @@ export class AudioEngine extends EventTarget {
     this.level = 0
     this.playedMs = 0
     this.playingTurn = 0
+    this.turnStartCtx = new Map()
+    this.endedTurns = new Set()
   }
 
   // Must be called from a user gesture (click) so the AudioContexts may start.
@@ -59,12 +61,28 @@ export class AudioEngine extends EventTarget {
 
   flush() {
     this.player?.port.postMessage({ type: 'flush' })
+    if (this.playingTurn) this.endedTurns.add(this.playingTurn)
     this.playingTurn = 0
     this.playedMs = 0
   }
 
+  // Position (ms) on a turn's audio timeline that is audible right now, or null.
+  audibleMs(turnId) {
+    const start = this.turnStartCtx.get(turnId)
+    if (start === undefined || !this.playCtx) return null
+    const ts = this.playCtx.getOutputTimestamp?.()
+    const nowCtx = ts && ts.contextTime > 0
+      ? ts.contextTime + (performance.now() - ts.performanceTime) / 1000
+      : this.playCtx.currentTime - (this.playCtx.outputLatency || 0)
+    return (nowCtx - start) * 1000
+  }
+
   _onPlayer(msg) {
-    if (msg.type === 'started') this.playingTurn = msg.turnId
+    if (msg.type === 'started') {
+      this.playingTurn = msg.turnId
+      this.turnStartCtx.set(msg.turnId, msg.ctxTime)
+    }
+    if (msg.type === 'ended' || msg.type === 'flushed') this.endedTurns.add(msg.turnId ?? this.playingTurn)
     if (msg.playedMs !== undefined) this.playedMs = msg.playedMs
     this.dispatchEvent(new CustomEvent('player', { detail: msg }))
   }

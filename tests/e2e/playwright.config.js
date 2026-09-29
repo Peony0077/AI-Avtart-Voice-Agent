@@ -22,13 +22,13 @@ export default defineConfig({
     { name: 'text', testMatch: /phase1_.*\.spec\.js/ },
     {
       name: 'voice',
-      testMatch: /phase[2-6]_.*\.spec\.js/,
+      testMatch: /(phase[2-6]_.*|soak)\.spec\.js/,
       use: {
         launchOptions: {
           args: [
             '--use-fake-ui-for-media-stream',
             '--use-fake-device-for-media-stream',
-            `--use-file-for-fake-audio-capture=${fixture(process.env.FAKE_MIC ?? 'mic_question.wav')}%noloop`,
+            `--use-file-for-fake-audio-capture=${fixture(process.env.FAKE_MIC ?? 'mic_question.wav')}${process.env.FAKE_MIC_LOOP ? '' : '%noloop'}`,
             '--autoplay-policy=no-user-gesture-required',
           ],
         },

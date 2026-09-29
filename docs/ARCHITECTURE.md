@@ -29,8 +29,8 @@ Browser (owner's PC) ──HTTPS/WSS──► P1 backend (FastAPI, .venv torch 2
 |---|---|---|
 | 0 Safety + research | done | see "Phase 0 results" |
 | 1 Text conversation | done | see "Phase 1 results" |
-| 2 Voice pipeline | done (soak: see Phase 3) | see "Phase 2 results" |
-| 3 Interruption | pending | |
+| 2 Voice pipeline | done | see "Phase 2 results" |
+| 3 Interruption | done | see "Phase 3 results" |
 | 4 Realistic avatar | pending | |
 | 5 RAG | pending | |
 | 6 Hardening | pending | |
@@ -100,6 +100,53 @@ Findings:
   the endpoint wait (speculative STT on a 120 ms pause) removes it from the critical path.
 - Recommended manual setting: NVIDIA Control Panel → Manage 3D settings → Program settings → `python.exe`
   (repo `.venv`) and `llama-server.exe` → *Power management mode: Prefer maximum performance*.
+
+## Phase 3 results (interruption / barge-in)
+
+Measured with `scripts/bench_voice.py bargein --rounds 4` (real-time protocol client) and Playwright
+`tests/e2e/phase3_bargein.spec.js` (fake mic says "Wait, stop please. What is two plus two?" while the
+assistant tells a story). Raw data: [phase3_bargein.json](benchmarks/phase3_bargein.json),
+[phase3_bargein_browser.json](benchmarks/phase3_bargein_browser.json).
+
+| Metric | Value |
+|---|---|
+| Barge-ins detected | 4/4 (bench) + 1/1 (browser) |
+| Detection after the user's speech onset | p50 348 ms, max 362 ms (bench); ~414 ms (browser, approx.) |
+| — of which the confidence rule | 260 ms of speech with p ≥ 0.75 while the assistant is active |
+| Server cancel fan-out (LLM stream, TTS, queues, state) | ~0.1 ms |
+| Browser: interrupt message → audio flushed | 7.7 ms |
+| Stale audio packets after the interrupt | 0 (server), 0 blocked needed (client) |
+| History records what was actually heard | yes, e.g. "Well, there once was a tiny fox named Flick [interrupted by the user]" |
+| Follow-up question answered after barge-in | 4/4 ("Two plus two is four.") |
+| Manual Stop button (voice) | passes |
+
+How it works: the VAD keeps running while the assistant speaks, with a stricter threshold; a confirmed
+barge-in fires `BARGE_IN` → the turn's asyncio tasks are cancelled (closing the llama-server stream stops
+generation), the outbox drops the turn's queued packets, the browser flushes its AudioWorklet buffer and
+rejects the turn id, the avatar worker gets `cancel`, and the words heard so far (from Kokoro word
+timestamps and the browser's playback position) go into the history. The barge-in audio itself becomes
+the start of the next user utterance.
+
+Echo: browser echo cancellation / noise suppression are enabled; the stricter threshold applies while
+the assistant is active; and a transcript that mostly repeats the assistant's last words is dropped as echo
+(`echo_ignored`). Acoustic echo cannot be tested with a fake microphone — use headphones for development
+and try speakers once (see "Manual checks").
+
+## 30-minute stability test (Phases 2 + 3)
+
+Playwright `tests/e2e/soak.spec.js` with a looping fake microphone (a question every ~19 s; long answers
+get barged into). Raw data: [phase3_soak_30min.json](benchmarks/phase3_soak_30min.json).
+
+| Metric | Value |
+|---|---|
+| Duration / turns | 30 min / 95 turns (94 completed, 1 barge-in) |
+| Server errors / browser errors | 0 / 0 |
+| llama-server restarts | 0 |
+| End of speech → first audio | p50 1,210 ms · p90 1,470 ms · max 1,612 ms |
+| VRAM used (whole GPU) | 7,459 → 7,791 MiB (max 7,796) — no leak |
+| Backend resident RAM | 2,602 → 714 MiB (Windows trims the working set under memory pressure) |
+
+(Package installs and model downloads for Phase 4 were running in parallel during this test.)
 
 ## Running
 

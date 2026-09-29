@@ -6,6 +6,7 @@ words the user actually heard when a turn is interrupted.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -57,6 +58,9 @@ class SpeechOutput:
             clause = await self.queue.get()
             if clause is None or self.turn.is_cancelled:
                 break
+            if hasattr(self.tts, "stream"):
+                seq = await self._stream_clause(clause, seq)
+                continue
             t_req = time.perf_counter()
             async with self.gpu_lock:
                 if self.turn.is_cancelled:
@@ -92,6 +96,54 @@ class SpeechOutput:
                               "segments": seq}, tid)
         self.finished.set()
 
+    async def _emit(self, seq: int, pcm: np.ndarray) -> None:
+        tid = self.turn.turn_id
+        if self.avatar_sink is not None:
+            await self.avatar_sink(tid, seq, pcm, int(self.total_ms))
+        self.outbox.binary(pack(KIND_AUDIO, tid, seq, int(self.total_ms), pcm.tobytes()), tid)
+        if seq == 1:
+            self.turn.mark("audio_sent")
+            self.on_first_audio()
+
+    async def _stream_clause(self, clause: str, seq: int) -> int:
+        """Streaming engines (clone voice): send each chunk as soon as it exists."""
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def produce() -> None:
+            try:
+                for chunk in self.tts.stream(clause):
+                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        t0 = time.perf_counter()
+        async with self.gpu_lock:
+            producer = loop.run_in_executor(None, produce)
+            segment = Segment(seq + 1, clause, self.total_ms, 0.0, [])
+            first = True
+            while (chunk := await queue.get()) is not None:
+                if self.turn.is_cancelled:
+                    continue          # drain the worker's stream, send nothing
+                seq += 1
+                if first:
+                    self.turn.mark("tts_first_audio")
+                    self.segments.append(segment)
+                    if self.first_timing is None:
+                        self.first_timing = {"first_chunk_ms": round((time.perf_counter() - t0) * 1000, 1),
+                                             "chars": len(clause), "streaming": True}
+                    self.outbox.json({"type": "tts_segment", "turn_id": self.turn.turn_id, "seq": seq,
+                                      "text": clause, "start_ms": round(self.total_ms), "streaming": True},
+                                     self.turn.turn_id)
+                    first = False
+                pcm = (np.clip(chunk, -1, 1) * 32767).astype(np.int16)
+                await self._emit(seq, pcm)
+                dur = len(pcm) / self.tts.sample_rate * 1000
+                segment.duration_ms += dur
+                self.total_ms += dur
+            await producer
+        return seq
+
     def heard_text(self, played_ms: float) -> str:
         """Words whose audio finished before ``played_ms`` on this turn's timeline."""
         out: list[str] = []
@@ -113,4 +165,4 @@ class SpeechOutput:
                 if cut > 0:
                     out.append(seg.text[:cut])
             break
-        return " ".join(out).strip()
+        return re.sub(r"\s+([,.;:!?])", r"\1", " ".join(out)).strip()

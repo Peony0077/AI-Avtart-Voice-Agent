@@ -31,6 +31,7 @@ class TurnContext:
     rag_stats: dict | None = None
     stt_speculative: bool | None = None
     stt_timing: dict | None = None
+    avatar_first_ms: float | None = None
 
     def mark(self, name: str, at: float | None = None) -> float:
         """Record a timestamp once (first occurrence wins)."""

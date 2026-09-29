@@ -13,6 +13,7 @@ export function useVoice(conv) {
   const [level, setLevel] = useState(0)
   const [speechDetected, setSpeechDetected] = useState(false)
   const [error, setError] = useState(null)
+  const statsRef = useRef({ interrupts: [], blockedStale: 0, pushes: {} })
 
   const send = (msg) => conv.connRef.current?.sendJson(msg)
 
@@ -25,6 +26,7 @@ export function useVoice(conv) {
           break
         case 'interrupt':
           rejectUpToRef.current = Math.max(rejectUpToRef.current, msg.turn_id)
+          statsRef.current.interrupts.push({ turnId: msg.turn_id, reason: msg.reason, receivedAt: performance.now() })
           engine?.flush()
           break
         case 'tts_done':
@@ -44,7 +46,11 @@ export function useVoice(conv) {
     const offBinary = conv.onBinary((buffer) => {
       const packet = parsePacket(buffer)
       if (packet.kind !== KIND_AUDIO) return
-      if (packet.turnId <= rejectUpToRef.current || packet.turnId !== turnRef.current) return
+      if (packet.turnId <= rejectUpToRef.current || packet.turnId !== turnRef.current) {
+        statsRef.current.blockedStale++
+        return
+      }
+      statsRef.current.pushes[packet.turnId] = (statsRef.current.pushes[packet.turnId] ?? 0) + 1
       engineRef.current?.push(packet.turnId, packet.payload)
     })
     return () => {
@@ -65,13 +71,18 @@ export function useVoice(conv) {
       const engine = new AudioEngine()
       engine.addEventListener('player', (e) => {
         const m = e.detail
+        if (m.type === 'flushed') {
+          const last = statsRef.current.interrupts.at(-1)
+          if (last && last.flushedAt === undefined) last.flushedAt = performance.now()
+        }
         if (m.type === 'started' || m.type === 'progress' || m.type === 'ended') {
           send({ type: 'playback', turn_id: m.turnId, event: m.type, played_ms: Math.round(m.playedMs ?? 0), client_time: Date.now() })
         }
       })
       await engine.start((pcm) => conv.connRef.current?.sendBinary(pcm))
       engineRef.current = engine
-      window.__audioEngine = engine // test hook
+      window.__audioEngine = engine // test hooks
+      window.__voiceStats = statsRef.current
       send({ type: 'voice', enabled: true })
       setActive(true)
     } catch (err) {

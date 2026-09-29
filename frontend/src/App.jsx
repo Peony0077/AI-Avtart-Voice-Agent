@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useConversation } from './lib/useConversation.js'
 import { useVoice } from './lib/useVoice.js'
+import AvatarStage from './components/AvatarStage.jsx'
 import MetricsPanel from './components/MetricsPanel.jsx'
 
 const STATE_LABEL = {
@@ -60,9 +61,7 @@ export default function App() {
       </header>
 
       <main className="layout">
-        <section className="stage" aria-label="Avatar">
-          <div className="stage-placeholder">Avatar appears here (Phase 4)</div>
-        </section>
+        <AvatarStage conv={conv} voice={voice} />
 
         <section className="chat" aria-label="Conversation">
           <ol className="messages" ref={listRef} data-testid="messages">
@@ -70,6 +69,15 @@ export default function App() {
               <li key={i} className={`msg ${m.role}`} data-role={m.role} data-turn={m.turnId}>
                 <span className="text">{m.text || (m.role === 'assistant' ? '…' : '')}</span>
                 {m.interrupted && <span className="tag">interrupted</span>}
+                {m.citations?.length > 0 && (
+                  <ul className="sources" data-testid="sources">
+                    {m.citations.map((c) => (
+                      <li key={c.n} title={c.snippet}>
+                        [{c.n}] {c.title}{c.section ? ` · ${c.section}` : ''}{c.page ? ` · p.${c.page}` : ''} <span className="muted">({c.score})</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </li>
             ))}
           </ol>

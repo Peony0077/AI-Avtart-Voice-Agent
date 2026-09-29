@@ -74,7 +74,8 @@ class RAGCfg(BaseModel):
     index_dir: str = "data/index"
     table: str = "knowledge"
     top_k: int = 4
-    min_score: float = 0.55
+    min_score: float = 0.62          # cosine similarity needed to use a passage (bge-small-en-v1.5)
+    weak_score: float = 0.50         # below min but above this: tell the model the docs lack the answer
     max_context_chars: int = 2400
 
 

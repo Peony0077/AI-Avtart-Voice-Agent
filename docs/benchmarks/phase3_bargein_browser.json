@@ -1,0 +1,9 @@
+{
+  "test": "phase3_bargein",
+  "detect_ms_after_onset_approx": 414,
+  "flush_ms": 7.7,
+  "heard": "Of course! Here's a quiet story about a lighthouse keeper named Elias, who lived on",
+  "follow_up": "Wait, stop, please. What is 2 plus 2?",
+  "reply": "Two plus two is four. Simple, right?",
+  "blocked_stale_client": 0
+}

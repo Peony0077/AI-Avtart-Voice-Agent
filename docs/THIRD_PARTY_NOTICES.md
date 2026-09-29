@@ -1,0 +1,42 @@
+# Third-party notices
+
+This is a personal, non-commercial project. Components and their licenses:
+
+## Code reused or adapted
+
+| Component | Where | License | Notes |
+|---|---|---|---|
+| OpenAvatarChat (HumanAIGC-Engineering) | `avatar/musetalk/face_bbox.py`, ideas in `avatar/musetalk/engine.py` | Apache-2.0 | DWPose-via-ONNX preprocessing and MuseTalk real-time loop design adapted; modified. |
+| MuseTalk (TMElyralab) | `avatar/musetalk/vendor/MuseTalk` (fetched by `setup.ps1`, not committed) | MIT | Pinned at `0a89dec`. |
+| LivePortrait (KlingAIResearch) | `avatar/musetalk/vendor/LivePortrait` (fetched, not committed); `face_rig.py` mirrors its retargeting composition | MIT | Pinned at `9b294b3`. |
+
+## Models (downloaded to `E:\AI-models`, never committed)
+
+| Model | License | Commercial? |
+|---|---|---|
+| Qwen3-4B-Instruct-2507 (GGUF by unsloth) | Apache-2.0 | yes |
+| Whisper large-v3-turbo (OpenAI) | MIT | yes |
+| Kokoro-82M (hexgrad) | Apache-2.0 | yes |
+| Silero VAD | MIT | yes |
+| bge-small-en-v1.5 (BAAI) | MIT | yes |
+| MuseTalk 1.5 UNet | MIT | yes |
+| sd-vae-ft-mse (Stability AI) | MIT | yes |
+| whisper-tiny (OpenAI) | Apache-2.0 | yes |
+| DWPose (yzd-v) | Apache-2.0 | yes |
+| face-parse-bisent | WTFPL | yes |
+| S3FD (face-alignment) | BSD-3-Clause | yes |
+| LivePortrait weights | MIT | yes |
+| **InsightFace buffalo_l (used by LivePortrait's cropper)** | **non-commercial research only** | **no** — replace the detector before any commercial use |
+| en_core_web_sm (spaCy) | MIT | yes |
+
+## Runtimes / libraries (selection)
+
+llama.cpp (MIT) · PyTorch (BSD-3) · transformers / diffusers / accelerate (Apache-2.0) ·
+FastAPI (MIT) · uvicorn (BSD-3) · onnxruntime (MIT) · OpenCV (Apache-2.0) · espeak-ng via
+espeakng-loader (GPL-3.0, used as a separate library by Kokoro's G2P) · React (MIT) · Vite (MIT) ·
+Playwright (Apache-2.0) · LanceDB (Apache-2.0) · sentence-transformers (Apache-2.0).
+
+## Likeness and voice
+
+The development avatar photo (`girl.png`) comes from OpenAvatarChat's resources (Apache-2.0 repository)
+and appears to be AI-generated. Use only photos and voices of people who have agreed to it.

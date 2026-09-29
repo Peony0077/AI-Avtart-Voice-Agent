@@ -65,7 +65,8 @@ class PcmPlayer extends AudioWorkletProcessor {
     if (take > 0) {
       if (!this.startedTurns.has(this.turnId)) {
         this.startedTurns.add(this.turnId)
-        this.port.postMessage({ type: 'started', turnId: this.turnId })
+        // currentTime = context time of this render quantum's first sample = when this turn's audio starts
+        this.port.postMessage({ type: 'started', turnId: this.turnId, ctxTime: currentTime })
       }
       this.played += take
       this.sinceReport += take

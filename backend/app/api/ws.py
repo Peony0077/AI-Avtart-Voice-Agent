@@ -21,6 +21,8 @@ class SessionManager:
     async def attach(self, session: Session) -> None:
         async with self._lock:
             previous, self.active = self.active, session
+            if session.svc.avatar is not None:
+                session.svc.avatar.frame_sink = session.on_avatar_frame
         if previous is not None:
             await previous.close("replaced by a new connection")
             try:
@@ -32,6 +34,8 @@ class SessionManager:
         async with self._lock:
             if self.active is session:
                 self.active = None
+                if session.svc.avatar is not None:
+                    session.svc.avatar.frame_sink = None
         await session.close("disconnected")
 
 

@@ -48,6 +48,18 @@ class Services:
         await self._warm_llm()
         if self.settings.voice_enabled:
             await asyncio.to_thread(self._load_voice)
+        if self.settings.rag.enabled:
+            await asyncio.to_thread(self._load_rag)
+        if self.settings.avatar.enabled:
+            from app.avatar.client import AvatarClient
+
+            t0 = time.perf_counter()
+            self.avatar = AvatarClient(self.settings)
+            try:
+                await self.avatar.start()
+                self.load_report["avatar_s"] = round(time.perf_counter() - t0, 2)
+            except Exception as exc:  # noqa: BLE001 - voice still works without the avatar
+                logger.error(f"avatar worker unavailable: {exc!r}")
         self.load_report["vram_used_mib_after_load"] = gpu_snapshot().get("vram_used_mib", -1)
         logger.info(f"services ready: {self.load_report}")
 
@@ -64,6 +76,22 @@ class Services:
         self.load_report["tts_load_s"] = round(time.perf_counter() - t0, 2)
         self.load_report["tts_warmup_s"] = self.tts.warmup()
 
+    def _load_rag(self) -> None:
+        index = self.settings.repo_path(self.settings.rag.index_dir)
+        if not index.exists():
+            logger.warning(f"RAG enabled but no index at {index}; run scripts/ingest.py")
+            return
+        from app.rag.retriever import Retriever
+
+        t0 = time.perf_counter()
+        try:
+            self.rag = Retriever(self.settings.rag, index)
+            self.rag.retrieve("warm up")
+        except Exception as exc:  # noqa: BLE001 - conversation works without RAG
+            logger.error(f"RAG unavailable: {exc!r}")
+            self.rag = None
+        self.load_report["rag_s"] = round(time.perf_counter() - t0, 2)
+
     async def _warm_llm(self) -> None:
         """Run one tiny request with the real system prompt so its KV prefix is cached."""
         t0 = time.perf_counter()
@@ -74,20 +102,35 @@ class Services:
             logger.warning(f"LLM warm-up failed: {exc!r}")
         self.load_report["llm_warmup_s"] = round(time.perf_counter() - t0, 2)
 
-    # ---- avatar hooks (Phase 4); no-ops when no avatar worker is connected ----
+    # ---- avatar hooks; no-ops when no avatar worker is connected ----
     def avatar_sink_for(self, session, turn):
-        return None
+        async def sink(turn_id: int, seq: int, pcm, pts_ms: int) -> None:
+            ms = await self.avatar.speak(turn_id, seq, pcm, pts_ms)
+            if seq == 1:
+                turn.mark("avatar_first_frame")
+                turn.avatar_first_ms = ms
+        return sink
 
     async def avatar_cancel(self, turn_id: int) -> None:
-        return None
+        if self.avatar_ready:
+            self.avatar.send_json({"type": "cancel", "turn_id": turn_id})
 
     def avatar_state(self, state: str) -> None:
-        return None
+        if self.avatar_ready:
+            self.avatar.send_json({"type": "state", "state": state})
 
     def avatar_behavior(self, behavior: dict) -> None:
-        return None
+        if self.avatar_ready:
+            self.avatar.send_json({"type": "behavior", "expression": behavior.get("expression"),
+                                   "emotion": behavior.get("emotion")})
+
+    def avatar_playback(self, turn_id: int, event: str) -> None:
+        if self.avatar_ready:
+            self.avatar.send_json({"type": "playback", "turn_id": turn_id, "event": event})
 
     async def stop(self) -> None:
+        if self.avatar is not None:
+            await self.avatar.stop()
         await self.llm.aclose()
         if self.settings.llm.manage_server:
             await asyncio.to_thread(self.llm_server.stop)

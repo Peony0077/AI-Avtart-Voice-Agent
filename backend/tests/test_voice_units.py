@@ -84,3 +84,15 @@ def test_vad_bargein_threshold_is_stricter_but_still_detects_speech():
     quiet = (np.random.default_rng(0).standard_normal(16000 * 2) * 300).astype(np.int16)  # noise ~ -40 dBFS
     vad.reset()
     assert not [e for e in vad.process(quiet.tobytes(), assistant_active=True, now=10.0) if e.kind == "start"]
+
+
+def test_echo_filter_detects_assistant_words():
+    from app.llm.prompt import ConversationMemory
+    from app.session.session import Session
+
+    s = Session.__new__(Session)  # only memory is needed
+    s.memory = ConversationMemory(persona="Ava")
+    s.memory.add("tell me a story", "[happy|smile|0.5]Once upon a time a brave little fox lived by the sea.")
+    assert s._looks_like_echo("a brave little fox lived by the sea")
+    assert not s._looks_like_echo("wait stop what is two plus two")
+    assert not s._looks_like_echo("fox")  # too short to judge

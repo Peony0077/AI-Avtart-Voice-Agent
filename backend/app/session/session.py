@@ -7,6 +7,7 @@ Outputs: streamed text, behaviour events, TTS audio packets (+ avatar frames in 
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import uuid
 
@@ -24,6 +25,7 @@ from app.services import Services
 from app.session.outbox import Outbox
 from app.session.state_machine import Event, State, StateMachine
 from app.session.turn import TurnContext, TurnRegistry
+from app.transport.protocol import KIND_IDLE_VIDEO
 from app.tts.chunker import ClauseChunker
 from app.tts.speech_output import SpeechOutput
 
@@ -47,6 +49,7 @@ class Session:
         self._carry_text = ""             # transcript of an utterance the user continued
         self._spec: tuple[float, asyncio.Task] | None = None  # (speech_end_t, speculative STT task)
         self._summary_task: asyncio.Task | None = None
+        self.dropped_idle_frames = 0
         self.sm.subscribe(self._on_state_change)
         self._closed = False
 
@@ -55,7 +58,9 @@ class Session:
         self.outbox.start()
         self.outbox.json({"type": "session", "session_id": self.id, "persona": self.cfg.persona_name,
                           "profile": self.cfg.profile, "voice_available": self.svc.voice_ready,
-                          "avatar_available": self.svc.avatar_ready, "server_time": time.time()}, force=True)
+                          "avatar_available": self.svc.avatar_ready,
+                          "avatar": self.svc.avatar.hello if self.svc.avatar_ready else None,
+                          "server_time": time.time()}, force=True)
         self.sm.fire(Event.START)
 
     async def close(self, reason: str = "closed") -> None:
@@ -164,6 +169,10 @@ class Session:
             return
         text = f"{self._carry_text} {text}".strip()
         self._carry_text = ""
+        if text and self._looks_like_echo(text):
+            logger.warning(f"ignored probable echo of the assistant: {text!r}")
+            self.outbox.json({"type": "echo_ignored", "text": text}, force=True)
+            text = ""
         if not text:
             self.sm.fire(Event.TRANSCRIPT_EMPTY)
             self.outbox.json({"type": "transcript", "text": "", "final": True}, force=True)
@@ -174,6 +183,15 @@ class Session:
         turn.utterance_ms = ev.stats.get("duration_ms")
         turn.stt_speculative = speculative
         turn.stt_timing = getattr(self, "_stt_timing", None)
+
+    def _looks_like_echo(self, text: str) -> bool:
+        """True if the transcript mostly repeats the assistant's last words (speaker → mic leak)."""
+        last = self.memory.turns[-1]["content"] if self.memory.turns and self.memory.turns[-1]["role"] == "assistant" else ""
+        words = [w for w in re.findall(r"[a-z']+", text.lower()) if len(w) > 2]
+        said = set(re.findall(r"[a-z']+", last.lower()))
+        if len(words) < 3 or not said:
+            return False
+        return sum(w in said for w in words) / len(words) >= 0.8
 
     # ------------------------------------------------------------------ turns
     async def start_turn(self, source: str, text: str, t0: float | None = None) -> TurnContext:
@@ -295,9 +313,21 @@ class Session:
         turn.played_ms = float(msg.get("played_ms", turn.played_ms))
         if event == "started":
             turn.mark("client_first_audio")
+            self.svc.avatar_playback(turn.turn_id, "started")
         elif event == "ended":
             turn.mark("client_playback_ended")
             turn.playback_ended.set()
+            self.svc.avatar_playback(turn.turn_id, "ended")
+
+    def on_avatar_frame(self, packet: bytes, kind: int, turn_id: int) -> None:
+        """Avatar worker frame → browser. Idle frames are dropped if the link is backed up."""
+        if kind == KIND_IDLE_VIDEO:
+            if self.outbox.backlog > 6:
+                self.dropped_idle_frames += 1
+                return
+            self.outbox.binary(packet, 0, force=True)
+        else:
+            self.outbox.binary(packet, turn_id)
 
     # ------------------------------------------------------------------ interruption
     async def interrupt(self, reason: str) -> None:
@@ -370,6 +400,6 @@ class Session:
                   "stt_speculative": turn.stt_speculative, "stt_timing": turn.stt_timing,
                   "speech_ms": round(turn.speech.total_ms) if turn.speech else None,
                   "tts_first_timing": turn.speech.first_timing if turn.speech else None,
-                  "rag": turn.rag_stats, "ts": time.time()}
+                  "rag": turn.rag_stats, "avatar_first_ms": turn.avatar_first_ms, "ts": time.time()}
         self.outbox.json(record, force=True)
         write_metrics(record)

@@ -1,0 +1,9 @@
+# Clone-voice TTS worker venv (voice/xtts/.venv). XTTS-v2 weights: CPML (non-commercial).
+--extra-index-url https://download.pytorch.org/whl/cu130
+torch==2.9.1+cu130
+torchaudio==2.9.1+cu130
+coqui-tts==0.27.5
+transformers>=4.57,<4.58
+websockets>=13
+loguru>=0.7
+numpy>=1.26,<2.4

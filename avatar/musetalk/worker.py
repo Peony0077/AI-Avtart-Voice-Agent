@@ -1,0 +1,238 @@
+"""Avatar worker process (P3): streams avatar video frames to the backend.
+
+Protocol (WebSocket, one client = the backend):
+  backend → worker
+    binary  16-byte header (kind=1, turn_id, seq, pts_ms) + PCM16 mono 24 kHz   one TTS clause
+    json    {"type":"behavior","expression":...} | {"type":"state","state":...}
+            {"type":"playback","turn_id":..,"event":"started"|"ended"}
+            {"type":"cancel","turn_id":..}
+  worker → backend
+    binary  header(kind=3 idle | kind=2 speech, turn_id, seq, pts_ms) + JPEG
+    json    {"type":"hello",...} | {"type":"first_frame","turn_id","seq"} | {"type":"segment_done",...}
+
+Idle frames are paced at fps. Speech frames are rendered as fast as possible and
+carry a pts on the turn's audio timeline; the browser shows them by audio clock.
+
+Run: avatar\\musetalk\\.venv\\Scripts\\python avatar\\musetalk\\worker.py --avatar dev_girl
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import struct
+import time
+from dataclasses import dataclass, field
+
+import cv2
+import numpy as np
+import psutil
+import torch
+import websockets
+from loguru import logger
+
+from common import AVATARS
+from engine import Loop, MuseTalkEngine
+from motion import EXPRESSION_TO_LOOP
+
+HEADER = struct.Struct("<B3xIII")
+KIND_AUDIO, KIND_VIDEO, KIND_IDLE = 1, 2, 3
+STATE_TO_LOOP = {"THINKING": "thinking", "LISTENING": "friendly", "IDLE": "neutral", "END_OF_TURN": "friendly"}
+
+
+@dataclass
+class Turn:
+    turn_id: int
+    base_idx: int
+    loop: str
+    rendered: int = 0
+    playing: bool = False
+    cancelled: bool = False
+    first_frame_sent: set = field(default_factory=set)
+
+
+class AvatarWorker:
+    def __init__(self, avatar_id: str, batch: int, quality: int, lead_ms: int) -> None:
+        folder = AVATARS / avatar_id
+        meta = json.loads((folder / "avatar.json").read_text(encoding="utf-8"))
+        self.fps = meta["fps"]
+        self.loops = {name: Loop.load(folder / "loops" / name) for name in meta["loops"]}
+        self.engine = MuseTalkEngine(fps=self.fps, batch_size=batch)
+        self.warmup_s = self.engine.warmup(next(iter(self.loops.values())))
+        self.quality = quality
+        self.lead_frames = round(lead_ms * self.fps / 1000)
+        self.idx = 0
+        self.idle_loop = "friendly" if "friendly" in self.loops else next(iter(self.loops))
+        self.speech_loop = self.idle_loop
+        self._fade: tuple[str, int] | None = None   # (previous loop, frames left)
+        self.turn: Turn | None = None
+        self.queue: asyncio.Queue = asyncio.Queue()
+        self.ws = None
+        self.stats = {"segments": 0, "frames": 0, "render_ms": 0.0, "late_first_frames": 0}
+        logger.info(f"avatar {avatar_id}: {len(self.loops)} loops x {len(self.idle_loop and self.loops[self.idle_loop])} frames, "
+                    f"fps {self.fps}, warmup {self.warmup_s}s")
+
+    # ------------------------------------------------------------------ protocol
+    async def handle(self, ws) -> None:
+        if self.ws is not None:
+            await ws.close(code=4001, reason="busy")
+            return
+        self.ws = ws
+        await ws.send(json.dumps({"type": "hello", "fps": self.fps, "loops": list(self.loops),
+                                  "frames": len(self.loops[self.idle_loop]), "size": self.loops[self.idle_loop].size,
+                                  "load_s": self.engine.load_s, "warmup_s": self.warmup_s}))
+        tasks = [asyncio.create_task(self._idle()), asyncio.create_task(self._render())]
+        try:
+            async for msg in ws:
+                if isinstance(msg, bytes):
+                    kind, turn_id, seq, pts = HEADER.unpack_from(msg)
+                    if kind == KIND_AUDIO:
+                        self._on_audio(turn_id, seq, pts, np.frombuffer(msg[HEADER.size:], np.int16))
+                else:
+                    self._on_json(json.loads(msg))
+        except websockets.ConnectionClosed:
+            pass
+        finally:
+            for t in tasks:
+                t.cancel()
+            self.ws, self.turn = None, None
+            logger.info("backend disconnected")
+
+    def _on_json(self, msg: dict) -> None:
+        kind = msg.get("type")
+        if kind == "behavior":
+            loop = EXPRESSION_TO_LOOP.get(msg.get("expression", ""), None)
+            if loop in self.loops:
+                self.speech_loop = loop
+                self._switch_idle(loop)
+        elif kind == "state":
+            loop = STATE_TO_LOOP.get(msg.get("state", ""))
+            if loop in self.loops and (self.turn is None or not self.turn.playing):
+                self._switch_idle(loop)
+        elif kind == "playback" and self.turn and msg.get("turn_id") == self.turn.turn_id:
+            if msg.get("event") == "started":
+                self.turn.playing = True
+            elif msg.get("event") == "ended":
+                self.turn = None
+        elif kind == "cancel" and self.turn and msg.get("turn_id") == self.turn.turn_id:
+            self.turn.cancelled = True
+            self.turn = None
+            while not self.queue.empty():
+                self.queue.get_nowait()
+        elif kind == "stats":
+            asyncio.create_task(self._send_json({"type": "stats", **self._stats()}))
+
+    def _on_audio(self, turn_id: int, seq: int, pts: int, pcm: np.ndarray) -> None:
+        if self.turn is None or self.turn.turn_id != turn_id:
+            if self.turn is not None and turn_id < self.turn.turn_id:
+                return  # stale
+            self.turn = Turn(turn_id, base_idx=self.idx + self.lead_frames, loop=self.speech_loop)
+        self.queue.put_nowait((self.turn, seq, pts, pcm))
+
+    def _switch_idle(self, loop: str) -> None:
+        if loop != self.idle_loop:
+            self._fade = (self.idle_loop, 6)
+            self.idle_loop = loop
+
+    # ------------------------------------------------------------------ idle stream
+    async def _idle(self) -> None:
+        period = 1.0 / self.fps
+        next_t = time.perf_counter()
+        while True:
+            next_t += period
+            await asyncio.sleep(max(0.0, next_t - time.perf_counter()))
+            if next_t < time.perf_counter() - 1.0:       # fell far behind (e.g. system stall): resync
+                next_t = time.perf_counter()
+            if self.turn is None or not self.turn.playing:
+                loop = self.loops[self.idle_loop]
+                if self._fade:
+                    prev, left = self._fade
+                    alpha = 1 - left / 7
+                    blend = cv2.addWeighted(self.loops[prev].frame(self.idx), 1 - alpha, loop.frame(self.idx), alpha, 0)
+                    jpg = cv2.imencode(".jpg", blend, [cv2.IMWRITE_JPEG_QUALITY, self.quality])[1].tobytes()
+                    self._fade = (prev, left - 1) if left > 1 else None
+                else:
+                    jpg = loop.frames_jpg[self.idx % len(loop)]
+                await self._send(HEADER.pack(KIND_IDLE, 0, self.idx, 0) + jpg)
+            self.idx += 1
+
+    # ------------------------------------------------------------------ speech rendering
+    async def _render(self) -> None:
+        b = self.engine.batch_size
+        while True:
+            turn, seq, pts, pcm = await self.queue.get()
+            if turn.cancelled:
+                continue
+            t0 = time.perf_counter()
+            chunks = await asyncio.to_thread(self.engine.audio_features, pcm)
+            loop = self.loops[turn.loop]
+            n = chunks.shape[0]
+            for start in range(0, n, b):
+                if turn.cancelled:
+                    break
+                batch = chunks[start:start + b]
+                frames = await asyncio.to_thread(self._render_batch, loop, batch, turn.base_idx + turn.rendered)
+                for k, jpg in enumerate(frames):
+                    frame_pts = pts + round((start + k) * 1000 / self.fps)
+                    await self._send(HEADER.pack(KIND_VIDEO, turn.turn_id, seq, frame_pts) + jpg)
+                turn.rendered += len(frames)
+                if seq not in turn.first_frame_sent:
+                    turn.first_frame_sent.add(seq)
+                    await self._send_json({"type": "first_frame", "turn_id": turn.turn_id, "seq": seq,
+                                           "ms": round((time.perf_counter() - t0) * 1000, 1)})
+            ms = (time.perf_counter() - t0) * 1000
+            self.stats["segments"] += 1
+            self.stats["frames"] += n
+            self.stats["render_ms"] += ms
+            await self._send_json({"type": "segment_done", "turn_id": turn.turn_id, "seq": seq, "frames": n,
+                                   "render_ms": round(ms, 1), "audio_ms": round(len(pcm) / 24),
+                                   "fps": round(n / (ms / 1000), 1) if ms else None})
+
+    def _render_batch(self, loop: Loop, batch: torch.Tensor, start_idx: int) -> list[bytes]:
+        frames = self.engine.generate(loop, batch, start_idx)
+        return [cv2.imencode(".jpg", f, [cv2.IMWRITE_JPEG_QUALITY, self.quality])[1].tobytes() for f in frames]
+
+    # ------------------------------------------------------------------ io
+    async def _send(self, data: bytes) -> None:
+        if self.ws is not None:
+            try:
+                await self.ws.send(data)
+            except websockets.ConnectionClosed:
+                pass
+
+    async def _send_json(self, obj: dict) -> None:
+        await self._send_text(json.dumps(obj))
+
+    async def _send_text(self, text: str) -> None:
+        if self.ws is not None:
+            try:
+                await self.ws.send(text)
+            except websockets.ConnectionClosed:
+                pass
+
+    def _stats(self) -> dict:
+        s = dict(self.stats)
+        s["render_fps"] = round(s["frames"] / (s["render_ms"] / 1000), 1) if s["render_ms"] else None
+        s["vram_alloc_mib"] = round(torch.cuda.memory_allocated() / 2**20)
+        s["vram_reserved_mib"] = round(torch.cuda.memory_reserved() / 2**20)
+        s["rss_mib"] = round(psutil.Process().memory_info().rss / 2**20)
+        return s
+
+
+async def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--avatar", default="dev_girl")
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--batch", type=int, default=4)
+    ap.add_argument("--quality", type=int, default=80)
+    ap.add_argument("--lead-ms", type=int, default=250, help="expected delay from first audio to playback start")
+    args = ap.parse_args()
+    worker = AvatarWorker(args.avatar, args.batch, args.quality, args.lead_ms)
+    async with websockets.serve(worker.handle, args.host, args.port, max_size=None, ping_interval=20):
+        logger.info(f"avatar worker listening on ws://{args.host}:{args.port}")
+        await asyncio.Future()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

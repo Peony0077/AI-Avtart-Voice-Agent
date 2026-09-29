@@ -48,6 +48,9 @@ export function useConversation() {
         case 'assistant_done':
           upsertAssistant(msg.turn_id, (m) => ({ ...m, text: msg.interrupted ? msg.text : m.text, interrupted: msg.interrupted, done: true }))
           break
+        case 'citations':
+          upsertAssistant(msg.turn_id, (m) => ({ ...m, citations: msg.sources }))
+          break
         case 'behavior':
           setBehavior(msg)
           break
