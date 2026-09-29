@@ -1,4 +1,4 @@
-﻿"""Application settings.
+"""Application settings.
 
 Precedence (highest first): environment variables (prefix ``AVATAR_``) â†’ ``.env`` â†’
 YAML profile ``config/profiles/<AVATAR_PROFILE>.yaml`` â†’ defaults below.
