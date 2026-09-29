@@ -42,8 +42,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-/tests/e2e/results/
-/playwright-report/
+//playwright-report/
 /test-results/
 
 # ---- Model weights, checkpoints & caches (never commit) --------------------
