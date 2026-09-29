@@ -75,7 +75,7 @@ Design notes:
 ## Running
 
 ```powershell
-scriptsun.ps1 -Build        # starts backend + llama-server, serves the UI at http://127.0.0.1:8000
-scriptsun.ps1 -Stop
+scripts\run.ps1 -Build        # starts backend + llama-server, serves the UI at http://127.0.0.1:8000
+scripts\run.ps1 -Stop
 cd tests\e2e; npx playwright test --project text
 ```

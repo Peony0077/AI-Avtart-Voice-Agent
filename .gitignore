@@ -42,7 +42,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-//playwright-report/
+/playwright-report/
+/tests/e2e/results/
 /test-results/
 
 # ---- Model weights, checkpoints & caches (never commit) --------------------
@@ -112,4 +113,3 @@ ehthumbs.db
 desktop.ini
 $RECYCLE.BIN/
 .DS_Store
-tests/e2e/results/
