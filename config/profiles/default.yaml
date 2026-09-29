@@ -1,0 +1,12 @@
+# Default profile: full voice pipeline, stock voice (Kokoro), no neural avatar.
+# Values not listed here come from backend/app/core/config.py.
+llm:
+  context: 4096
+  max_tokens: 320
+stt:
+  model: openai/whisper-large-v3-turbo
+tts:
+  engine: kokoro
+  voice: af_heart
+avatar:
+  enabled: false

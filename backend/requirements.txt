@@ -1,0 +1,20 @@
+# Backend (.venv) direct dependencies. Install ONLY via:
+#   powershell -File scripts\safe_install.ps1 -r backend\requirements.txt
+# torch/torchaudio/torchvision are pre-installed (2.9.1+cu130) and pinned by constraints/backend.txt.
+
+# --- web / core (Phase 0-1) ---
+fastapi>=0.118
+uvicorn[standard]>=0.37
+pydantic>=2.11
+pydantic-settings>=2.10
+pyyaml>=6.0
+loguru>=0.7
+httpx>=0.28
+psutil>=7.0
+nvidia-ml-py>=13.580
+numpy>=2.0
+
+# --- dev / test ---
+pytest>=8.4
+pytest-asyncio>=1.2
+ruff>=0.13

@@ -1,0 +1,23 @@
+[project]
+name = "ai-avatar-voice-agent"
+version = "0.1.0"
+description = "Self-hosted real-time conversational avatar (voice, RAG, neural talking face)"
+requires-python = ">=3.11,<3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["backend"]
+testpaths = ["backend/tests"]
+asyncio_mode = "auto"
+markers = [
+    "gpu: needs CUDA and downloaded models",
+    "slow: takes more than a few seconds",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["avatar/*/vendor", "frontend", "tools"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]

@@ -1,0 +1,8 @@
+# Hard pins for the backend virtual environment (.venv at repo root).
+# EVERY install into .venv must pass this file:  uv pip install -c constraints/backend.txt ...
+# Use scripts/safe_install.ps1, which also verifies CUDA before and after.
+# These pins keep the working CUDA build of PyTorch from being replaced
+# (for example by a CPU wheel pulled in as a transitive dependency).
+torch==2.9.1+cu130
+torchaudio==2.9.1+cu130
+torchvision==0.24.1+cu130

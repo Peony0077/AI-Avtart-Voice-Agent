@@ -1,0 +1,23 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  --bg: #f6f7f9;
+  --fg: #1d2330;
+  --muted: #667085;
+  --card: #ffffff;
+  --accent: #3b6cf6;
+  --border: #d9dee7;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b;
+    --fg: #e6e9ef;
+    --muted: #98a2b3;
+    --card: #1b2029;
+    --accent: #7b9cff;
+    --border: #2c3340;
+  }
+}
+body { margin: 0; background: var(--bg); color: var(--fg); }
+.app { max-width: 1100px; margin: 0 auto; padding: 16px; }
+pre { background: var(--card); border: 1px solid var(--border); padding: 12px; border-radius: 8px; overflow-x: auto; }

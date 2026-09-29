@@ -1,7 +1,8 @@
 # =============================================================================
 # AI Avatar Voice Agent - .gitignore
-# Project-specific paths are root-anchored ("/models/") on purpose, so they
-# don't also hide source folders such as backend/app/models/ or src/lib/.
+# Model/weight folder names are ignored at ANY depth (vendored avatar code keeps
+# weights in ./models). Therefore no source package may be named "models",
+# "weights", "checkpoints" or "cache" (use "schemas", "engines", ...).
 # =============================================================================
 
 # ---- Secrets & local config -------------------------------------------------
@@ -9,7 +10,6 @@
 .env.*
 !.env.example
 *.local
-# Dev HTTPS certificates (needed for mic access from other devices)
 /certs/
 *.pem
 *.key
@@ -23,8 +23,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .eggs/
-/build/
-/dist/
+build/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -33,21 +32,27 @@ __pycache__/
 htmlcov/
 .ipynb_checkpoints/
 
-# ---- Node / Vite frontend ---------------------------------------------------
+# ---- Node / Vite ------------------------------------------------------------
 node_modules/
-/frontend/dist/
-/frontend/coverage/
+dist/
+coverage/
 .vite/
 .eslintcache
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+/tests/e2e/results/
+/playwright-report/
+/test-results/
 
-# ---- Model weights & caches (download via scripts, never commit) -----------
-/models/
-/hf_cache/
-/.cache/
+# ---- Model weights, checkpoints & caches (never commit) --------------------
+models/
+weights/
+checkpoints/
+cache/
+.cache/
+hf_cache/
 *.gguf
 *.safetensors
 *.ckpt
@@ -58,24 +63,37 @@ pnpm-debug.log*
 *.engine
 *.trt
 *.plan
+*.npy
+*.npz
+*.pkl
 
-# ---- Third-party runtimes (e.g. prebuilt llama.cpp) --------------------------
+# ---- Third-party runtimes / vendored code fetched by scripts ----------------
 /tools/llama.cpp/
+/avatar/*/vendor/
 *.exe
 *.dll
 
-# ---- RAG data ---------------------------------------------------------------
-# Generated vector indexes / DBs
-/data/index/
-/data/cache/
-# Source documents may be private or large: opt-in by removing this line
-/data/knowledge/
+# ---- Data (private documents, generated indexes, personal likeness) ---------
+/data/
+!/data/README.md
+
+# ---- Large generated media --------------------------------------------------
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.wav
+*.flac
+*.mp3
+*.ogg
+*.m4a
+!tests/fixtures/**
 
 # ---- Runtime output ---------------------------------------------------------
-/logs/
+logs/
 *.log
 /recordings/
-/debug_audio/
 /tmp/
 *.tmp
 *.prof
