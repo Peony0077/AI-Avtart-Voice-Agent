@@ -28,10 +28,14 @@ test('avatar idles, lip-syncs the spoken answer in sync with audio, and returns 
   const stats = await page.evaluate(() => {
     const s = window.__avatarStats
     const off = [...s.avOffsets].sort((a, b) => a - b)
+    const arr = s.arrivals.filter((a) => a !== null).sort((a, b) => a - b)
     return { idle: s.idle, speech: s.speech, drawnSpeech: s.drawnSpeech, late: s.late,
-      avOffsetP50: off[Math.floor(off.length / 2)], avOffsetP90: off[Math.floor(off.length * 0.9)] }
+      avOffsetP50: off[Math.floor(off.length / 2)], avOffsetP90: off[Math.floor(off.length * 0.9)],
+      arrivalLatenessP50: arr[Math.floor(arr.length / 2)], arrivalLatenessMax: arr.at(-1),
+      framesBeforeAudioStarted: s.arrivals.filter((a) => a === null).length, clock: s.clock }
   })
   const metrics = await waitFor(messages, (m) => m.type === 'metrics' && m.turn_id === q.turn_id, 10_000)
+  console.log(JSON.stringify({ diag: stats }))
   expect(stats.speech).toBeGreaterThan(10)                                // lip-sync frames were received
   expect(stats.drawnSpeech).toBeGreaterThan(10)                           // and drawn by the audio clock
   expect(stats.avOffsetP50).toBeLessThan(80)                              // frame shown ≤80 ms after its audio

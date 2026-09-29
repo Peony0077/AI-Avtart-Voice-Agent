@@ -87,6 +87,8 @@ class AvatarCfg(BaseModel):
     avatar_id: str = "dev_girl"
     fps: int = 20
     jpeg_quality: int = 80
+    gate_frames: int = 6        # lip-synced frames rendered before a turn's first audio is released
+                                # (6 = frames never lag at turn start; 2 = ~250 ms faster, lips catch up)
 
 
 class Settings(BaseSettings):

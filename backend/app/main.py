@@ -49,7 +49,7 @@ async def health() -> dict:
         "llm_restarts": services.llm_server.restarts,
         "active_session": manager.active.id if manager.active else None,
         "avatar": {"connected": services.avatar_ready, "restarts": services.avatar.restarts,
-                   "hello": services.avatar.hello} if services.avatar else None,
+                   "hello": services.avatar.hello, "stats": services.avatar.stats} if services.avatar else None,
         "load_report": services.load_report,
     }
 

@@ -1,0 +1,24 @@
+{
+  "test": "phase4_avatar",
+  "reply": "The capital of France is Paris.",
+  "idle": 109,
+  "speech": 46,
+  "drawnSpeech": 135,
+  "late": 16,
+  "avOffsetP50": 26.700000002980687,
+  "avOffsetP90": 126.0669999910599,
+  "arrivalLatenessP50": -93,
+  "arrivalLatenessMax": 229,
+  "framesBeforeAudioStarted": 2,
+  "clock": {
+    "outputLatency": 0.041,
+    "baseLatency": 0.01,
+    "currentTime": 4.842666666666666,
+    "tsContext": 4.788542,
+    "audible": -40.75799999701957,
+    "start": 4.832
+  },
+  "first_audio_ms": 1430.3,
+  "avatar_first_frame_ms": 1409.1,
+  "avatar_render_ms": 164.6
+}

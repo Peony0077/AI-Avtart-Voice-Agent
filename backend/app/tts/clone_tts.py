@@ -18,6 +18,7 @@ from loguru import logger
 from websockets.sync.client import connect
 
 from app.core.config import Settings
+from app.core.procjob import JOB, free_port
 from app.tts.base import TTSResult
 
 CHUNK = struct.Struct("<IIB")
@@ -37,9 +38,11 @@ class CloneTTS:
         ref = settings.repo_path(cfg.clone_reference_wav)
         log = (settings.log_dir / "xtts-worker.log").open("ab")
         t0 = time.perf_counter()
+        free_port(port, "worker.py")
         self.proc = subprocess.Popen([str(py), str(script), "--ref", str(ref), "--port", str(port)],
                                      cwd=script.parent, stdout=log, stderr=subprocess.STDOUT,
                                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        JOB.adopt(self.proc)
         self.ws = self._connect(240)
         self._ids = itertools.count(1)
         self.load_s = round(time.perf_counter() - t0, 2)

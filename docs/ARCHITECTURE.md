@@ -31,7 +31,7 @@ Browser (owner's PC) ──HTTPS/WSS──► P1 backend (FastAPI, .venv torch 2
 | 1 Text conversation | done | see "Phase 1 results" |
 | 2 Voice pipeline | done | see "Phase 2 results" |
 | 3 Interruption | done | see "Phase 3 results" |
-| 4 Realistic avatar | pending | |
+| 4 Realistic avatar | done | see "Phase 4 results" |
 | 5 RAG | pending | |
 | 6 Hardening | pending | |
 
@@ -147,6 +147,70 @@ get barged into). Raw data: [phase3_soak_30min.json](benchmarks/phase3_soak_30mi
 | Backend resident RAM | 2,602 → 714 MiB (Windows trims the working set under memory pressure) |
 
 (Package installs and model downloads for Phase 4 were running in parallel during this test.)
+
+## Phase 4 results (realistic avatar from one photo)
+
+![Expressions generated from one photo](images/avatar_expressions.jpg)
+
+*Left to right: the input photo, then the neutral / friendly / happy / concerned / thinking loops rendered
+by the face rig.* While speaking, MuseTalk replaces the mouth region:
+
+![Speaking frame](images/avatar_speaking.jpg)
+
+### How it works
+
+1. **Offline, once per photo** (`avatar/musetalk/build_avatar.py`, ~6 min): a procedural *face rig* on
+   LivePortrait renders five 7-second loops at 20 fps. All loops share one seeded motion curve
+   (head drift ±2°, ~17 blinks/min, micro-saccades with eye contact) and differ only in expression
+   (smile, eyebrows, gaze), so the worker can switch loops at the same frame index. MuseTalk then
+   pre-computes face boxes (DWPose via ONNX, S3FD), VAE latents and blend masks for each loop.
+2. **Live** (`avatar/musetalk/worker.py`, own venv/process): idle frames stream at 20 fps; the loop
+   follows the conversation state (listening → friendly, thinking → gaze away) and the LLM's emotion
+   tag (empathetic/concerned → concerned, happy → happy, ...). Each TTS clause is lip-synced by MuseTalk
+   and every frame carries a pts on the turn's audio timeline; the browser draws frames by the
+   *audible* audio position (`AudioContext.getOutputTimestamp`), so sync survives network jitter.
+3. **A/V gate**: a turn's first audio is released only when its first 6 lip-synced frames exist
+   (batches ramp 2 → 4 → 8), so video never lags at the start of a reply.
+
+### Measurements (RTX 3060, whole stack resident)
+
+| Metric | Value |
+|---|---|
+| Photo → avatar build | LivePortrait 213 ms/frame (5×140 frames, 2.5 min) + MuseTalk prep ~35 s/loop |
+| MuseTalk throughput, alone | 13.2 fps baseline → **24.3 fps** after optimisation (1.21× real time at 20 fps) |
+| — optimisation 1 | decode only latent rows ≥ 12 (the blend mask covers the lower half): VAE 44.7 → 27.7 ms/frame, mean abs diff 1.9/255 |
+| — optimisation 2 | two-stage pipeline: GPU batch k+1 overlaps CPU composite/JPEG of batch k |
+| MuseTalk under continuous LLM load | 9.3 fps (real turns overlap the LLM only briefly) |
+| Live render speed (26 clauses) | 18–24 fps, first 6 frames in 363–745 ms |
+| A/V sync in the browser (3 runs) | median frame offset 27–30 ms, p90 45–126 ms, 0–11 % frames late |
+| End of speech → first audio, **avatar on** (16 turns) | **p50 1,750 · p90 1,914 ms** (gate 6) |
+| — with `gate_frames: 2` | p50 1,513 · p90 1,690 ms; 12–14 % frames late, up to ~250 ms at reply start |
+| VRAM peak (LLM + Whisper + Kokoro + MuseTalk + desktop) | 9.5 GiB of 12 GiB |
+| Emotion → loop | verified: sad → concerned, good news → happy, "let me think" → thinking |
+
+Raw data: [phase4_musetalk_engine.json](benchmarks/phase4_musetalk_engine.json),
+[phase4_voice_with_avatar.json](benchmarks/phase4_voice_with_avatar.json),
+[phase4_voice_with_avatar_gate2.json](benchmarks/phase4_voice_with_avatar_gate2.json),
+[phase4_avatar_browser.json](benchmarks/phase4_avatar_browser.json).
+
+### Lessons / fixes found while measuring
+
+- A force-stopped backend used to leave the avatar worker running; the next backend then connected to
+  the stale worker (old code, VRAM held). All helper processes now live in a Windows Job Object with
+  kill-on-close, and stale listeners on our ports are cleared before spawning (`app/core/procjob.py`).
+- Running a second MuseTalk process next to the full stack exceeded 12 GB: Windows silently spilled
+  VRAM to system RAM and throughput fell to 1–6 fps. Keep one avatar engine, and set NVIDIA
+  *Sysmem Fallback Policy → Prefer No Sysmem Fallback* so this becomes a clear error instead.
+- The GPU is slower for the first batches after it sat idle; the worker runs a 150 ms warm-up burst
+  when the conversation enters THINKING (after STT, before the first clause).
+
+### Limitations
+
+- Upper body / hand gestures are not animated (only head, eyes, brows, mouth). The LLM's `gesture`
+  field is sent to the browser but not rendered yet.
+- MuseTalk renders the mouth at 256×256 inside a 512×512 frame; larger output needs a stronger GPU.
+- The development photo is AI-generated (from OpenAvatarChat's resources). Build your own avatar with
+  `build_avatar.py --photo <your photo> --id <name>` and set `avatar.avatar_id`.
 
 ## Running
 

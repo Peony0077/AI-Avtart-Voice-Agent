@@ -30,7 +30,7 @@ function Stop-All {
   }
   Get-Process llama-server -ErrorAction SilentlyContinue | Stop-Process -Force
   Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
-    Where-Object { $_.CommandLine -match 'avatar_worker|uvicorn app.main' } |
+    Where-Object { $_.CommandLine -match 'avatar\\musetalk\\worker\.py|voice\\xtts\\worker\.py|uvicorn app\.main' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 

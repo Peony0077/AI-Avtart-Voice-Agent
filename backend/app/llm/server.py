@@ -15,6 +15,7 @@ import httpx
 from loguru import logger
 
 from app.core.config import Settings
+from app.core.procjob import JOB, free_port
 
 
 class LlamaServerSupervisor:
@@ -57,11 +58,10 @@ class LlamaServerSupervisor:
         logger.info(f"starting llama-server: {' '.join(self.command())}")
         self._proc = subprocess.Popen(self.command(), stdout=log, stderr=subprocess.STDOUT,
                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        JOB.adopt(self._proc)
 
     def start(self, timeout_s: float = 180.0) -> None:
-        if self._is_healthy():
-            logger.info("llama-server already running (external) — reusing it")
-            return
+        free_port(self.port, "llama-server")   # a stale llama-server of ours (e.g. from a killed backend)
         self._spawn()
         self.wait_ready(timeout_s)
         self._watchdog = threading.Thread(target=self._watch, name="llama-watchdog", daemon=True)

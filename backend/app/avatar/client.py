@@ -19,6 +19,7 @@ import websockets
 from loguru import logger
 
 from app.core.config import Settings
+from app.core.procjob import JOB, free_port
 from app.transport.protocol import HEADER, KIND_AUDIO, KIND_IDLE_VIDEO
 
 FrameSink = Callable[[bytes, int, int], None]  # (packet, kind, turn_id)
@@ -52,15 +53,19 @@ class AvatarClient:
         script = self.settings.repo_path("avatar/musetalk/worker.py")
         port = self.cfg.worker_url.rsplit(":", 1)[1].split("/")[0]
         cmd = [str(py), str(script), "--avatar", self.cfg.avatar_id, "--port", port,
-               "--quality", str(self.cfg.jpeg_quality)]
+               "--quality", str(self.cfg.jpeg_quality), "--gate-frames", str(self.cfg.gate_frames)]
+        free_port(int(port), "worker.py")
         log = (self.settings.log_dir / "avatar-worker.log").open("ab")
         logger.info(f"starting avatar worker: {' '.join(cmd)}")
         self.proc = subprocess.Popen(cmd, cwd=script.parent, stdout=log, stderr=subprocess.STDOUT,
                                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        JOB.adopt(self.proc)
 
     async def _connect(self, timeout_s: float) -> None:
         deadline = time.time() + timeout_s
         while time.time() < deadline:
+            if self.proc is not None and self.proc.poll() is not None:
+                raise RuntimeError(f"avatar worker exited with {self.proc.returncode}; see logs/avatar-worker.log")
             if self.proc is not None and self.proc.poll() is not None:
                 raise RuntimeError(f"avatar worker exited with {self.proc.returncode}; see logs/avatar-worker.log")
             try:

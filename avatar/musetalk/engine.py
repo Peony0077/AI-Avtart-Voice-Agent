@@ -25,6 +25,7 @@ from scipy.signal import resample_poly
 from common import WEIGHTS, chdir
 
 EXTRA_MARGIN = 10     # MuseTalk 1.5: extra chin area below the landmark box
+DECODE_FROM_ROW = 12  # latent row (x8 px) from which the face is decoded: 96 px margin above the blend line
 PARSING_MODE = "jaw"
 
 
@@ -145,20 +146,30 @@ class MuseTalkEngine:
                                             audio_padding_length_right=2)
 
     @torch.no_grad()
-    def generate(self, loop: Loop, chunks: torch.Tensor, start_idx: int) -> list[np.ndarray]:
-        """One batch: audio chunks [B,50,384] + loop frames start_idx.. → full BGR frames."""
+    def faces(self, loop: Loop, chunks: torch.Tensor, start_idx: int) -> tuple[list[int], np.ndarray]:
+        """GPU stage: audio chunks [B,50,384] → lower part of the 256x256 face crops (BGR uint8).
+
+        Only latent rows >= DECODE_FROM_ROW are decoded: MuseTalk's blend mask covers the lower half
+        of the crop (y >= 128), so decoding the top is wasted work. Measured on the RTX 3060:
+        44.7 → 27.7 ms/frame, mean abs difference 1.9/255 in the blended area (profile_vae.py).
+        """
         b = chunks.shape[0]
         idx = [(start_idx + i) % len(loop) for i in range(b)]
         latent = loop.latents[idx].to(self.device, self.dtype)
         cond = self.pe(chunks.to(self.device, self.dtype))
         pred = self.unet(latent, self.timesteps, encoder_hidden_states=cond).sample
-        faces = self.vae.decode_latents(pred)
-        return [self._blend(loop, i, face) for i, face in zip(idx, faces, strict=True)]
+        lat = pred[:, :, DECODE_FROM_ROW:, :] / self.vae.scaling_factor
+        img = self.vae.vae.decode(lat.to(self.vae.vae.dtype)).sample
+        img = (img / 2 + 0.5).clamp(0, 1).mul(255).round().to(torch.uint8)
+        return idx, img.permute(0, 2, 3, 1).cpu().numpy()[..., ::-1]   # RGB → BGR
 
-    def _blend(self, loop: Loop, i: int, face: np.ndarray) -> np.ndarray:
+    def compose(self, loop: Loop, i: int, face_bottom: np.ndarray) -> np.ndarray:
+        """CPU stage: paste the generated lower face into loop frame i (MuseTalk blending)."""
         frame = loop.frame(i)
         x1, y1, x2, y2 = loop.coords[i]
-        face = cv2.resize(face, (x2 - x1, y2 - y1))
+        crop = cv2.resize(frame[y1:y2, x1:x2], (256, 256), interpolation=cv2.INTER_AREA)
+        crop[256 - face_bottom.shape[0]:] = face_bottom        # top rows keep the original pixels
+        face = cv2.resize(crop, (x2 - x1, y2 - y1))
         xs, ys, xe, ye = loop.mask_boxes[i]
         body = frame[ys:ye, xs:xe]
         large = body.copy()
@@ -167,6 +178,11 @@ class MuseTalkEngine:
         hh, ww = min(large.shape[0], m.shape[0]), min(large.shape[1], m.shape[1])
         frame[ys:ys + hh, xs:xs + ww] = (large[:hh, :ww] * m[:hh, :ww] + body[:hh, :ww] * (1 - m[:hh, :ww])).astype(np.uint8)
         return frame
+
+    def generate(self, loop: Loop, chunks: torch.Tensor, start_idx: int) -> list[np.ndarray]:
+        """Both stages, sequentially (tests/benchmarks; the worker pipelines them)."""
+        idx, faces = self.faces(loop, chunks, start_idx)
+        return [self.compose(loop, i, f) for i, f in zip(idx, faces, strict=True)]
 
     def warmup(self, loop: Loop) -> float:
         t0 = time.perf_counter()

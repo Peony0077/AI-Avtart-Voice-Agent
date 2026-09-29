@@ -37,31 +37,39 @@ def llm_load(url: str, stop: threading.Event) -> None:
 
 
 def run(engine: MuseTalkEngine, loop: Loop, pcm: np.ndarray, batch: int) -> dict:
-    engine.batch_size = batch
+    """Same two-stage pipeline as worker.py: GPU faces(k+1) overlaps CPU compose+JPEG(k)."""
+    from concurrent.futures import ThreadPoolExecutor
+
     t0 = time.perf_counter()
     chunks = engine.audio_features(pcm)
     torch.cuda.synchronize()
     feat_ms = (time.perf_counter() - t0) * 1000
     n = chunks.shape[0]
+    starts = [0] + list(range(2, n, batch))
+    spans = [(s, starts[i + 1] if i + 1 < len(starts) else n) for i, s in enumerate(starts)]
+    first_ms, gpu_ms = None, []
+
+    def compose(idx, faces):
+        return [cv2.imencode(".jpg", engine.compose(loop, i, f), [cv2.IMWRITE_JPEG_QUALITY, 80])[1] for i, f in zip(idx, faces)]
+
     t1 = time.perf_counter()
-    gen_ms, enc_ms, first_ms = [], [], None
-    for s in range(0, n, batch):
-        tb = time.perf_counter()
-        frames = engine.generate(loop, chunks[s:s + batch], s)
-        torch.cuda.synchronize()
-        tg = time.perf_counter()
-        for f in frames:
-            cv2.imencode(".jpg", f, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        te = time.perf_counter()
-        gen_ms.append((tg - tb) * 1000 / len(frames))
-        enc_ms.append((te - tg) * 1000 / len(frames))
-        if first_ms is None:
-            first_ms = (te - t0) * 1000
+    with ThreadPoolExecutor(1) as cpu:
+        pending = None
+        for s, e in spans:
+            tg = time.perf_counter()
+            idx, faces = engine.faces(loop, chunks[s:e], s)
+            gpu_ms.append((time.perf_counter() - tg) * 1000 / (e - s))
+            if pending is not None:
+                pending.result()
+            pending = cpu.submit(compose, idx, faces)
+            if first_ms is None:
+                pending.result()
+                first_ms = (time.perf_counter() - t0) * 1000
+        pending.result()
     total = time.perf_counter() - t1
     return {"batch": batch, "frames": n, "audio_s": round(len(pcm) / 24000, 2), "features_ms": round(feat_ms, 1),
-            "first_batch_ready_ms": round(first_ms, 1), "fps": round(n / total, 1),
-            "gen_ms_per_frame": round(statistics.median(gen_ms), 1), "jpeg_ms_per_frame": round(statistics.median(enc_ms), 1),
-            "realtime_factor": round((n / total) / engine.fps, 2)}
+            "first_frames_ready_ms": round(first_ms, 1), "fps": round(n / total, 1),
+            "gpu_ms_per_frame": round(statistics.median(gpu_ms), 1), "realtime_factor": round((n / total) / engine.fps, 2)}
 
 
 def main() -> None:

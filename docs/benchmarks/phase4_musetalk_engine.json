@@ -1,0 +1,39 @@
+{
+  "engine_load_s": 4.73,
+  "fps_target": 20,
+  "runs": [
+    {
+      "batch": 4,
+      "frames": 198,
+      "audio_s": 9.9,
+      "features_ms": 41.8,
+      "first_frames_ready_ms": 338.9,
+      "fps": 20.9,
+      "gpu_ms_per_frame": 42.5,
+      "realtime_factor": 1.05
+    },
+    {
+      "batch": 8,
+      "frames": 198,
+      "audio_s": 9.9,
+      "features_ms": 21.6,
+      "first_frames_ready_ms": 162.4,
+      "fps": 24.3,
+      "gpu_ms_per_frame": 40.1,
+      "realtime_factor": 1.21
+    },
+    {
+      "batch": 8,
+      "frames": 198,
+      "audio_s": 9.9,
+      "features_ms": 113.1,
+      "first_frames_ready_ms": 415.3,
+      "fps": 9.3,
+      "gpu_ms_per_frame": 108.2,
+      "realtime_factor": 0.46,
+      "with_llm_generating": true
+    }
+  ],
+  "vram_peak_alloc_mib": 2590,
+  "vram_reserved_mib": 3582
+}

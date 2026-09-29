@@ -52,7 +52,7 @@ class Turn:
 
 
 class AvatarWorker:
-    def __init__(self, avatar_id: str, batch: int, quality: int, lead_ms: int) -> None:
+    def __init__(self, avatar_id: str, batch: int, quality: int, lead_ms: int, gate_frames: int = 6) -> None:
         folder = AVATARS / avatar_id
         meta = json.loads((folder / "avatar.json").read_text(encoding="utf-8"))
         self.fps = meta["fps"]
@@ -60,6 +60,8 @@ class AvatarWorker:
         self.engine = MuseTalkEngine(fps=self.fps, batch_size=batch)
         self.warmup_s = self.engine.warmup(next(iter(self.loops.values())))
         self.quality = quality
+        self.gate_frames = gate_frames
+        self._warming = False
         self.lead_frames = round(lead_ms * self.fps / 1000)
         self.idx = 0
         self.idle_loop = "friendly" if "friendly" in self.loops else next(iter(self.loops))
@@ -106,6 +108,11 @@ class AvatarWorker:
                 self.speech_loop = loop
                 self._switch_idle(loop)
         elif kind == "state":
+            if msg.get("state") == "THINKING":
+                # the first clause arrives a few hundred ms later; a GPU that sat idle is measurably
+                # slower for its first batches (bench_idle.py: ~650 → ~425 ms), so warm it now.
+                # STT has already finished at THINKING, so this does not compete with it.
+                asyncio.get_running_loop().create_task(self._warm_burst())
             loop = STATE_TO_LOOP.get(msg.get("state", ""))
             if loop in self.loops and (self.turn is None or not self.turn.playing):
                 self._switch_idle(loop)
@@ -127,7 +134,21 @@ class AvatarWorker:
             if self.turn is not None and turn_id < self.turn.turn_id:
                 return  # stale
             self.turn = Turn(turn_id, base_idx=self.idx + self.lead_frames, loop=self.speech_loop)
+            logger.info(f"turn {turn_id}: speaking with loop '{self.speech_loop}' from frame {self.turn.base_idx}")
         self.queue.put_nowait((self.turn, seq, pts, pcm))
+
+    async def _warm_burst(self, ms: float = 150.0) -> None:
+        if self._warming:
+            return
+        self._warming = True
+        try:
+            loop = self.loops[self.speech_loop]
+            chunks = torch.zeros(2, 50, 384)
+            end = time.perf_counter() + ms / 1000
+            while time.perf_counter() < end and self.queue.empty():
+                await asyncio.to_thread(self.engine.faces, loop, chunks, 0)
+        finally:
+            self._warming = False
 
     def _switch_idle(self, loop: str) -> None:
         if loop != self.idle_loop:
@@ -158,6 +179,7 @@ class AvatarWorker:
 
     # ------------------------------------------------------------------ speech rendering
     async def _render(self) -> None:
+        """Two-stage pipeline: the GPU stage of batch k+1 runs while the CPU composites batch k."""
         b = self.engine.batch_size
         while True:
             turn, seq, pts, pcm = await self.queue.get()
@@ -167,19 +189,32 @@ class AvatarWorker:
             chunks = await asyncio.to_thread(self.engine.audio_features, pcm)
             loop = self.loops[turn.loop]
             n = chunks.shape[0]
-            for start in range(0, n, b):
+            if n == 0:
+                continue
+            # First clause of a turn: ramp the batch size (2, 4, then b) and release the audio only when
+            # gate_frames frames exist, so rendering stays ahead of playback at turn start (measured: with a
+            # single 2-frame gate followed by a batch of 8, frames arrived up to 368 ms late).
+            first_seg = turn.rendered == 0
+            sizes = ([2, 4] if first_seg else []) + [b] * n
+            spans, s = [], 0
+            for size in sizes:
+                if s >= n:
+                    break
+                spans.append((s, min(n, s + size)))
+                s += size
+            gate = min(n, self.gate_frames if first_seg else 1)
+            pending: asyncio.Task | None = None
+            base = turn.base_idx + turn.rendered
+            for s, e in spans:
                 if turn.cancelled:
                     break
-                batch = chunks[start:start + b]
-                frames = await asyncio.to_thread(self._render_batch, loop, batch, turn.base_idx + turn.rendered)
-                for k, jpg in enumerate(frames):
-                    frame_pts = pts + round((start + k) * 1000 / self.fps)
-                    await self._send(HEADER.pack(KIND_VIDEO, turn.turn_id, seq, frame_pts) + jpg)
-                turn.rendered += len(frames)
-                if seq not in turn.first_frame_sent:
-                    turn.first_frame_sent.add(seq)
-                    await self._send_json({"type": "first_frame", "turn_id": turn.turn_id, "seq": seq,
-                                           "ms": round((time.perf_counter() - t0) * 1000, 1)})
+                idx, faces = await asyncio.to_thread(self.engine.faces, loop, chunks[s:e], base + s)
+                if pending is not None:
+                    await pending
+                pending = asyncio.create_task(self._compose_and_send(turn, seq, pts, loop, idx, faces, s, t0, gate))
+            if pending is not None:
+                await pending
+            turn.rendered += n
             ms = (time.perf_counter() - t0) * 1000
             self.stats["segments"] += 1
             self.stats["frames"] += n
@@ -188,9 +223,22 @@ class AvatarWorker:
                                    "render_ms": round(ms, 1), "audio_ms": round(len(pcm) / 24),
                                    "fps": round(n / (ms / 1000), 1) if ms else None})
 
-    def _render_batch(self, loop: Loop, batch: torch.Tensor, start_idx: int) -> list[bytes]:
-        frames = self.engine.generate(loop, batch, start_idx)
-        return [cv2.imencode(".jpg", f, [cv2.IMWRITE_JPEG_QUALITY, self.quality])[1].tobytes() for f in frames]
+    async def _compose_and_send(self, turn: Turn, seq: int, pts: int, loop: Loop, idx: list[int],
+                                faces: np.ndarray, first: int, t0: float, gate: int) -> None:
+        jpgs = await asyncio.to_thread(self._compose_batch, loop, idx, faces)
+        if turn.cancelled:
+            return
+        for k, jpg in enumerate(jpgs):
+            frame_pts = pts + round((first + k) * 1000 / self.fps)
+            await self._send(HEADER.pack(KIND_VIDEO, turn.turn_id, seq, frame_pts) + jpg)
+        if seq not in turn.first_frame_sent and first + len(jpgs) >= gate:
+            turn.first_frame_sent.add(seq)
+            await self._send_json({"type": "first_frame", "turn_id": turn.turn_id, "seq": seq,
+                                   "ms": round((time.perf_counter() - t0) * 1000, 1)})
+
+    def _compose_batch(self, loop: Loop, idx: list[int], faces: np.ndarray) -> list[bytes]:
+        return [cv2.imencode(".jpg", self.engine.compose(loop, i, f), [cv2.IMWRITE_JPEG_QUALITY, self.quality])[1].tobytes()
+                for i, f in zip(idx, faces, strict=True)]
 
     # ------------------------------------------------------------------ io
     async def _send(self, data: bytes) -> None:
@@ -224,11 +272,12 @@ async def main() -> None:
     ap.add_argument("--avatar", default="dev_girl")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8765)
-    ap.add_argument("--batch", type=int, default=4)
+    ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--quality", type=int, default=80)
     ap.add_argument("--lead-ms", type=int, default=250, help="expected delay from first audio to playback start")
+    ap.add_argument("--gate-frames", type=int, default=6, help="frames rendered before a turn's first audio is released")
     args = ap.parse_args()
-    worker = AvatarWorker(args.avatar, args.batch, args.quality, args.lead_ms)
+    worker = AvatarWorker(args.avatar, args.batch, args.quality, args.lead_ms, args.gate_frames)
     async with websockets.serve(worker.handle, args.host, args.port, max_size=None, ping_interval=20):
         logger.info(f"avatar worker listening on ws://{args.host}:{args.port}")
         await asyncio.Future()

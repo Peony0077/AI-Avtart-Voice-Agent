@@ -9,7 +9,7 @@ export default function AvatarStage({ conv, voice }) {
   const idleRef = useRef(null)               // ImageBitmap
   const speechRef = useRef(new Map())        // turnId -> [{pts, bmp}] sorted by pts
   const rejectUpToRef = useRef(0)
-  const statsRef = useRef({ idle: 0, speech: 0, drawnSpeech: 0, late: 0, avOffsets: [] })
+  const statsRef = useRef({ idle: 0, speech: 0, drawnSpeech: 0, late: 0, avOffsets: [], arrivals: [], clock: null })
   const [size, setSize] = useState(null)
 
   useEffect(() => {
@@ -31,6 +31,10 @@ export default function AvatarStage({ conv, voice }) {
         idleRef.current = bmp
       } else {
         statsRef.current.speech++
+        const eng = voice.engineRef.current
+        const audibleNow = eng?.playingTurn === p.turnId ? eng.audibleMs(p.turnId) : null
+        const st = statsRef.current
+        if (st.arrivals.length < 600) st.arrivals.push(audibleNow === null ? null : Math.round(audibleNow - p.ptsMs))
         const list = speechRef.current.get(p.turnId) ?? []
         list.push({ pts: p.ptsMs, bmp })
         list.sort((a, b) => a.pts - b.pts)
@@ -39,7 +43,7 @@ export default function AvatarStage({ conv, voice }) {
     })
     window.__avatarStats = statsRef.current // test hook
     return () => { offJson(); offBinary() }
-  }, [conv])
+  }, [conv, voice])
 
   useEffect(() => {
     let raf = 0
@@ -54,6 +58,11 @@ export default function AvatarStage({ conv, voice }) {
       const list = turn ? speechRef.current.get(turn) : null
       if (engine && turn && list?.length && !engine.endedTurns.has(turn)) {
         const audible = engine.audibleMs(turn)
+        if (!statsRef.current.clock && engine.playCtx) {
+          const ts = engine.playCtx.getOutputTimestamp?.()
+          statsRef.current.clock = { outputLatency: engine.playCtx.outputLatency, baseLatency: engine.playCtx.baseLatency,
+            currentTime: engine.playCtx.currentTime, tsContext: ts?.contextTime, audible, start: engine.turnStartCtx.get(turn) }
+        }
         if (audible !== null && audible >= 0) {
           // newest frame not in the future; free the ones we have passed
           let i = -1
