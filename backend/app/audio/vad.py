@@ -4,6 +4,7 @@ Feed raw PCM16 16 kHz microphone bytes as they arrive. The detector emits:
   * ``start``   speech began (``bargein=True`` if it happened while the assistant was talking)
   * ``pause``   early_stt_ms of silence inside an utterance (lets the caller start STT
                 speculatively while the endpoint timer is still running); carries the audio
+  * ``resume``  speech continued after a ``pause`` (speculative work for that pause is stale)
   * ``end``     utterance finished (trailing silence >= endpoint_ms); carries the audio
 The threshold is stricter while the assistant is speaking ("playback-aware"), so
 residual echo is less likely to trigger an interruption.
@@ -27,7 +28,7 @@ CHUNK_MS = CHUNK * 1000 / SR    # 32 ms
 
 @dataclass
 class VadEvent:
-    kind: str                   # "start" | "pause" | "end"
+    kind: str                   # "start" | "pause" | "resume" | "end"
     t: float                    # wall-clock time of the relevant audio (arrival time)
     bargein: bool = False
     audio: np.ndarray | None = None       # float32 mono 16 kHz (for "end")
@@ -73,6 +74,11 @@ class StreamingVAD:
         self._pending = self._pending[n * CHUNK:]
         return events
 
+    @property
+    def silence_ms(self) -> float:
+        """Trailing silence inside the current utterance (0 while the user is talking)."""
+        return self._silence_ms
+
     def _step(self, chunk: np.ndarray, assistant_active: bool, t: float) -> VadEvent | None:
         audio = chunk.astype(np.float32) / 32768.0
         prob = float(self.model(torch.from_numpy(audio), SR).item())
@@ -101,7 +107,9 @@ class StreamingVAD:
         if prob >= cfg.threshold - 0.15:
             self._silence_ms = 0.0
             self._last_voice_t = t
-            self._pause_sent = False
+            if self._pause_sent:          # speech continued after a "pause": speculative work is stale
+                self._pause_sent = False
+                return VadEvent("resume", t)
         else:
             self._silence_ms += CHUNK_MS
         duration_s = len(self._utterance) * CHUNK_MS / 1000
@@ -111,6 +119,7 @@ class StreamingVAD:
                           stats={"duration_ms": round(len(utterance) / SR * 1000), "max_prob": round(self.max_prob, 3)})
             self.in_speech = False
             self._voiced_ms = 0.0
+            self._pause_sent = False
             self._utterance = []
             self._preroll.clear()
             self.model.reset_states()

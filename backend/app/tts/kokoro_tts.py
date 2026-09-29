@@ -23,7 +23,9 @@ class KokoroTTS:
         t0 = time.perf_counter()
         self.cfg = cfg
         self.model = KModel(repo_id=REPO).to(cfg.device).eval()
-        self.pipeline = KPipeline(lang_code="a", repo_id=REPO, model=self.model)
+        # voice prefix a*/b* = American/British English; the G2P must match (accent is in the phonemes)
+        lang = cfg.voice[0] if cfg.voice[:1] in ("a", "b") else "a"
+        self.pipeline = KPipeline(lang_code=lang, repo_id=REPO, model=self.model)
         self.pipeline.load_voice(cfg.voice)
         self.load_s = round(time.perf_counter() - t0, 2)
         logger.info(f"Kokoro loaded in {self.load_s}s (voice {cfg.voice}, {cfg.device})")

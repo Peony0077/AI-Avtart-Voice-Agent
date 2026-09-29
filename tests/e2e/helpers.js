@@ -1,6 +1,9 @@
 import { expect } from '@playwright/test'
 import fs from 'node:fs'
 
+// Page path incl. the access token when testing remote access (AVATAR_TOKEN=...)
+export const appPath = (token = process.env.AVATAR_TOKEN) => (token ? `/?token=${encodeURIComponent(token)}` : '/')
+
 export const manifest = JSON.parse(fs.readFileSync(new URL('./fixtures/manifest.json', import.meta.url)))
 
 // Collect every JSON message the server sends (via Playwright's WebSocket inspection).
@@ -19,7 +22,7 @@ export function captureServerMessages(page) {
 }
 
 export async function openAndStartVoice(page) {
-  await page.goto('/')
+  await page.goto(appPath())
   await expect(page.getByTestId('conn-status')).toHaveText('open', { timeout: 30_000 })
   await expect(page.getByTestId('voice-start')).toBeEnabled({ timeout: 30_000 })
   await page.getByTestId('voice-start').click()

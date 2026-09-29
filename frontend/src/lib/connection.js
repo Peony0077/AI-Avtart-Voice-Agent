@@ -1,9 +1,21 @@
 // WebSocket connection with automatic reconnection (exponential backoff).
 // Emits: 'open', 'close', 'json' (message object), 'binary' (ArrayBuffer), 'status'.
 
+// Access token for remote use: open the page as https://host/?token=XYZ once; it is kept for the tab.
+export function accessToken() {
+  const fromUrl = new URLSearchParams(location.search).get('token')
+  try {
+    if (fromUrl) sessionStorage.setItem('avatarToken', fromUrl)
+    return fromUrl ?? sessionStorage.getItem('avatarToken') ?? ''
+  } catch {
+    return fromUrl ?? ''
+  }
+}
+
 export function wsUrl(path = '/ws') {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${proto}//${location.host}${path}`
+  const token = accessToken()
+  return `${proto}//${location.host}${path}${token ? `?token=${encodeURIComponent(token)}` : ''}`
 }
 
 export class Connection extends EventTarget {
@@ -36,8 +48,8 @@ export class Connection extends EventTarget {
     }
     ws.onclose = (ev) => {
       this.dispatchEvent(new CustomEvent('close', { detail: { code: ev.code, reason: ev.reason } }))
-      if (this.closedByUser || ev.code === 4001) {
-        this._setStatus(ev.code === 4001 ? 'replaced' : 'closed')
+      if (this.closedByUser || ev.code === 4001 || ev.code === 4003) {
+        this._setStatus(ev.code === 4001 ? 'replaced' : ev.code === 4003 ? 'access denied (token)' : 'closed')
         return
       }
       const delay = Math.min(8000, 500 * 2 ** this.retry++)

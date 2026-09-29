@@ -1,0 +1,49 @@
+{
+  "load_s": 16.78,
+  "first_chunk_ms_p50": 464.6,
+  "rtf_p50": 0.541,
+  "similarity_clone_vs_reference": 0.749,
+  "similarity_other_voice_vs_reference": 0.429,
+  "vram_peak_alloc_mib": 2200,
+  "sample": "..\\..\\logs\\clone_sample.wav",
+  "sample_text": "Sure! Octopuses have three hearts, and two of them pump blood to the gills. That's a great question. The capital of France is Paris, a city famous for art, food and history.",
+  "rows": [
+    {
+      "text": "Sure!",
+      "first_chunk_ms": 438.1,
+      "total_ms": 766.3,
+      "audio_ms": 1483,
+      "rtf": 0.517
+    },
+    {
+      "text": "Octopuses have three hearts,",
+      "first_chunk_ms": 709.4,
+      "total_ms": 1815.1,
+      "audio_ms": 2603,
+      "rtf": 0.697
+    },
+    {
+      "text": "and two of them pump blood to the gills.",
+      "first_chunk_ms": 507.5,
+      "total_ms": 1580.5,
+      "audio_ms": 2923,
+      "rtf": 0.541
+    },
+    {
+      "text": "That's a great question.",
+      "first_chunk_ms": 484.7,
+      "total_ms": 905.2,
+      "audio_ms": 1675,
+      "rtf": 0.541
+    },
+    {
+      "text": "The capital of France is Paris, a city famous for art, food and history.",
+      "first_chunk_ms": 450.3,
+      "total_ms": 3406.9,
+      "audio_ms": 5621,
+      "rtf": 0.606
+    }
+  ],
+  "whisper_transcript": "Sure, octopuses have three hearts, and two of them pump blood to the gills. That's a great question. The capital of France is Paris, a city famous for art, food and history.",
+  "approx_word_error": 0.0
+}

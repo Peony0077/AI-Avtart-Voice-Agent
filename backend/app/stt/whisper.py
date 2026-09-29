@@ -2,6 +2,10 @@
 
 Weights are loaded straight to the GPU in fp16 (no full CPU copy — RAM is scarce).
 Segment-level transcription: one call per VAD utterance.
+
+Decoding uses a minimal greedy loop instead of ``generate()``: same prompt, same token suppression,
+identical transcripts on all 15 test fixtures (both models), ~18 ms less per utterance (196 -> 178 ms
+warm, large-v3-turbo). The encoder dominates: 141 ms with the GPU clocked up, ~330 ms after 2 s idle.
 """
 from __future__ import annotations
 
@@ -37,6 +41,19 @@ class WhisperSTT:
         ).eval()
         self.load_s = round(time.perf_counter() - t0, 2)
         self.last_timing: dict = {}
+        # English-only checkpoints (*.en) reject language/task arguments
+        self.english_only = not getattr(self.model.generation_config, "is_multilingual", True)
+        g = self.model.generation_config
+        prompt = [g.decoder_start_token_id]
+        if not self.english_only:
+            prompt += [g.lang_to_id[f"<|{cfg.language}|>"], g.task_to_id["transcribe"]]
+        self._prompt = torch.tensor([prompt + [g.no_timestamps_token_id]], device=self.device)
+        self._suppress = torch.tensor(g.suppress_tokens or [], dtype=torch.long, device=self.device)
+        self._begin_suppress = torch.tensor(g.begin_suppress_tokens or [], dtype=torch.long, device=self.device)
+        self._eos = g.eos_token_id
+        self.fast_decode = True
+        self._warm_feats = torch.zeros(1, self.model.config.num_mel_bins, 3000, dtype=torch.float16,
+                                       device=self.device)
         logger.info(f"Whisper {cfg.model} loaded in {self.load_s}s")
 
     @torch.inference_mode()
@@ -47,7 +64,7 @@ class WhisperSTT:
         feats = self.processor(audio, sampling_rate=sample_rate, return_tensors="pt").input_features
         feats = feats.to(self.device, dtype=torch.float16)
         t1 = time.perf_counter()
-        ids = self.model.generate(feats, language=self.cfg.language, task="transcribe", max_new_tokens=160)
+        ids = self._greedy(feats) if self.fast_decode else self._generate(feats)
         t2 = time.perf_counter()
         text = self.processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
         self.last_timing = {"features_ms": round((t1 - t0) * 1000, 1), "generate_ms": round((t2 - t1) * 1000, 1),
@@ -56,6 +73,41 @@ class WhisperSTT:
         if text.lower() in _HALLUCINATIONS:
             return ""
         return text
+
+    def _generate(self, feats: torch.Tensor) -> torch.Tensor:
+        lang = {} if self.english_only else {"language": self.cfg.language, "task": "transcribe"}
+        return self.model.generate(feats, max_new_tokens=160, **lang)
+
+    def _greedy(self, feats: torch.Tensor, max_new_tokens: int = 160) -> torch.Tensor:
+        """Greedy decoding equivalent to generate() for short-form transcription without timestamps."""
+        m = self.model
+        enc = m.model.encoder(feats)
+        step, past, out = self._prompt, None, []
+        for i in range(max_new_tokens):
+            res = m(encoder_outputs=enc, decoder_input_ids=step, past_key_values=past, use_cache=True)
+            past = res.past_key_values
+            logits = res.logits[0, -1]
+            if len(self._suppress):
+                logits[self._suppress] = -float("inf")
+            if i == 0 and len(self._begin_suppress):
+                logits[self._begin_suppress] = -float("inf")
+            token = int(logits.argmax())
+            if token == self._eos:
+                break
+            out.append(token)
+            step = torch.tensor([[token]], device=self.device)
+        return torch.cat([self._prompt[0], torch.tensor(out, dtype=torch.long, device=self.device)])[None]
+
+    @torch.inference_mode()
+    def keep_warm(self) -> None:
+        """One encoder pass on silence: keeps the GPU clocked up while the user is talking.
+
+        Measured: after 2 s of GPU idle the encoder takes 150-300 ms instead of 141 ms (the clocks
+        drop within ~2 s); with an encoder pass every 250-500 ms it stays at ~133 ms. Small matmul
+        or memcopy keep-alives, a CPU spin or a higher process priority did not help.
+        """
+        self.model.model.encoder(self._warm_feats)
+        torch.cuda.synchronize()
 
     def warmup(self) -> float:
         t0 = time.perf_counter()

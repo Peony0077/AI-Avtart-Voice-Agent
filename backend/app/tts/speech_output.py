@@ -106,7 +106,11 @@ class SpeechOutput:
             self.on_first_audio()
 
     async def _stream_clause(self, clause: str, seq: int) -> int:
-        """Streaming engines (clone voice): send each chunk as soon as it exists."""
+        """Streaming engines (clone voice): send each chunk as soon as it exists.
+
+        With the avatar, sending a chunk waits for its first video frame; chunks that arrive in
+        the meantime are merged into one segment (fewer, longer segments lip-sync better).
+        """
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
 
@@ -121,8 +125,16 @@ class SpeechOutput:
         async with self.gpu_lock:
             producer = loop.run_in_executor(None, produce)
             segment = Segment(seq + 1, clause, self.total_ms, 0.0, [])
-            first = True
-            while (chunk := await queue.get()) is not None:
+            first, done = True, False
+            while not done and (chunk := await queue.get()) is not None:
+                if self.avatar_sink is not None and not queue.empty():
+                    parts = [chunk]
+                    while not queue.empty():
+                        if (nxt := queue.get_nowait()) is None:
+                            done = True
+                            break
+                        parts.append(nxt)
+                    chunk = np.concatenate(parts)
                 if self.turn.is_cancelled:
                     continue          # drain the worker's stream, send nothing
                 seq += 1

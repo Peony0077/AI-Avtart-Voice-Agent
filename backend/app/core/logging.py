@@ -14,6 +14,12 @@ _metrics_path: Path | None = None
 
 def setup_logging(log_dir: Path, level: str = "INFO") -> None:
     global _metrics_path
+    try:
+        # kokoro's __init__ calls logger.remove() and installs its own stderr sink, which silently
+        # dropped our backend.log sink when the TTS loaded. Import it first so this setup wins.
+        import kokoro  # noqa: F401
+    except ImportError:
+        pass
     log_dir.mkdir(parents=True, exist_ok=True)
     logger.remove()
     logger.add(sys.stderr, level=level, format="<green>{time:HH:mm:ss.SSS}</green> | <level>{level:7}</level> | {message}")

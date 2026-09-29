@@ -50,7 +50,7 @@ def run(engine: MuseTalkEngine, loop: Loop, pcm: np.ndarray, batch: int) -> dict
     first_ms, gpu_ms = None, []
 
     def compose(idx, faces):
-        return [cv2.imencode(".jpg", engine.compose(loop, i, f), [cv2.IMWRITE_JPEG_QUALITY, 80])[1] for i, f in zip(idx, faces)]
+        return [cv2.imencode(".jpg", engine.compose(loop, i, f), [cv2.IMWRITE_JPEG_QUALITY, 80])[1] for i, f in zip(idx, faces, strict=True)]
 
     t1 = time.perf_counter()
     with ThreadPoolExecutor(1) as cpu:

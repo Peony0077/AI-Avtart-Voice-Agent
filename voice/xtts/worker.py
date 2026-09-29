@@ -30,10 +30,25 @@ MODEL_DIR = Path(os.environ.get("AVATAR_MODEL_HOME", "E:/AI-models")) / "tts" / 
 CHUNK = struct.Struct("<IIB")
 
 
+def _load_audio(audiopath, sampling_rate):
+    """soundfile-based replacement for TTS's torchaudio.load (which needs FFmpeg DLLs via torchcodec)."""
+    import soundfile as sf
+    import torchaudio.functional as AF
+
+    data, sr = sf.read(str(audiopath), dtype="float32", always_2d=True)
+    audio = torch.from_numpy(data.T.mean(0, keepdims=True))
+    if sr != sampling_rate:
+        audio = AF.resample(audio, sr, sampling_rate)
+    return audio.clamp(-1, 1)
+
+
 class XTTS:
     def __init__(self, ref_wav: Path) -> None:
+        import TTS.tts.models.xtts as xtts_module
         from TTS.tts.configs.xtts_config import XttsConfig
         from TTS.tts.models.xtts import Xtts
+
+        xtts_module.load_audio = _load_audio
 
         t0 = time.perf_counter()
         cfg = XttsConfig()

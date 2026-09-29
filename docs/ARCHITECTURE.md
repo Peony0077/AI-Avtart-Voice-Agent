@@ -10,7 +10,7 @@ Living document — updated at the end of every phase. The research behind these
 | Commercial use? | No — personal project | Non-commercial licenses (InsightFace, XTTS, F5, Fish) are acceptable; permissive ones still preferred |
 | Languages | English | Kokoro stock voice, English STT setting, English embeddings |
 | Avatar source | **One photo** | LivePortrait animates the photo offline into short loops (blink, gaze, head motion, emotions); MuseTalk lip-syncs them in real time |
-| Voice | Stock **and** cloned | Kokoro by default; a cloning TTS as a switchable profile (one TTS resident at a time) |
+| Voice | Stock **and** cloned | Kokoro by default; XTTS-v2 clone for voice-only use; a "light" clone (Kokoro + OpenVoice V2 converter) next to the avatar — one TTS resident at a time, chosen by profile |
 | Where the browser runs | Owner's own PC (remote) | HTTPS required for the microphone → HTTPS tunnel or LAN TLS; WebSocket transport (tunnel-friendly) |
 | RAM upgrade | No | Keep processes and caches small; load weights straight to GPU; measure RAM every phase |
 
@@ -18,10 +18,14 @@ Living document — updated at the end of every phase. The research behind these
 
 ```
 Browser (owner's PC) ──HTTPS/WSS──► P1 backend (FastAPI, .venv torch 2.9.1+cu130)
-                                        │  VAD (CPU) · STT (GPU) · RAG (CPU) · TTS (GPU) · state machine
+   (tunnel or LAN TLS, token)           │  VAD (CPU) · STT (GPU) · RAG (CPU) · TTS (GPU) · state machine
                                         ├──HTTP SSE──► P2 llama-server.exe (Qwen3-4B Q4_K_M)
-                                        └──WS msgpack─► P3 avatar worker (avatar/musetalk/.venv)
+                                        ├──WS binary+JSON─► P3 avatar worker (avatar/musetalk/.venv)   [avatar profiles]
+                                        └──WS binary+JSON─► P4 XTTS-v2 worker (voice/xtts/.venv)       [clone profile]
 ```
+
+All helper processes are supervised by the backend (restart on crash) and live in a Windows Job
+Object, so they die with it.
 
 ## Phase status
 
@@ -33,7 +37,7 @@ Browser (owner's PC) ──HTTPS/WSS──► P1 backend (FastAPI, .venv torch 2
 | 3 Interruption | done | see "Phase 3 results" |
 | 4 Realistic avatar | done | see "Phase 4 results" |
 | 5 RAG | done | see "Phase 5 results" |
-| 6 Hardening | pending | |
+| 6 Hardening, remote access, cloned voice | done | see "Phase 6 results" |
 
 ## Phase 0 results (measured on POOH-PC, 2026-09-29)
 
@@ -170,7 +174,8 @@ by the face rig.* While speaking, MuseTalk replaces the mouth region:
    and every frame carries a pts on the turn's audio timeline; the browser draws frames by the
    *audible* audio position (`AudioContext.getOutputTimestamp`), so sync survives network jitter.
 3. **A/V gate**: a turn's first audio is released only when its first 6 lip-synced frames exist
-   (batches ramp 2 → 4 → 8), so video never lags at the start of a reply.
+   (batches ramp 2 → 4 → 8), so video never lags at the start of a reply. (Phase 6: 4 frames for the
+   stock voice, 6 for the cloned voice — see "Latency work".)
 
 ### Measurements (RTX 3060, whole stack resident)
 
@@ -241,10 +246,207 @@ Raw data: [phase5_rag.json](benchmarks/phase5_rag.json), [phase5_rag_browser.jso
 Add your own documents: put files in `data/knowledge/` and run `.venv\Scripts\python scripts\ingest.py`
 (the backend loads the index at start-up).
 
+## Phase 6 results (hardening, remote access, cloned voice)
+
+### Profiles
+
+One profile = one set of resident models (`config/profiles/*.yaml`, selected with `run.ps1 -Profile`).
+VRAM is for the whole GPU after start-up, including ~2 GiB used by the Windows desktop.
+
+| Profile | STT | Voice | Avatar | VRAM | End of speech → first audio (p50 / p90) |
+|---|---|---|---|---|---|
+| `default` | Whisper large-v3-turbo | Kokoro (stock) | – | 5.8 GiB | **922 / 1,048 ms** (Phase 2: 1,109 / 1,254) |
+| `avatar` | large-v3-turbo | Kokoro | MuseTalk | 9.5 GiB | **1,357 / 1,612 ms** (Phase 4: 1,750 / 1,914) |
+| `clone` | large-v3-turbo | XTTS-v2 clone | – | PROFILE_CLONE_VRAM | PROFILE_CLONE_LATENCY |
+| `avatar_clone` | large-v3-turbo | light clone | MuseTalk | 9.5 GiB | **1,438 / 1,600 ms** (first version: 2,854 with XTTS) |
+| `lite` | whisper-small.en | Kokoro | – | PROFILE_LITE_VRAM | PROFILE_LITE_LATENCY |
+
+All numbers: `scripts/bench_voice.py latency --rounds 2` (16 spoken questions streamed in real time over
+the real protocol, 16/16 exact transcripts), after the latency work below.
+
+A VRAM guard checks free VRAM before each model loads (needs from measurements, plus a 0.8 GiB
+reserve). If a model would not fit it is skipped instead of letting Windows spill VRAM into system RAM
+(which silently makes everything ~10× slower): clone voice → stock voice, or voice/avatar disabled. The
+reason appears in `/health` → `warnings` and in the UI.
+
+### Latency work
+
+Where the time went (default profile, before): the VAD waits 550 ms of silence before ending a turn;
+the speculative STT started at 120 ms of silence took 400–500 ms, so the transcript was ready only
+around the endpoint; the LLM then needed ~350 ms for the behaviour tag and the first clause; TTS ~150 ms.
+
+| Change | Effect (measured) |
+|---|---|
+| **Answer prefetch** (`session/prefetch.py`): RAG + LLM start at the VAD pause, as soon as the speculative transcript exists; the deltas are buffered and used at the endpoint only if the user stayed silent and the text is identical, otherwise cancelled (llama-server stops). A new VAD `resume` event cancels it as soon as the user keeps talking. | used in 16/16 benchmark turns; on its own it gained little, because the STT was the bottleneck |
+| **GPU keep-warm while the user talks**: an encoder pass on silence every 400 ms, only while speech is active (never in the silence before the speculative STT, never while the assistant or another GPU job runs). The GPU drops its clocks within ~2 s of idle (P3, 570 MHz); small matmul/memcopy keep-alives, a CPU spin or a higher process priority did not prevent it, the real encoder workload does. | Whisper encoder after 2 s idle 150–300 ms → **133 ms**; speculative STT 400–500 ms → **170–190 ms**; transcript ready at p50 326 ms (was 545) |
+| **Lean Whisper decoding**: greedy loop with the same prompt and token suppression instead of `generate()` | identical transcripts on all 15 fixtures (both models); ~18 ms less per utterance |
+| **Avatar: no MuseTalk warm-up burst** at THINKING (it now competed with the prefetched LLM) | first clause p50 796 → 730 ms, render time unchanged |
+| **Avatar: A/V gate 4 frames** (was 6) for the stock voice | ~70 ms; browser test 0 late frames in 3 runs. `avatar_clone` keeps 6: with the converter on the GPU, 4 let ~5 % of frames arrive late |
+
+Result, end of speech → first audio p50: voice only 1,109 → **922 ms** (the < 1 s stretch goal),
+avatar 1,750 → **1,357 ms**, avatar + cloned voice → **1,438 ms**. The ≤ 1.2 s target is met for voice
+only (16/16 turns under 1.2 s, 12/16 under 1 s); with the avatar 3/16 turns are under 1.2 s (cloned
+voice: 1/16), so **the target is not met with the avatar on this GPU**. What is left is mostly fixed cost: the 550 ms
+endpoint rule (a shorter one would cut people off in natural pauses), TTS, and rendering the first
+lip-synced frames while the LLM is still generating on the same GPU.
+
+Checked again after these changes: barge-in 4/4 (detection p50 354 ms, 0 stale packets, follow-ups
+answered), browser barge-in (342 ms, flush 1.3 ms), RAG answer with citations through the prefetch
+path, text/voice/avatar/recovery tests. Raw data: [phase6_voice_prefetch.json](benchmarks/phase6_voice_prefetch.json),
+[phase6_avatar_prefetch.json](benchmarks/phase6_avatar_prefetch.json) (gate 6 + burst),
+[phase6_avatar_gate6_noburst.json](benchmarks/phase6_avatar_gate6_noburst.json),
+[phase6_avatar_gate4.json](benchmarks/phase6_avatar_gate4.json),
+[phase6_bargein_prefetch.json](benchmarks/phase6_bargein_prefetch.json).
+
+### Remote access (browser on another PC)
+
+Browsers only allow the microphone on HTTPS (or localhost), so there are two ways in, both protected by
+a random access token (`AVATAR_ACCESS_TOKEN`; the WebSocket is closed with code 4003 and the UI shows
+"access denied (token)" for a wrong or missing token):
+
+- **Internet:** `scripts\tunnel.ps1 -Profile avatar` starts the backend and a free Cloudflare quick
+  tunnel (no account; `cloudflared` is downloaded to `tools/` on first use) and prints
+  `https://<random>.trycloudflare.com/?token=...`. Traffic passes through Cloudflare; the link changes
+  each time. Measured: the Phase 2 browser test through the tunnel gave 1,171 ms end of speech → first
+  audio (1,052 ms locally).
+- **LAN:** `scripts\run.ps1 -Profile avatar -Https` creates a self-signed certificate
+  (`scripts/make_cert.py`, written to the git-ignored `certs/`), listens on all interfaces and prints
+  `https://<LAN IP>:8000/?token=...`. Accept the certificate warning once.
+
+The page keeps the token for the browser tab (sessionStorage), so reconnects keep working.
+
+### Cloned voice: two engines
+
+| | XTTS-v2 (profile `clone`) | Light clone (profile `avatar_clone`, engine `clone_light`) |
+|---|---|---|
+| How | zero-shot cloning TTS, streamed in ~1 s chunks, own process/venv | Kokoro speech → OpenVoice V2 tone-colour converter (timbre only), in the backend |
+| Speaker similarity to the reference¹ | **0.749** | **0.654** (0.55 before conversion) |
+| Unrelated voice, for scale¹ | 0.429 | 0.429 |
+| Intelligibility (Whisper transcript of a 29-word sample) | 0 word errors | 0 word errors |
+| Cost | real-time factor 0.54–0.57, first chunk ~465 ms | Kokoro 83 ms + converter 66 ms per clause (real-time factor 0.05) |
+| VRAM | ~2.2–2.6 GiB | ~0.2 GiB |
+| License | CPML (non-commercial) | Kokoro Apache-2.0, OpenVoice MIT |
+
+¹ Cosine similarity of XTTS-v2 speaker-encoder embeddings (`voice/xtts/bench_clone.py --score`). The
+development reference `data/voices/dev_emma.wav` is itself a Kokoro voice (bf_emma), because no real
+recording was available; bf_emma was excluded when choosing the base voice. Results with a real
+recording will differ: record 10–15 s of clean speech (with the speaker's consent).
+
+The light clone only changes timbre; accent and speaking style come from the Kokoro base voice, and the
+best base voice cannot be predicted from the converter's own distance (measured). So
+`scripts/pick_clone_voice.py --ref <wav>` tries all 28 English Kokoro voices (synthesise → convert →
+score) and prints the one to put in `tts.voice` (for the dev reference: bf_isabella 0.655, bf_alice
+0.644, bm_lewis 0.614, ..., af_heart 0.487). Kokoro now uses British G2P for `b*` voices.
+
+**Why XTTS is not used next to the avatar** (measured, [phase6_gpu_contention.json](benchmarks/phase6_gpu_contention.json)):
+XTTS's autoregressive GPT and MuseTalk time-slice the GPU. With both running, MuseTalk drops from 24.3
+to 10.4 fps and XTTS's real-time factor rises from 0.57 to 0.75; per second of speech they need ~1.4 s
+of GPU time. XTTS cannot be made cheaper here: non-streaming synthesis costs the same (the vocoder is
+not the bottleneck) and fp16 autocast is slower. In the live stack the first reply audio came after
+2.9 s and the lips fell behind the voice.
+
+Fixes that came out of this work (they also protect the XTTS path):
+- The avatar worker's render loop died on a segment shorter than one video frame (MuseTalk's feature
+  code concatenates an empty list); the next turns then waited 1.5 s per chunk and showed no lip sync.
+  Segments are now isolated (an error is logged and the segment released), empty ones are skipped, and
+  contiguous segments of a turn get the previous 200 ms of audio as left context, so the lips do not
+  close at every ~1 s chunk boundary.
+- Streaming chunks that arrive while the avatar is rendering are merged into one segment.
+
+### Avatar + cloned voice (profile `avatar_clone`)
+
+| Metric | Value |
+|---|---|
+| End of speech → first audio (16 turns, `bench_voice.py`) | p50 1,438 · p90 1,600 · max 1,732 ms with the latency work above (1,786 before it; 2,854 with XTTS) |
+| Waits for avatar frames > 1.5 s | 0 (was 32 in 8 turns with XTTS) |
+| Live render speed | 20–23 fps |
+| Browser A/V sync (Playwright `phase4_avatar`, 5 runs, gate 6) | 6 of 807 lip-sync frames late; frame offset p50 20–32 ms, p90 37–49 ms |
+| VRAM | 9,748 MiB — the same as the stock-voice avatar profile |
+
+Raw data: [phase6_avatar_clone.json](benchmarks/phase6_avatar_clone.json),
+[phase6_clone_light.json](benchmarks/phase6_clone_light.json),
+[phase6_clone_voice.json](benchmarks/phase6_clone_voice.json) (XTTS),
+[phase6_voice_clone.json](benchmarks/phase6_voice_clone.json) (XTTS profile latency).
+
+### Robustness
+
+Playwright `tests/e2e/phase6_recovery.spec.js` kills processes in the middle of a live session
+(profile `avatar_clone`, [phase6_recovery_browser.json](benchmarks/phase6_recovery_browser.json)):
+
+| Test | Result |
+|---|---|
+| Kill `llama-server`, ask a question right away | answered correctly ("Two plus three is five.") 9.5–12.6 s after the kill (2 runs); watchdog restart #1 |
+| Kill the avatar worker | the next reply plays audio-only; worker back after 13–26 s; lip sync resumes |
+| Wrong access token | rejected (4003), UI shows "access denied (token)"; right token: 4/4 text tests pass |
+| Reconnect / second tab | reconnect with backoff; a new tab takes over (4001) — Phases 1–3 |
+
+Found and fixed by these tests:
+- A turn that hit the LLM while it was restarting failed immediately. The client now waits for the
+  supervisor's restart (connection refused, or HTTP 503 while the model loads) and retries once — only
+  if nothing was streamed yet. `/health` has `llm_ready`.
+- `logs/backend.log` stopped recording as soon as Kokoro loaded, since Phase 2: Kokoro's `__init__`
+  calls `logger.remove()`. Kokoro is now imported before logging is configured.
+- Unit tests for both, for the chunk merging (`backend/tests/test_recovery_units.py`), the answer
+  prefetch (`test_prefetch.py`) and the VAD `resume` event — 50 unit tests in total.
+
+### Observability
+
+- `GET /health`: profile, resident models, restarts (LLM, avatar), VRAM guard warnings, load times.
+- `GET /health/gpu`: VRAM and RAM; warns below 400 MiB free VRAM.
+- `GET /api/metrics?last=50`: p50/p90 per pipeline stage (ms after the end of the user's speech) over
+  the last completed turns; one JSON line per turn in `logs/metrics.jsonl`.
+- Logs: `logs/backend.log`, `llama-server.log`, `avatar-worker.log`, `xtts-worker.log`.
+
+### 30-minute soak with avatar + cloned voice
+
+SOAK_SECTION
+
+### Manual checks (cannot be automated here)
+
+- **Acoustic echo:** the fake microphone has no room echo. Use headphones; try speakers once and, if the
+  avatar interrupts itself, raise `vad.bargein_threshold` or keep headphones.
+- **Your real microphone and network:** open the tunnel link on your PC and hold a conversation.
+- **NVIDIA Control Panel** → Manage 3D settings: *Power management mode = Prefer maximum performance*
+  (for `python.exe` in the repo venvs and `llama-server.exe`) and *CUDA - Sysmem Fallback Policy =
+  Prefer No Sysmem Fallback*.
+- **By eye and ear:** avatar realism and how close the cloned voice sounds.
+
 ## Running
 
+First-time setup (backend venv, models, avatar and voice workers) is described in
+[PHASE0_TECHNICAL_REPORT.md](PHASE0_TECHNICAL_REPORT.md); after that:
+
 ```powershell
-scripts\run.ps1 -Build        # starts backend + llama-server, serves the UI at http://127.0.0.1:8000
+scripts\run.ps1 -Build                     # build the UI, start everything: http://127.0.0.1:8000
+scripts\run.ps1 -Profile avatar            # realistic avatar, stock voice
+scripts\run.ps1 -Profile avatar_clone      # realistic avatar, cloned voice
+scripts\run.ps1 -Profile clone             # voice only, XTTS-v2 cloned voice
+scripts\run.ps1 -Profile avatar -Https     # LAN: https://<LAN IP>:8000/?token=...
+scripts\tunnel.ps1 -Profile avatar         # internet: https://<random>.trycloudflare.com/?token=...
 scripts\run.ps1 -Stop
-cd tests\e2e; npx playwright test --project text
+```
+
+Your own avatar, voice and documents:
+
+```powershell
+# avatar from one photo (~6 min), then set avatar.avatar_id: me in the profile
+avatar\musetalk\.venv\Scripts\python avatar\musetalk\build_avatar.py --photo me.jpg --id me
+# cloned voice: record 10-15 s of clean speech as data\voices\me.wav, set tts.clone_reference_wav,
+# and for avatar_clone pick the base voice:
+.venv\Scripts\python scripts\pick_clone_voice.py --ref data\voices\me.wav
+# documents: put PDF/DOCX/MD/TXT/HTML files in data\knowledge\, then
+.venv\Scripts\python scripts\ingest.py
+```
+
+Tests (backend running with the matching profile):
+
+```powershell
+.venv\Scripts\python -m pytest backend\tests                 # unit tests
+cd tests\e2e
+npx playwright test --project=text                           # Phase 1 (+ token test with $env:AVATAR_TOKEN)
+npx playwright test --project=voice phase2                    # voice (default profile)
+$env:FAKE_MIC='mic_story_bargein.wav'; npx playwright test --project=voice phase3   # barge-in
+$env:FAKE_MIC='mic_rag.wav'; npx playwright test --project=voice phase5            # documents
+npx playwright test --project=voice phase4 phase6             # avatar, crash recovery (avatar profiles)
+$env:FAKE_MIC='mic_soak.wav'; $env:FAKE_MIC_LOOP='1'; npx playwright test --project=voice soak
 ```

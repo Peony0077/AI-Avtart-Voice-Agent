@@ -32,6 +32,7 @@ class TurnContext:
     stt_speculative: bool | None = None
     stt_timing: dict | None = None
     avatar_first_ms: float | None = None
+    prefetched: bool = False          # answer was started at the VAD pause (session/prefetch.py)
 
     def mark(self, name: str, at: float | None = None) -> float:
         """Record a timestamp once (first occurrence wins)."""

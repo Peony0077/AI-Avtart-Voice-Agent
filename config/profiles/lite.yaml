@@ -1,0 +1,10 @@
+# Lowest resource use: smaller STT, shorter LLM context, no avatar. For busy desktops / low free VRAM.
+llm:
+  context: 3072
+stt:
+  model: openai/whisper-small.en
+tts:
+  engine: kokoro
+  voice: af_heart
+avatar:
+  enabled: false

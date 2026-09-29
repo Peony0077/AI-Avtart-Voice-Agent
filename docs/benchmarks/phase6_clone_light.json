@@ -1,0 +1,59 @@
+{
+  "base_voice": "bf_isabella",
+  "tau": 0.3,
+  "load_s": 4.94,
+  "kokoro_ms_p50": 82.6,
+  "convert_ms_p50": 66.05,
+  "convert_rtf": 0.0225,
+  "total_rtf": 0.0517,
+  "vram_peak_alloc_mib": 2404,
+  "whisper_transcript": "Sure, octopuses have three hearts and two of them pump blood to the gills. That's a great question. The capital of France is Paris, a city famous for art, food and history.",
+  "approx_word_error": 0.0,
+  "sample": "logs/clone_light_sample.wav",
+  "base_sample": "logs/clone_light_base.wav",
+  "rows": [
+    {
+      "text": "Sure!",
+      "kokoro_ms": 51.9,
+      "convert_ms": 41.2,
+      "audio_ms": 1275
+    },
+    {
+      "text": "Octopuses have three hearts,",
+      "kokoro_ms": 77.9,
+      "convert_ms": 66.5,
+      "audio_ms": 2575
+    },
+    {
+      "text": "and two of them pump blood to the gills.",
+      "kokoro_ms": 82.0,
+      "convert_ms": 67.1,
+      "audio_ms": 2875
+    },
+    {
+      "text": "That's a great question.",
+      "kokoro_ms": 83.2,
+      "convert_ms": 52.7,
+      "audio_ms": 2225
+    },
+    {
+      "text": "The capital of France is Paris, a city famous for art, food and history.",
+      "kokoro_ms": 114.2,
+      "convert_ms": 87.4,
+      "audio_ms": 5275
+    }
+  ],
+  "speaker_similarity_to_reference": {
+    "metric": "cosine of XTTS-v2 speaker-encoder embeddings (voice/xtts/bench_clone.py --score)",
+    "clone_light_bf_isabella": 0.654,
+    "kokoro_bf_isabella_unconverted": 0.55,
+    "xtts_clone": 0.749,
+    "unrelated_voice_af_heart": 0.429,
+    "base_voice_ranking_top": {
+      "bf_isabella": 0.655,
+      "bf_alice": 0.644,
+      "bm_lewis": 0.614,
+      "af_heart": 0.487
+    }
+  }
+}

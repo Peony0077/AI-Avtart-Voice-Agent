@@ -16,11 +16,21 @@ markers = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = ["avatar/*/vendor", "frontend", "tools"]
+extend-exclude = ["avatar/*/vendor", "backend/app/tts/openvoice", "frontend", "tools"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+# closures that are called/awaited within the same loop iteration (no late-binding bug)
+"scripts/bench_voice.py" = ["B023"]
+"voice/xtts/worker.py" = ["B023"]
+"avatar/musetalk/profile_vae.py" = ["B023"]
+"avatar/musetalk/profile_engine.py" = ["B023"]
+# import order matters: `common` puts vendor/LivePortrait on sys.path before the `src.*` imports
+"avatar/musetalk/face_rig.py" = ["I001"]
+
 [tool.ruff.lint.isort]
-known-first-party = ["app"]
+# workers run from their own folder (separate venvs): their sibling modules are first-party
+known-first-party = ["app", "common", "engine", "motion", "face_rig", "face_bbox", "worker"]

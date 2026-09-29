@@ -1,0 +1,245 @@
+{
+  "summary": {
+    "turns": 8,
+    "ok": 8,
+    "end_of_speech_to_first_audio": {
+      "p50": 1526,
+      "p90": 1768,
+      "max": 1957
+    },
+    "vad_endpoint": {
+      "p50": 577,
+      "p90": 595,
+      "max": 595
+    },
+    "stt_done": {
+      "p50": 603,
+      "p90": 689,
+      "max": 692
+    },
+    "llm_first_token": {
+      "p50": 684,
+      "p90": 854,
+      "max": 911
+    },
+    "llm_first_text": {
+      "p50": 802,
+      "p90": 986,
+      "max": 1038
+    },
+    "first_clause": {
+      "p50": 1003,
+      "p90": 1117,
+      "max": 1223
+    },
+    "tts_first_audio": {
+      "p50": 1524,
+      "p90": 1764,
+      "max": 1953
+    },
+    "stt_speculative_rate": 1.0,
+    "transcripts_exact": 8
+  },
+  "rows": [
+    {
+      "fixture": "bench_q1",
+      "round": 0,
+      "expected": "What is the capital of Japan?",
+      "transcript": "What is the capital of Japan?",
+      "reply": "The capital of Japan is Tokyo.",
+      "ms": {
+        "t0": 0.0,
+        "vad_endpoint": 562.8,
+        "stt_done": 550.4,
+        "rag_done": 592.5,
+        "llm_request": 592.5,
+        "llm_first_token": 630.0,
+        "llm_first_text": 734.8,
+        "first_clause": 815.7,
+        "llm_done": 815.7,
+        "tts_first_audio": 1283.6,
+        "audio_sent": 1285.3,
+        "first_output": 1285.3,
+        "client_first_audio": 1288.3,
+        "client_playback_ended": 3648.1
+      },
+      "stt_speculative": true,
+      "speech_ms": 2272
+    },
+    {
+      "fixture": "bench_q2",
+      "round": 0,
+      "expected": "How many legs does a spider have?",
+      "transcript": "How many legs does a spider have?",
+      "reply": "Most spiders have eight legs.",
+      "ms": {
+        "t0": 0.0,
+        "vad_endpoint": 591.7,
+        "stt_done": 513.6,
+        "rag_done": 639.5,
+        "llm_request": 639.5,
+        "llm_first_token": 677.2,
+        "llm_first_text": 781.4,
+        "first_clause": 849.8,
+        "llm_done": 849.8,
+        "tts_first_audio": 1323.7,
+        "audio_sent": 1323.7,
+        "first_output": 1323.7,
+        "client_first_audio": 1326.3,
+        "client_playback_ended": 3510.1
+      },
+      "stt_speculative": true,
+      "speech_ms": 2133
+    },
+    {
+      "fixture": "bench_q3",
+      "round": 0,
+      "expected": "Can you recommend a good hobby for the weekend?",
+      "transcript": "Can you recommend a good hobby for the weekend?",
+      "reply": "Maybe try gardening, it's calming and you can grow something fresh by the end of the weekend.",
+      "ms": {
+        "t0": 0.0,
+        "vad_endpoint": 592.5,
+        "stt_done": 691.9,
+        "rag_done": 759.8,
+        "llm_request": 759.8,
+        "llm_first_token": 910.9,
+        "llm_first_text": 1038.3,
+        "first_clause": 1071.6,
+        "llm_done": 1481.7,
+        "tts_first_audio": 1568.4,
+        "audio_sent": 1568.4,
+        "first_output": 1568.4,
+        "client_first_audio": 1571.6,
+        "client_playback_ended": 8004.9
+      },
+      "stt_speculative": true,
+      "speech_ms": 6400
+    },
+    {
+      "fixture": "bench_q4",
+      "round": 0,
+      "expected": "Why is the sky blue?",
+      "transcript": "Why is the sky blue?",
+      "reply": "The sky appears blue because sunlight scatters shorter blue wavelengths more than other colors when it passes through the atmosphere.",
+      "ms": {
+        "t0": 0.0,
+        "vad_endpoint": 595.4,
+        "stt_done": 687.7,
+        "rag_done": 763.4,
+        "llm_request": 763.4,
+        "llm_first_token": 822.9,
+        "llm_first_text": 964.0,
+        "first_clause": 1223.2,
+        "llm_done": 1223.2,
+        "tts_first_audio": 1683.5,
+        "audio_sent": 1683.5,
+        "first_output": 1683.5,
+        "client_first_audio": 1686.5,
+        "client_playback_ended": 9152.1
+      },
+      "stt_speculative": true,
+      "speech_ms": 7424
+    },
+    {
+      "fixture": "bench_q5",
+      "round": 0,
+      "expected": "What should I eat for breakfast tomorrow?",
+      "transcript": "What should I eat for breakfast tomorrow?",
+      "reply": "Something simple like oatmeal with fruit or a balanced breakfast with eggs and toast works well, easy and energizing!",
+      "ms": {
+        "t0": 0.0,
+        "vad_endpoint": 560.2,
+        "stt_done": 617.1,
+        "rag_done": 647.7,
+        "llm_request": 647.7,
+        "llm_first_token": 690.1,
+        "llm_first_text": 822.8,
+        "first_clause": 1012.5,
+        "llm_done": 1171.4,
+        "tts_first_audio": 1533.7,
+        "audio_sent": 1533.7,
+        "first_output": 1533.7,
+        "client_first_audio": 1536.7,
+        "client_playback_ended": 9517.2
+      },
+      "stt_speculative": true,
+      "speech_ms": 7979
+    },
+    {
+      "fixture": "bench_q6",
+      "round": 0,
+      "expected": "Tell me something nice.",
+      "transcript": "Tell me something nice.",
+      "reply": "You're doing great, every small step counts and you've got this!",
+      "ms": {
+        "t0": 0.0,
+        "vad_endpoint": 562.1,
+        "stt_done": 625.9,
+        "rag_done": 750.5,
+        "llm_request": 751.5,
+        "llm_first_token": 829.9,
+        "llm_first_text": 961.5,
+        "first_clause": 1008.1,
+        "llm_done": 1291.8,
+        "tts_first_audio": 1513.3,
+        "audio_sent": 1513.3,
+        "first_output": 1513.3,
+        "client_first_audio": 1516.3,
+        "client_playback_ended": 6320.9
+      },
+      "stt_speculative": true,
+      "speech_ms": 4736
+    },
+    {
+      "fixture": "bench_q7",
+      "round": 0,
+      "expected": "How far away is the moon?",
+      "transcript": "How far away is the moon?",
+      "reply": "The Moon is about 384,000 kilometers away from Earth on average.",
+      "ms": {
+        "t0": 0.0,
+        "vad_endpoint": 595.3,
+        "stt_done": 588.8,
+        "rag_done": 624.2,
+        "llm_request": 624.2,
+        "llm_first_token": 672.6,
+        "llm_first_text": 780.4,
+        "first_clause": 998.3,
+        "llm_done": 998.3,
+        "tts_first_audio": 1952.7,
+        "audio_sent": 1952.7,
+        "first_output": 1952.7,
+        "client_first_audio": 1957.4,
+        "client_playback_ended": 6962.8
+      },
+      "stt_speculative": true,
+      "speech_ms": 4971
+    },
+    {
+      "fixture": "bench_q8",
+      "round": 0,
+      "expected": "What is your favorite color?",
+      "transcript": "What is your favorite color?",
+      "reply": "I don't have favorites, but blue often feels calm and peaceful, like a quiet morning sky.",
+      "ms": {
+        "t0": 0.0,
+        "vad_endpoint": 542.3,
+        "stt_done": 532.5,
+        "rag_done": 569.2,
+        "llm_request": 569.2,
+        "llm_first_token": 608.9,
+        "llm_first_text": 737.5,
+        "first_clause": 807.3,
+        "llm_done": 1174.8,
+        "tts_first_audio": 1308.9,
+        "audio_sent": 1308.9,
+        "first_output": 1308.9,
+        "client_first_audio": 1311.5,
+        "client_playback_ended": 7689.4
+      },
+      "stt_speculative": true,
+      "speech_ms": 6315
+    }
+  ]
+}

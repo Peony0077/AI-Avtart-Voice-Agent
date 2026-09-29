@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from loguru import logger
@@ -44,8 +45,13 @@ manager = SessionManager()
 
 @router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
-    await ws.accept()
     services = ws.app.state.services
+    token = services.settings.access_token
+    await ws.accept()   # accept first: a close before accept reaches the browser only as code 1006
+    if token and not secrets.compare_digest(ws.query_params.get("token", ""), token):
+        await ws.close(code=4003, reason="invalid or missing access token")
+        logger.warning(f"rejected websocket from {ws.client}: bad token")
+        return
     session = Session(ws, services)
     await manager.attach(session)
     await session.start()

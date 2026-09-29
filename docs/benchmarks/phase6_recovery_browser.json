@@ -1,0 +1,18 @@
+{
+  "test": "phase6_recovery",
+  "llm_killed": [
+    "38108"
+  ],
+  "llm_turn_after_kill_ms": 9455,
+  "llm_reply": "Two plus three is five.",
+  "avatar_killed": [
+    "40876",
+    "12088"
+  ],
+  "avatar_recovered_ms": 12926,
+  "reply_during_avatar_outage": "One colour of the rainbow is red.",
+  "reply_after_avatar": "The capital of Italy is Rome.",
+  "speech_frames_after": 54,
+  "llm_restarts": 1,
+  "avatar_restarts": 1
+}

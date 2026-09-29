@@ -56,17 +56,39 @@ def test_vad_segments_real_speech_with_pause():
     wav, sr = sf.read(FIXTURES / "mic_resume.wav", dtype="int16")
     manifest = json.loads((FIXTURES / "manifest.json").read_text())["mic_resume"]["speech"]
     vad = StreamingVAD(VADCfg(endpoint_ms=550))
-    events, t = [], 0.0
+    events, t, all_kinds = [], 0.0, []
     for i in range(0, len(wav), 320):  # 20 ms packets, like the browser
         t += 0.02
         for ev in vad.process(wav[i:i + 320].tobytes(), assistant_active=False, now=t):
-            if ev.kind != "pause":
+            all_kinds.append(ev.kind)
+            if ev.kind not in ("pause", "resume"):
                 events.append((ev.kind, round(ev.t, 2), round(ev.speech_end_t or 0, 2)))
     kinds = [k for k, *_ in events]
-    # The 0.8 s pause is longer than the 0.55 s endpoint → two utterances.
+    # The 0.8 s pause is longer than the 0.55 s endpoint → two utterances, each with one early-STT pause
+    # and no "resume" (a resume only follows a pause inside the same utterance).
     assert kinds == ["start", "end", "start", "end"], events
+    assert all_kinds == ["start", "pause", "end", "start", "pause", "end"], all_kinds
     assert abs(events[1][2] - manifest[0]["end_s"]) < 0.25   # speech end detected close to truth
     assert abs(events[3][2] - manifest[1]["end_s"]) < 0.25
+
+
+def test_vad_resume_after_a_short_pause_inside_one_utterance():
+    """A 0.3 s gap (> early-STT 120 ms, < endpoint 550 ms) gives pause → resume, then one end."""
+    from app.audio.vad import StreamingVAD
+
+    wav, sr = sf.read(FIXTURES / "mic_resume.wav", dtype="int16")
+    first = json.loads((FIXTURES / "manifest.json").read_text())["mic_resume"]["speech"][0]
+    a, b = int(first["start_s"] * sr), int(first["end_s"] * sr)
+    speech = wav[a:b]
+    gap = np.zeros(int(0.3 * sr), np.int16)
+    tail = np.zeros(int(1.0 * sr), np.int16)
+    audio = np.concatenate([np.zeros(int(0.5 * sr), np.int16), speech, gap, speech, tail])
+    vad = StreamingVAD(VADCfg(endpoint_ms=550))
+    kinds, t = [], 0.0
+    for i in range(0, len(audio), 320):
+        t += 0.02
+        kinds += [ev.kind for ev in vad.process(audio[i:i + 320].tobytes(), assistant_active=False, now=t)]
+    assert kinds == ["start", "pause", "resume", "pause", "end"], kinds
 
 
 @pytest.mark.skipif(not (FIXTURES / "mic_question.wav").exists(), reason="run scripts/make_fixtures.py")

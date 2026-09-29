@@ -1,0 +1,10 @@
+# Voice pipeline with a CLONED voice (XTTS-v2, non-commercial CPML license).
+# Record 6-15 s of clean speech of the target voice (with consent) as a WAV file and point to it.
+# Set up once:  powershell -File voice\xtts\setup.ps1
+stt:
+  model: openai/whisper-large-v3-turbo
+tts:
+  engine: clone
+  clone_reference_wav: data/voices/dev_emma.wav
+avatar:
+  enabled: false

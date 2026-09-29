@@ -1,0 +1,48 @@
+{
+  "date": "2026-09-29",
+  "gpu": "RTX 3060 12 GB (POOH-PC)",
+  "question": "Can XTTS-v2 (clone voice) and the 20 fps MuseTalk avatar share the GPU in real time?",
+  "xtts_alone": {
+    "note": "voice/xtts, 4 clauses x 2, scratch benchmark",
+    "stream_chunk_20": {
+      "first_chunk_ms_p50": 467,
+      "rtf": 0.567
+    },
+    "stream_chunk_40": {
+      "first_chunk_ms_p50": 878,
+      "rtf": 0.516
+    },
+    "non_streaming": {
+      "first_audio_ms_p50": 1258,
+      "rtf": 0.539
+    },
+    "stream_chunk_20_fp16_autocast": {
+      "first_chunk_ms_p50": 493,
+      "rtf": 0.673
+    },
+    "non_streaming_fp16_autocast": {
+      "first_audio_ms_p50": 1698,
+      "rtf": 0.628
+    },
+    "conclusion": "the cost is the autoregressive GPT, not the vocoder; fp16 autocast is slower"
+  },
+  "musetalk_alone_fps": 24.3,
+  "both_running_concurrently": {
+    "musetalk_fps_batch8": [
+      10.4,
+      10.6
+    ],
+    "musetalk_fps_batch16": 11.6,
+    "musetalk_gpu_ms_per_frame": 96.2,
+    "xtts_rtf": 0.745
+  },
+  "budget": "per second of speech: XTTS 0.57 + MuseTalk 20/24 = 0.83 -> ~1.4 GPU-seconds; the processes time-slice the GPU, so the avatar falls behind the voice",
+  "live_result_xtts_plus_avatar": {
+    "end_of_speech_to_first_audio_ms": {
+      "p50": 2459,
+      "p90": 2663
+    },
+    "note": "after fixing the worker crash; later chunks still waited for frames (32 waits > 1.5 s in 8 turns)"
+  },
+  "decision": "avatar profile uses clone_light (Kokoro + OpenVoice V2 converter, RTF 0.05); XTTS stays for the voice-only clone profile"
+}

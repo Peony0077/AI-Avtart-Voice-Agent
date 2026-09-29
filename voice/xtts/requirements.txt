@@ -7,3 +7,5 @@ transformers>=4.57,<4.58
 websockets>=13
 loguru>=0.7
 numpy>=1.26,<2.4
+torchcodec==0.8.*
+soundfile>=0.12

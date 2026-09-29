@@ -13,6 +13,24 @@ httpx>=0.28
 psutil>=7.0
 nvidia-ml-py>=13.580
 numpy>=2.0
+websockets>=15.0              # avatar / XTTS worker bridges
+cryptography>=45.0            # scripts/make_cert.py (LAN HTTPS)
+
+# --- voice (Phase 2); spaCy's en_core_web_sm comes from scripts/download_models.py voice ---
+transformers>=5.0             # Whisper STT
+huggingface-hub>=1.0
+silero-vad>=6.0
+kokoro>=0.9.4
+misaki[en]>=0.9.4
+soundfile>=0.13
+scipy>=1.14                   # resampling (OpenVoice converter, benchmarks)
+
+# --- documents / RAG (Phase 5) ---
+sentence-transformers>=5.0
+lancedb>=0.25
+pyarrow>=20.0
+pypdf>=6.0
+python-docx>=1.1
 
 # --- dev / test ---
 pytest>=8.4

@@ -38,6 +38,7 @@ class LLMCfg(BaseModel):
     max_tokens: int = 320
     request_timeout_s: float = 60.0
     history_turns: int = 8
+    prefetch_on_pause: bool = True    # start the answer at the VAD pause, adopt it at the endpoint
 
 
 class STTCfg(BaseModel):
@@ -45,6 +46,7 @@ class STTCfg(BaseModel):
     device: str = "cuda"
     language: str = "en"
     min_utterance_ms: int = 250
+    keep_warm_ms: int = 400           # run the encoder this often while the user speaks (0 = off)
 
 
 class VADCfg(BaseModel):
@@ -60,12 +62,13 @@ class VADCfg(BaseModel):
 
 
 class TTSCfg(BaseModel):
-    engine: str = "kokoro"            # "kokoro" (stock voice) | "clone"
-    voice: str = "af_heart"
+    engine: str = "kokoro"            # "kokoro" (stock) | "clone" (XTTS-v2) | "clone_light" (Kokoro + converter)
+    voice: str = "af_heart"           # Kokoro voice (for clone_light: the base voice that gets re-timbred)
     speed: float = 1.0
     device: str = "cuda"
     clone_reference_wav: str | None = None   # for engine == "clone"
     clone_reference_text: str | None = None
+    clone_tau: float = 0.3            # clone_light: OpenVoice conversion temperature (its default)
 
 
 class RAGCfg(BaseModel):
@@ -87,8 +90,10 @@ class AvatarCfg(BaseModel):
     avatar_id: str = "dev_girl"
     fps: int = 20
     jpeg_quality: int = 80
-    gate_frames: int = 6        # lip-synced frames rendered before a turn's first audio is released
-                                # (6 = frames never lag at turn start; 2 = ~250 ms faster, lips catch up)
+    gate_frames: int = 4        # lip-synced frames rendered before a turn's first audio is released
+                                # (measured with the GPU kept warm: 4 -> no late frames; 2 -> lips lag at start)
+    warm_burst_ms: int = 0      # MuseTalk warm-up when a turn enters THINKING; redundant since the STT
+                                # keep-warm, and it slowed the LLM's first clause (~65 ms p50)
 
 
 class Settings(BaseSettings):
@@ -107,6 +112,7 @@ class Settings(BaseSettings):
     rag: RAGCfg = RAGCfg()
     avatar: AvatarCfg = AvatarCfg()
     voice_enabled: bool = True
+    access_token: str | None = None   # required as ?token=... on /ws and /api when set (remote access)
     vram_min_free_gib: float = 0.8
 
     @classmethod

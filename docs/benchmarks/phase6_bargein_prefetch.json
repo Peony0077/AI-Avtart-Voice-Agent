@@ -1,0 +1,56 @@
+{
+  "summary": {
+    "rounds": 4,
+    "interrupted": 4,
+    "detect_ms_p50": 354.0,
+    "detect_ms_max": 367,
+    "stale_audio_packets_total": 0,
+    "follow_up_ok": 4
+  },
+  "rows": [
+    {
+      "round": 0,
+      "interrupt_received": true,
+      "detect_ms_after_speech_onset": 343,
+      "server_cancel_ms": 0.14,
+      "stale_audio_packets_after_interrupt": 0,
+      "assistant_played_ms_at_onset": 2816,
+      "heard_text_recorded": "Once upon a time, in a quiet",
+      "follow_up_transcript": "Wait, stop. What is 2 plus 2?",
+      "follow_up_reply": "2 plus 2 is 4."
+    },
+    {
+      "round": 1,
+      "interrupt_received": true,
+      "detect_ms_after_speech_onset": 344,
+      "server_cancel_ms": 0.12,
+      "stale_audio_packets_after_interrupt": 0,
+      "assistant_played_ms_at_onset": 2805,
+      "heard_text_recorded": "Oh, I'd love to tell you a story about a brave little",
+      "follow_up_transcript": "Wait, stop. What is 2 plus 2?",
+      "follow_up_reply": "2 plus 2 is 4."
+    },
+    {
+      "round": 2,
+      "interrupt_received": true,
+      "detect_ms_after_speech_onset": 367,
+      "server_cancel_ms": 0.13,
+      "stale_audio_packets_after_interrupt": 0,
+      "assistant_played_ms_at_onset": 2822,
+      "heard_text_recorded": "Once upon a time, in a quiet",
+      "follow_up_transcript": "Wait, stop. What is 2 plus 2?",
+      "follow_up_reply": "2 plus 2 is 4."
+    },
+    {
+      "round": 3,
+      "interrupt_received": true,
+      "detect_ms_after_speech_onset": 364,
+      "server_cancel_ms": 0.1,
+      "stale_audio_packets_after_interrupt": 0,
+      "assistant_played_ms_at_onset": 2816,
+      "heard_text_recorded": "Once upon a time, in a quiet",
+      "follow_up_transcript": "Wait, stop. What is 2 plus 2?",
+      "follow_up_reply": "2 plus 2 is 4."
+    }
+  ]
+}

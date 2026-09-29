@@ -12,10 +12,17 @@ import time
 from loguru import logger
 
 from app.core.config import Settings
-from app.core.gpu import gpu_snapshot
+from app.core.gpu import gpu_snapshot, vram_free_gib
 from app.llm.client import LLMClient
 from app.llm.prompt import system_prompt
 from app.llm.server import LlamaServerSupervisor
+
+# Measured on the RTX 3060 (docs/ARCHITECTURE.md); used to refuse loads that would make Windows
+# spill VRAM into system RAM (which silently makes everything ~10x slower).
+VRAM_NEED_MIB = {
+    "stt:openai/whisper-large-v3-turbo": 2000, "stt:openai/whisper-small.en": 800,
+    "tts:kokoro": 700, "tts:clone": 2600, "tts:clone_light": 900, "avatar": 4000,
+}
 
 
 class Services:
@@ -24,12 +31,14 @@ class Services:
         os.environ.setdefault("HF_HOME", str(settings.model_home / "hf"))
         os.environ.setdefault("HF_HUB_OFFLINE", "1")  # models are pre-downloaded; no network at runtime
         self.llm_server = LlamaServerSupervisor(settings)
-        self.llm = LLMClient(settings.llm)
+        self.llm = LLMClient(settings.llm, wait_ready=self.llm_server.wait_until_ready
+                             if settings.llm.manage_server else None)
         self.stt = None
         self.tts = None
         self.rag = None
         self.avatar = None
         self.load_report: dict[str, float] = {}
+        self.warnings: list[str] = []
         self.gpu_lock = asyncio.Lock()  # serialises our own GPU bursts (STT / TTS)
 
     @property
@@ -50,7 +59,9 @@ class Services:
             await asyncio.to_thread(self._load_voice)
         if self.settings.rag.enabled:
             await asyncio.to_thread(self._load_rag)
-        if self.settings.avatar.enabled:
+        if self.settings.avatar.enabled and not self.vram_ok("avatar"):
+            self.warnings.append("avatar disabled for lack of VRAM")
+        elif self.settings.avatar.enabled:
             from app.avatar.client import AvatarClient
 
             t0 = time.perf_counter()
@@ -63,16 +74,46 @@ class Services:
         self.load_report["vram_used_mib_after_load"] = gpu_snapshot().get("vram_used_mib", -1)
         logger.info(f"services ready: {self.load_report}")
 
+    def vram_ok(self, what: str) -> bool:
+        """True if loading ``what`` still leaves the configured VRAM reserve free."""
+        free = vram_free_gib()
+        if free is None:
+            return True
+        need = VRAM_NEED_MIB.get(what, 1000) / 1024
+        ok = free - need >= self.settings.vram_min_free_gib
+        self.load_report[f"vram_free_gib_before_{what}"] = round(free, 2)
+        if not ok:
+            msg = (f"not enough free VRAM for {what}: {free:.2f} GiB free, needs ~{need:.2f} GiB "
+                   f"+ {self.settings.vram_min_free_gib} GiB reserve")
+            logger.error(msg)
+            self.warnings.append(msg)
+        return ok
+
     def _load_voice(self) -> None:
         from app.stt.whisper import WhisperSTT
         from app.tts.factory import create_tts
 
+        if not self.vram_ok(f"stt:{self.settings.stt.model}"):
+            self.warnings.append("voice disabled (text chat only) — close GPU-heavy apps or use profile 'lite'")
+            return
         t0 = time.perf_counter()
         self.stt = WhisperSTT(self.settings.stt)
         self.load_report["stt_load_s"] = round(time.perf_counter() - t0, 2)
         self.load_report["stt_warmup_s"] = self.stt.warmup()
+        engine = self.settings.tts.engine
+        if engine != "kokoro" and not self.vram_ok(f"tts:{engine}"):
+            self.warnings.append("clone voice skipped for lack of VRAM — using the stock voice")
+            self.settings.tts.engine = "kokoro"
         t0 = time.perf_counter()
-        self.tts = create_tts(self.settings)
+        try:
+            self.tts = create_tts(self.settings)
+        except Exception as exc:  # noqa: BLE001 - e.g. clone worker failed: fall back to the stock voice
+            if self.settings.tts.engine == "kokoro":
+                raise
+            logger.error(f"clone TTS failed ({exc!r}); falling back to Kokoro")
+            self.warnings.append(f"clone voice failed: {exc}")
+            self.settings.tts.engine = "kokoro"
+            self.tts = create_tts(self.settings)
         self.load_report["tts_load_s"] = round(time.perf_counter() - t0, 2)
         self.load_report["tts_warmup_s"] = self.tts.warmup()
 
@@ -131,6 +172,8 @@ class Services:
     async def stop(self) -> None:
         if self.avatar is not None:
             await self.avatar.stop()
+        if self.tts is not None and hasattr(self.tts, "close"):
+            self.tts.close()
         await self.llm.aclose()
         if self.settings.llm.manage_server:
             await asyncio.to_thread(self.llm_server.stop)

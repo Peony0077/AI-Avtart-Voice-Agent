@@ -23,6 +23,7 @@ from app.llm.client import LLMStats
 from app.llm.prompt import ConversationMemory
 from app.services import Services
 from app.session.outbox import Outbox
+from app.session.prefetch import AnswerPrefetch
 from app.session.state_machine import Event, State, StateMachine
 from app.session.turn import TurnContext, TurnRegistry
 from app.transport.protocol import KIND_IDLE_VIDEO
@@ -48,7 +49,9 @@ class Session:
         self._stt_task: asyncio.Task | None = None
         self._carry_text = ""             # transcript of an utterance the user continued
         self._spec: tuple[float, asyncio.Task] | None = None  # (speech_end_t, speculative STT task)
+        self._prefetch: AnswerPrefetch | None = None           # answer started at the same pause
         self._summary_task: asyncio.Task | None = None
+        self._warm_task: asyncio.Task | None = None
         self.dropped_idle_frames = 0
         self.sm.subscribe(self._on_state_change)
         self._closed = False
@@ -69,7 +72,8 @@ class Session:
         self._closed = True
         if self.turns.current:
             self.turns.current.cancel()
-        for task in (self._stt_task, self._summary_task):
+        self._drop_prefetch()
+        for task in (self._stt_task, self._summary_task, self._warm_task):
             if task and not task.done():
                 task.cancel()
         self.sm.try_fire(Event.STOP)
@@ -105,6 +109,8 @@ class Session:
                 await self._on_speech_start(ev)
             elif ev.kind == "pause":
                 self._on_speech_pause(ev)
+            elif ev.kind == "resume":
+                self._drop_prefetch()          # the user kept talking: that answer is stale
             else:
                 await self._on_speech_end(ev)
 
@@ -127,14 +133,46 @@ class Session:
         elif self.sm.state is State.END_OF_TURN:
             # The user kept talking before STT finished: keep that text and wait for the rest.
             self.sm.fire(Event.SPEECH_RESUMED)
+        if self.cfg.stt.keep_warm_ms and (self._warm_task is None or self._warm_task.done()):
+            self._warm_task = asyncio.create_task(self._keep_gpu_warm(), name="gpu-warm")
+
+    async def _keep_gpu_warm(self) -> None:
+        """While the user talks, nothing uses the GPU and its clocks drop, which made the STT at the
+        end of the utterance ~2x slower. An encoder pass every keep_warm_ms keeps it clocked up. Runs
+        only while speech is active (never during the silence before the speculative STT) and never
+        while the assistant or another GPU job is running."""
+        period = self.cfg.stt.keep_warm_ms / 1000
+        while self.vad is not None and self.vad.in_speech:
+            await asyncio.sleep(period)
+            vad = self.vad
+            if (vad is None or not vad.in_speech or vad.silence_ms > 0 or self.sm.state is not State.LISTENING
+                    or self.svc.gpu_lock.locked() or self.svc.stt is None):
+                continue
+            async with self.svc.gpu_lock:
+                await asyncio.to_thread(self.svc.stt.keep_warm)
 
     def _on_speech_pause(self, ev: VadEvent) -> None:
-        """Start STT speculatively; reused at the endpoint if the user stayed silent."""
+        """Start STT (and the answer) speculatively; reused at the endpoint if the user stayed silent."""
         if self.sm.state is not State.LISTENING or not len(ev.audio):
             return
         if self._spec and not self._spec[1].done():
             self._spec[1].cancel()
-        self._spec = (ev.speech_end_t, asyncio.create_task(self._stt(ev.audio), name="stt-spec"))
+        self._drop_prefetch()
+        stt = asyncio.create_task(self._stt(ev.audio), name="stt-spec")
+        self._spec = (ev.speech_end_t, stt)
+        if self.cfg.llm.prefetch_on_pause:
+            self._prefetch = AnswerPrefetch(ev.speech_end_t, stt, self._prefetch_text, self._retrieve_text,
+                                            self.memory.build, self.svc.llm)
+
+    def _prefetch_text(self, stt_text: str) -> str | None:
+        """The user text the answer would be for (same rules as at the endpoint), or None."""
+        text = f"{self._carry_text} {stt_text}".strip()
+        return text if text and not self._looks_like_echo(text) else None
+
+    def _drop_prefetch(self) -> None:
+        if self._prefetch is not None:
+            self._prefetch.cancel()
+            self._prefetch = None
 
     async def _stt(self, audio) -> tuple[str, float]:
         t_req = time.perf_counter()
@@ -157,27 +195,39 @@ class Session:
         t_end = ev.speech_end_t or ev.t
         t_endpoint = time.time()
         spec, self._spec = self._spec, None
+        prefetch, self._prefetch = self._prefetch, None
         speculative = spec is not None and spec[0] == ev.speech_end_t   # no new speech since the pause
-        if speculative:
-            text, t_stt = await spec[1]
-        else:
-            if spec and not spec[1].done():
-                spec[1].cancel()
-            text, t_stt = await self._stt(ev.audio)
-        if self.sm.state is not State.END_OF_TURN:      # user resumed speaking meanwhile
-            self._carry_text = f"{self._carry_text} {text}".strip()
-            return
-        text = f"{self._carry_text} {text}".strip()
-        self._carry_text = ""
-        if text and self._looks_like_echo(text):
-            logger.warning(f"ignored probable echo of the assistant: {text!r}")
-            self.outbox.json({"type": "echo_ignored", "text": text}, force=True)
-            text = ""
-        if not text:
-            self.sm.fire(Event.TRANSCRIPT_EMPTY)
-            self.outbox.json({"type": "transcript", "text": "", "final": True}, force=True)
-            return
-        turn = await self.start_turn("voice", text, t0=t_end)
+        adopted = False
+        try:
+            if speculative:
+                text, t_stt = await spec[1]
+            else:
+                if spec and not spec[1].done():
+                    spec[1].cancel()
+                text, t_stt = await self._stt(ev.audio)
+            if self.sm.state is not State.END_OF_TURN:      # user resumed speaking meanwhile
+                self._carry_text = f"{self._carry_text} {text}".strip()
+                return
+            text = f"{self._carry_text} {text}".strip()
+            self._carry_text = ""
+            if text and self._looks_like_echo(text):
+                logger.warning(f"ignored probable echo of the assistant: {text!r}")
+                self.outbox.json({"type": "echo_ignored", "text": text}, force=True)
+                text = ""
+            if not text:
+                self.sm.fire(Event.TRANSCRIPT_EMPTY)
+                self.outbox.json({"type": "transcript", "text": "", "final": True}, force=True)
+                return
+            if prefetch is not None and speculative:
+                adopted = await prefetch.matches(ev.speech_end_t, text)
+                if self.sm.state is not State.END_OF_TURN:  # resumed while checking (bounded wait)
+                    adopted = False
+                    self._carry_text = text
+                    return
+            turn = await self.start_turn("voice", text, t0=t_end, prefetch=prefetch if adopted else None)
+        finally:
+            if prefetch is not None and not adopted:
+                prefetch.cancel()
         turn.mark("vad_endpoint", t_endpoint)
         turn.mark("stt_done", t_stt)
         turn.utterance_ms = ev.stats.get("duration_ms")
@@ -194,21 +244,26 @@ class Session:
         return sum(w in said for w in words) / len(words) >= 0.8
 
     # ------------------------------------------------------------------ turns
-    async def start_turn(self, source: str, text: str, t0: float | None = None) -> TurnContext:
+    async def start_turn(self, source: str, text: str, t0: float | None = None,
+                         prefetch: AnswerPrefetch | None = None) -> TurnContext:
         if self.sm.state in ACTIVE:
             await self.interrupt("new_input")
+        self._drop_prefetch()                  # e.g. typed text while a spoken answer was being prefetched
         turn = self.turns.new_turn(source, text)
         turn.mark("t0", t0)
+        if prefetch is not None:
+            turn.prefetched = True
+            turn.tasks.append(prefetch.task)   # a barge-in cancels it like any other turn task
         self.sm.fire(Event.TEXT_INPUT if source == "text" else Event.TRANSCRIPT_READY)
         self.outbox.json({"type": "user_message", "turn_id": turn.turn_id, "text": text, "source": source},
                          turn.turn_id, force=True)
-        task = asyncio.create_task(self._run_turn(turn), name=f"turn-{turn.turn_id}")
+        task = asyncio.create_task(self._run_turn(turn, prefetch), name=f"turn-{turn.turn_id}")
         turn.tasks.append(task)
         return turn
 
-    async def _run_turn(self, turn: TurnContext) -> None:
+    async def _run_turn(self, turn: TurnContext, prefetch: AnswerPrefetch | None = None) -> None:
         try:
-            await self._respond(turn)
+            await self._respond(turn, prefetch)
         except asyncio.CancelledError:
             pass
         except Exception as exc:  # noqa: BLE001
@@ -219,11 +274,18 @@ class Session:
                 self.sm.fire(Event.FAILURE)
                 self.sm.fire(Event.RECOVER)
 
-    async def _respond(self, turn: TurnContext) -> None:
+    async def _respond(self, turn: TurnContext, prefetch: AnswerPrefetch | None = None) -> None:
         tid = turn.turn_id
-        knowledge, citations = await self._retrieve(turn)
-        messages = self.memory.build(turn.user_text, knowledge)
-        parser, spoken, stats = MetaStreamParser(), [], LLMStats()
+        citations: list[dict] = []
+        if prefetch is not None:               # answer already streaming since the VAD pause
+            stats = prefetch.stats
+            deltas = prefetch.deltas()
+        else:
+            knowledge, citations = await self._retrieve(turn)
+            stats = LLMStats()
+            turn.mark("llm_request")
+            deltas = self.svc.llm.stream_chat(self.memory.build(turn.user_text, knowledge), stats)
+        parser, spoken = MetaStreamParser(), []
         speech = chunker = None
         if self.voice_out:
             speech = SpeechOutput(turn, self.svc.tts, self.outbox, self.svc.gpu_lock,
@@ -232,11 +294,14 @@ class Session:
             turn.speech = speech
             chunker = ClauseChunker()
         behavior_sent = False
-        turn.mark("llm_request")
-        async for delta in self.svc.llm.stream_chat(messages, stats):
+        async for delta in deltas:
             if turn.is_cancelled:
                 return
-            turn.mark("llm_first_token")
+            if prefetch is not None:
+                if self.svc.rag is not None:
+                    turn.mark("rag_done", prefetch.t_rag)
+                turn.mark("llm_request", prefetch.t_request)
+            turn.mark("llm_first_token", prefetch.t_first_token if prefetch else None)
             _meta, text = parser.feed(delta)
             text = clean_delta(text)
             if not behavior_sent and (parser.meta is not None or text):
@@ -258,6 +323,8 @@ class Session:
                 speech.say(clause)
             speech.close()
         turn.mark("llm_done")
+        if prefetch is not None:
+            citations, turn.rag_stats = prefetch.citations, prefetch.rag_stats
         reply = "".join(spoken).strip()
         turn.header = parser.raw_header or ""
         if citations:
@@ -285,12 +352,16 @@ class Session:
         self._maybe_summarize()
 
     async def _retrieve(self, turn: TurnContext) -> tuple[str | None, list[dict]]:
+        knowledge, citations, turn.rag_stats = await self._retrieve_text(turn.user_text)
+        if self.svc.rag is not None:
+            turn.mark("rag_done")
+        return knowledge, citations
+
+    async def _retrieve_text(self, text: str) -> tuple[str | None, list[dict], dict | None]:
         if self.svc.rag is None:
-            return None, []
-        result = await asyncio.to_thread(self.svc.rag.retrieve, turn.user_text)
-        turn.mark("rag_done")
-        turn.rag_stats = result.stats
-        return result.context, result.citations
+            return None, [], None
+        result = await asyncio.to_thread(self.svc.rag.retrieve, text)
+        return result.context, result.citations, result.stats
 
     def _emit_text(self, turn: TurnContext, text: str, spoken: list[str]) -> None:
         spoken.append(text)
@@ -398,6 +469,7 @@ class Session:
                   "interrupted": interrupted, "ms_from_t0": rel, "llm": stats.__dict__ if stats else None,
                   "utterance_ms": turn.utterance_ms, "cancel_ms": turn.cancel_ms,
                   "stt_speculative": turn.stt_speculative, "stt_timing": turn.stt_timing,
+                  "llm_prefetched": turn.prefetched,
                   "speech_ms": round(turn.speech.total_ms) if turn.speech else None,
                   "tts_first_timing": turn.speech.first_timing if turn.speech else None,
                   "rag": turn.rag_stats, "avatar_first_ms": turn.avatar_first_ms, "ts": time.time()}

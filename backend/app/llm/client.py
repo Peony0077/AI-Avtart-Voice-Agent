@@ -6,10 +6,11 @@ generating for that request (verified in Phase 1 tests via its log).
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 
 import httpx
+from loguru import logger
 
 from app.core.config import LLMCfg
 
@@ -26,8 +27,9 @@ class LLMStats:
 
 
 class LLMClient:
-    def __init__(self, cfg: LLMCfg) -> None:
+    def __init__(self, cfg: LLMCfg, wait_ready: Callable[[float], Awaitable[bool]] | None = None) -> None:
         self.cfg = cfg
+        self.wait_ready = wait_ready     # supervisor hook: wait for a crashed llama-server to come back
         self._http = httpx.AsyncClient(base_url=cfg.base_url, timeout=httpx.Timeout(cfg.request_timeout_s, connect=5.0))
 
     async def aclose(self) -> None:
@@ -47,6 +49,24 @@ class LLMClient:
             "cache_prompt": True,
             "timings_per_token": False,
         }
+        for attempt in (1, 2):
+            streamed = False
+            try:
+                async for delta in self._stream(body, stats):
+                    streamed = True
+                    yield delta
+                return
+            except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError, httpx.HTTPStatusError) as exc:
+                # llama-server crashed (or its restart is still loading the model: 503): if nothing was
+                # streamed yet, wait for the watchdog's restart and retry once
+                unavailable = not isinstance(exc, httpx.HTTPStatusError) or exc.response.status_code == 503
+                if streamed or attempt == 2 or self.wait_ready is None or not unavailable:
+                    raise
+                logger.warning("LLM server unreachable; waiting for its restart")
+                if not await self.wait_ready(90.0):
+                    raise
+
+    async def _stream(self, body: dict, stats: LLMStats | None) -> AsyncIterator[str]:
         async with self._http.stream("POST", "/v1/chat/completions", json=body) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():

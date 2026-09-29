@@ -6,6 +6,7 @@ thread + ``subprocess.Popen`` (works with any asyncio event loop on Windows).
 """
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import threading
 import time
@@ -29,6 +30,7 @@ class LlamaServerSupervisor:
         self._stop = threading.Event()
         self._watchdog: threading.Thread | None = None
         self.restarts = 0
+        self.ready = threading.Event()   # set while llama-server answers /health; cleared when it dies
 
     def command(self) -> list[str]:
         return [
@@ -74,6 +76,7 @@ class LlamaServerSupervisor:
                 raise RuntimeError(f"llama-server exited with code {self._proc.returncode}; see {self.log_path}")
             if self._is_healthy():
                 logger.info("llama-server is ready")
+                self.ready.set()
                 return
             time.sleep(0.5)
         raise TimeoutError(f"llama-server not ready after {timeout_s}s; see {self.log_path}")
@@ -87,6 +90,7 @@ class LlamaServerSupervisor:
     def _watch(self) -> None:
         while not self._stop.wait(2.0):
             if self._proc is not None and self._proc.poll() is not None:
+                self.ready.clear()
                 self.restarts += 1
                 logger.error(f"llama-server died (code {self._proc.returncode}); restart #{self.restarts}")
                 try:
@@ -94,6 +98,15 @@ class LlamaServerSupervisor:
                     self.wait_ready(180.0)
                 except Exception as exc:  # noqa: BLE001
                     logger.error(f"llama-server restart failed: {exc}")
+
+    async def wait_until_ready(self, timeout_s: float) -> bool:
+        """For requests that hit a crashed server: wait until the watchdog has it answering again."""
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            if self.ready.is_set() and await asyncio.to_thread(self._is_healthy):
+                return True
+            await asyncio.sleep(0.25)
+        return False
 
     @property
     def running(self) -> bool:

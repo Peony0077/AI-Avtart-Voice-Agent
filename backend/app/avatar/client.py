@@ -53,7 +53,8 @@ class AvatarClient:
         script = self.settings.repo_path("avatar/musetalk/worker.py")
         port = self.cfg.worker_url.rsplit(":", 1)[1].split("/")[0]
         cmd = [str(py), str(script), "--avatar", self.cfg.avatar_id, "--port", port,
-               "--quality", str(self.cfg.jpeg_quality), "--gate-frames", str(self.cfg.gate_frames)]
+               "--quality", str(self.cfg.jpeg_quality), "--gate-frames", str(self.cfg.gate_frames),
+               "--warm-burst-ms", str(self.cfg.warm_burst_ms)]
         free_port(int(port), "worker.py")
         log = (self.settings.log_dir / "avatar-worker.log").open("ab")
         logger.info(f"starting avatar worker: {' '.join(cmd)}")
@@ -64,8 +65,6 @@ class AvatarClient:
     async def _connect(self, timeout_s: float) -> None:
         deadline = time.time() + timeout_s
         while time.time() < deadline:
-            if self.proc is not None and self.proc.poll() is not None:
-                raise RuntimeError(f"avatar worker exited with {self.proc.returncode}; see logs/avatar-worker.log")
             if self.proc is not None and self.proc.poll() is not None:
                 raise RuntimeError(f"avatar worker exited with {self.proc.returncode}; see logs/avatar-worker.log")
             try:
@@ -124,7 +123,8 @@ class AvatarClient:
                 data = json.loads(msg)
                 if data.get("type") == "first_frame":
                     fut = self._waiters.pop((data["turn_id"], data["seq"]), None)
-                    self.stats["first_frame_ms"] = (self.stats["first_frame_ms"] + [data["ms"]])[-50:]
+                    if data["ms"] is not None:   # None: the segment had no frames to render
+                        self.stats["first_frame_ms"] = (self.stats["first_frame_ms"] + [data["ms"]])[-50:]
                     if fut and not fut.done():
                         fut.set_result(data["ms"])
                 elif data.get("type") == "segment_done" and data.get("fps"):
