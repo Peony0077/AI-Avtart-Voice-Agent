@@ -74,7 +74,7 @@ hf_cache/
 *.dll
 
 # ---- Data (private documents, generated indexes, personal likeness) ---------
-/data/
+/data/*
 !/data/README.md
 
 # ---- Large generated media --------------------------------------------------
