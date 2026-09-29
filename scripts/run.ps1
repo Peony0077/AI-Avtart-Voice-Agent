@@ -39,6 +39,7 @@ Stop-All
 if ($Profile) { $env:AVATAR_PROFILE = $Profile }
 $env:HF_HOME = 'E:\AI-models\hf'
 $env:CUDA_MODULE_LOADING = 'LAZY'
+$env:HF_HUB_OFFLINE = '1'
 
 if ($Build -or -not (Test-Path frontend\dist\index.html)) {
   Push-Location frontend; npm.cmd run build | Out-Host; Pop-Location

@@ -21,8 +21,16 @@ class TurnContext:
     cancelled: asyncio.Event = field(default_factory=asyncio.Event)
     timings: dict[str, float] = field(default_factory=dict)  # name -> epoch seconds
     tasks: list[asyncio.Task] = field(default_factory=list)
-    header: str = ""        # raw <meta> header of the reply (kept in history)
+    header: str = ""        # raw behaviour tag of the reply (kept in history)
     spoken_text: str = ""   # reply text produced so far
+    speech: object | None = None                  # SpeechOutput for voice replies
+    played_ms: float = 0.0                        # browser playback position on this turn's audio
+    playback_ended: asyncio.Event = field(default_factory=asyncio.Event)
+    utterance_ms: int | None = None
+    cancel_ms: float | None = None
+    rag_stats: dict | None = None
+    stt_speculative: bool | None = None
+    stt_timing: dict | None = None
 
     def mark(self, name: str, at: float | None = None) -> float:
         """Record a timestamp once (first occurrence wins)."""

@@ -6,11 +6,13 @@ are loaded here (never per turn) and warmed up before the first session.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 
 from loguru import logger
 
 from app.core.config import Settings
+from app.core.gpu import gpu_snapshot
 from app.llm.client import LLMClient
 from app.llm.prompt import system_prompt
 from app.llm.server import LlamaServerSupervisor
@@ -19,15 +21,24 @@ from app.llm.server import LlamaServerSupervisor
 class Services:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        os.environ.setdefault("HF_HOME", str(settings.model_home / "hf"))
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")  # models are pre-downloaded; no network at runtime
         self.llm_server = LlamaServerSupervisor(settings)
         self.llm = LLMClient(settings.llm)
-        self.stt = None      # Phase 2
-        self.vad_factory = None
+        self.stt = None
         self.tts = None
-        self.rag = None      # Phase 5
-        self.avatar = None   # Phase 4
+        self.rag = None
+        self.avatar = None
         self.load_report: dict[str, float] = {}
-        self.gpu_lock = asyncio.Lock()  # serialises our own GPU bursts (STT/TTS)
+        self.gpu_lock = asyncio.Lock()  # serialises our own GPU bursts (STT / TTS)
+
+    @property
+    def voice_ready(self) -> bool:
+        return self.stt is not None and self.tts is not None
+
+    @property
+    def avatar_ready(self) -> bool:
+        return self.avatar is not None and self.avatar.connected
 
     async def start(self) -> None:
         t0 = time.perf_counter()
@@ -35,17 +46,46 @@ class Services:
             await asyncio.to_thread(self.llm_server.start)
         self.load_report["llm_server_s"] = round(time.perf_counter() - t0, 2)
         await self._warm_llm()
+        if self.settings.voice_enabled:
+            await asyncio.to_thread(self._load_voice)
+        self.load_report["vram_used_mib_after_load"] = gpu_snapshot().get("vram_used_mib", -1)
+        logger.info(f"services ready: {self.load_report}")
+
+    def _load_voice(self) -> None:
+        from app.stt.whisper import WhisperSTT
+        from app.tts.factory import create_tts
+
+        t0 = time.perf_counter()
+        self.stt = WhisperSTT(self.settings.stt)
+        self.load_report["stt_load_s"] = round(time.perf_counter() - t0, 2)
+        self.load_report["stt_warmup_s"] = self.stt.warmup()
+        t0 = time.perf_counter()
+        self.tts = create_tts(self.settings)
+        self.load_report["tts_load_s"] = round(time.perf_counter() - t0, 2)
+        self.load_report["tts_warmup_s"] = self.tts.warmup()
 
     async def _warm_llm(self) -> None:
         """Run one tiny request with the real system prompt so its KV prefix is cached."""
         t0 = time.perf_counter()
-        prompt = system_prompt(self.settings.persona_name, knowledge_enabled=self.settings.rag.enabled)
+        prompt = system_prompt(self.settings.persona_name)
         try:
             await self.llm.complete([{"role": "system", "content": prompt}, {"role": "user", "content": "Hi"}], max_tokens=4)
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"LLM warm-up failed: {exc!r}")
         self.load_report["llm_warmup_s"] = round(time.perf_counter() - t0, 2)
-        logger.info(f"services ready: {self.load_report}")
+
+    # ---- avatar hooks (Phase 4); no-ops when no avatar worker is connected ----
+    def avatar_sink_for(self, session, turn):
+        return None
+
+    async def avatar_cancel(self, turn_id: int) -> None:
+        return None
+
+    def avatar_state(self, state: str) -> None:
+        return None
+
+    def avatar_behavior(self, behavior: dict) -> None:
+        return None
 
     async def stop(self) -> None:
         await self.llm.aclose()

@@ -68,3 +68,9 @@ button.danger { background: #d92d20; color: #fff; }
 .metrics th, .metrics td { padding: 4px 8px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
 .metrics th:first-child, .metrics td:first-child { text-align: left; }
 .metrics tr.interrupted td { color: var(--warn); }
+
+.voice-controls { display: inline-flex; align-items: center; gap: 8px; }
+.mic { width: 90px; height: 10px; border-radius: 6px; background: var(--border); overflow: hidden; display: inline-block; }
+.mic-bar { display: block; height: 100%; background: var(--muted); transition: width 80ms linear; }
+.mic.hot .mic-bar { background: #12b76a; }
+.error { color: #d92d20; font-size: 0.85rem; }

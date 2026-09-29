@@ -1,7 +1,7 @@
-"""Application settings.
+﻿"""Application settings.
 
-Precedence (highest first): environment variables (prefix ``AVATAR_``) → ``.env`` →
-YAML profile ``config/profiles/<AVATAR_PROFILE>.yaml`` → defaults below.
+Precedence (highest first): environment variables (prefix ``AVATAR_``) â†’ ``.env`` â†’
+YAML profile ``config/profiles/<AVATAR_PROFILE>.yaml`` â†’ defaults below.
 Nested keys use ``__`` in env vars, e.g. ``AVATAR_LLM__MAX_TOKENS=200``.
 """
 from __future__ import annotations
@@ -54,6 +54,8 @@ class VADCfg(BaseModel):
     bargein_min_ms: int = 260         # speech needed to interrupt the assistant
     endpoint_ms: int = 550            # trailing silence that ends an utterance
     preroll_ms: int = 300             # audio kept before speech start
+    min_dbfs: float = -55.0           # ignore chunks quieter than this (noise floor)
+    early_stt_ms: int = 120           # start STT speculatively after this much silence (0 = off)
     max_utterance_s: float = 30.0
 
 

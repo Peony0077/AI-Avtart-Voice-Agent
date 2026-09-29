@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useConversation } from './lib/useConversation.js'
+import { useVoice } from './lib/useVoice.js'
 import MetricsPanel from './components/MetricsPanel.jsx'
 
 const STATE_LABEL = {
@@ -14,6 +15,7 @@ const STATE_LABEL = {
 
 export default function App() {
   const conv = useConversation()
+  const voice = useVoice(conv)
   const [draft, setDraft] = useState('')
   const listRef = useRef(null)
   const busy = conv.state === 'THINKING' || conv.state === 'SPEAKING'
@@ -36,6 +38,20 @@ export default function App() {
         <strong>{conv.session?.persona ?? 'AI Avatar'}</strong>
         <span className={`badge state-${conv.state}`} data-testid="state">{STATE_LABEL[conv.state] ?? conv.state}</span>
         <span className="muted" data-testid="conn-status">{conv.status}</span>
+        <span className="voice-controls">
+          {voice.active ? (
+            <button type="button" className="danger" data-testid="voice-stop" onClick={voice.stop}>Stop voice</button>
+          ) : (
+            <button type="button" data-testid="voice-start" onClick={voice.start}
+              disabled={conv.status !== 'open' || conv.session?.voice_available === false}>Start voice</button>
+          )}
+          {voice.active && (
+            <span className={`mic ${voice.speechDetected ? 'hot' : ''}`} data-testid="mic" title="microphone level">
+              <span className="mic-bar" style={{ width: `${Math.min(100, voice.level * 400)}%` }} />
+            </span>
+          )}
+          {voice.error && <span className="error" data-testid="voice-error">{voice.error}</span>}
+        </span>
         {conv.behavior && (
           <span className="muted" data-testid="behavior">
             {conv.behavior.emotion} · {conv.behavior.gesture} · {conv.behavior.intensity}

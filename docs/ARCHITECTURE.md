@@ -29,7 +29,7 @@ Browser (owner's PC) ──HTTPS/WSS──► P1 backend (FastAPI, .venv torch 2
 |---|---|---|
 | 0 Safety + research | done | see "Phase 0 results" |
 | 1 Text conversation | done | see "Phase 1 results" |
-| 2 Voice pipeline | pending | |
+| 2 Voice pipeline | done (soak: see Phase 3) | see "Phase 2 results" |
 | 3 Interruption | pending | |
 | 4 Realistic avatar | pending | |
 | 5 RAG | pending | |
@@ -71,6 +71,35 @@ Design notes:
   first spoken word by ~230 ms, the compact one by ~130 ms.
 - Every outbound packet carries `turn_id`; the single-writer outbox drops data of non-current turns.
 - One active session: a new connection takes over (the old one gets close code 4001).
+
+## Phase 2 results (voice pipeline)
+
+Measured with `scripts/bench_voice.py latency --rounds 2` (16 spoken questions streamed in real time over the
+real protocol) and Playwright `tests/e2e/phase2_voice.spec.js` (Chromium fake microphone).
+Raw data: [phase2_voice.json](benchmarks/phase2_voice.json), [phase2_models.json](benchmarks/phase2_models.json).
+
+| Metric (ms after the user's last voiced audio) | p50 | p90 | max |
+|---|---|---|---|
+| VAD endpoint (550 ms silence rule) | 572 | 593 | 608 |
+| STT done (speculative, started after 120 ms silence) | 619 | 683 | 683 |
+| LLM first token | 681 | 735 | 846 |
+| LLM first spoken text | 793 | 868 | 980 |
+| First clause ready | 924 | 1021 | 1082 |
+| TTS first audio ready | 1099 | 1241 | 1400 |
+| **End of speech → first audio (client)** | **1109** | **1254** | **1422** |
+
+- Browser (Playwright) run: 1,052 ms end of speech → first audio played.
+- Transcripts: 16/16 exact. Speculative STT reused in 16/16 turns.
+- Models: Whisper large-v3-turbo fp16 (1.75 GiB VRAM, 190 ms warm), Kokoro-82M (0.55 GiB, ~120 ms/clause, RTF 0.05).
+- VRAM with LLM + STT + TTS resident: 7.2 GiB of 12 GiB (≈ 2 GiB of it is the Windows desktop).
+- Backend process RAM: ~2.5 GB.
+
+Findings:
+- After ~2 s of GPU idle (while the user talks) Whisper takes ~390 ms instead of ~185 ms, even though the SM
+  clock reads 1.9 GHz; keeping CPU or GPU busy barely helps (`scripts/bench_gpu_idle.py`). Hiding STT behind
+  the endpoint wait (speculative STT on a 120 ms pause) removes it from the critical path.
+- Recommended manual setting: NVIDIA Control Panel → Manage 3D settings → Program settings → `python.exe`
+  (repo `.venv`) and `llama-server.exe` → *Power management mode: Prefer maximum performance*.
 
 ## Running
 

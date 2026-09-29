@@ -1,0 +1,107 @@
+{
+  "vram_before_mib": 4918,
+  "stt_load_s": 9.76,
+  "stt_warmup_s": 1.48,
+  "vram_after_stt_mib": 6673,
+  "tts_load_s": 3.78,
+  "tts_warmup_s": 0.91,
+  "vram_after_tts_mib": 7225,
+  "tts": {
+    "synth_ms_p50": 122.05,
+    "synth_ms_short_clause": 121.1,
+    "rtf_p50": 0.048,
+    "rows": [
+      {
+        "text": "Sure!",
+        "synth_ms": 121.1,
+        "audio_ms": 1300,
+        "rtf": 0.093,
+        "words": 2
+      },
+      {
+        "text": "Octopuses have three hearts,",
+        "synth_ms": 123.0,
+        "audio_ms": 2275,
+        "rtf": 0.054,
+        "words": 5
+      },
+      {
+        "text": "and two of them pump blood to the gills.",
+        "synth_ms": 125.1,
+        "audio_ms": 2575,
+        "rtf": 0.049,
+        "words": 10
+      },
+      {
+        "text": "That's a great question.",
+        "synth_ms": 106.5,
+        "audio_ms": 1900,
+        "rtf": 0.056,
+        "words": 5
+      },
+      {
+        "text": "The capital of France is Paris, a city famous for art, food and history.",
+        "synth_ms": 141.2,
+        "audio_ms": 5075,
+        "rtf": 0.028,
+        "words": 17
+      }
+    ]
+  },
+  "stt": {
+    "ms_p50": 189.6,
+    "ms_max": 466.3,
+    "rows": [
+      {
+        "expected": "What is the capital of France?",
+        "got": "What is the capital of France?",
+        "ms": 189.6,
+        "audio_s": 2.75
+      },
+      {
+        "expected": "Can you tell me a long story about a lighthouse keeper and the sea?",
+        "got": "Can you tell me a long story about a lighthouse keeper and the sea?",
+        "ms": 223.3,
+        "audio_s": 4.5
+      },
+      {
+        "expected": "Wait, stop please. What is two plus two?",
+        "got": "Wait stop please. What is 2 plus 2?",
+        "ms": 199.0,
+        "audio_s": 3.62
+      },
+      {
+        "expected": "I was thinking about",
+        "got": "I was thinking about.",
+        "ms": 172.8,
+        "audio_s": 2.12
+      },
+      {
+        "expected": "buying a new bicycle.",
+        "got": "Buying a new bicycle",
+        "ms": 171.6,
+        "audio_s": 2.4
+      },
+      {
+        "expected": "Tell me one short interesting fact.",
+        "got": "Tell me one short interesting fact.",
+        "ms": 180.3,
+        "audio_s": 3.05
+      },
+      {
+        "expected": "What are the opening hours of the Moonlight Bakery on Sundays?",
+        "got": "What are the opening hours of the Moonlight Bakery on Sundays?",
+        "ms": 466.3,
+        "audio_s": 4.72
+      }
+    ]
+  },
+  "torch_peak_alloc_mib": 2195,
+  "vram_end_mib": 7323,
+  "backend_rss_mib": 2500,
+  "chunker_demo": [
+    "Sure, octopuses have three hearts.",
+    "Two pump blood to the gills, and one to the body!",
+    "Neat, right?"
+  ]
+}

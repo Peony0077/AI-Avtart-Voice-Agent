@@ -1,0 +1,162 @@
+{
+  "mic_question": {
+    "duration_s": 17.155,
+    "speech": [
+      {
+        "text": "What is the capital of France?",
+        "start_s": 1.5,
+        "end_s": 3.155
+      }
+    ]
+  },
+  "mic_story_bargein": {
+    "duration_s": 28.227,
+    "speech": [
+      {
+        "text": "Can you tell me a long story about a lighthouse keeper and the sea?",
+        "start_s": 1.5,
+        "end_s": 4.764
+      },
+      {
+        "text": "Wait, stop please. What is two plus two?",
+        "start_s": 11.764,
+        "end_s": 14.227
+      }
+    ]
+  },
+  "mic_resume": {
+    "duration_s": 16.519,
+    "speech": [
+      {
+        "text": "I was thinking about",
+        "start_s": 1.5,
+        "end_s": 2.496
+      },
+      {
+        "text": "buying a new bicycle.",
+        "start_s": 3.296,
+        "end_s": 4.519
+      }
+    ]
+  },
+  "mic_soak": {
+    "duration_s": 18.937,
+    "speech": [
+      {
+        "text": "Tell me one short interesting fact.",
+        "start_s": 1.0,
+        "end_s": 2.937
+      }
+    ]
+  },
+  "mic_rag": {
+    "duration_s": 19.071,
+    "speech": [
+      {
+        "text": "What are the opening hours of the Moonlight Bakery on Sundays?",
+        "start_s": 1.5,
+        "end_s": 5.071
+      }
+    ]
+  },
+  "bench_q1": {
+    "duration_s": 3.944,
+    "speech": [
+      {
+        "text": "What is the capital of Japan?",
+        "start_s": 0.8,
+        "end_s": 2.444
+      }
+    ]
+  },
+  "bench_q2": {
+    "duration_s": 4.062,
+    "speech": [
+      {
+        "text": "How many legs does a spider have?",
+        "start_s": 0.8,
+        "end_s": 2.562
+      }
+    ]
+  },
+  "bench_q3": {
+    "duration_s": 4.686,
+    "speech": [
+      {
+        "text": "Can you recommend a good hobby for the weekend?",
+        "start_s": 0.8,
+        "end_s": 3.186
+      }
+    ]
+  },
+  "bench_q4": {
+    "duration_s": 3.532,
+    "speech": [
+      {
+        "text": "Why is the sky blue?",
+        "start_s": 0.8,
+        "end_s": 2.032
+      }
+    ]
+  },
+  "bench_q5": {
+    "duration_s": 4.177,
+    "speech": [
+      {
+        "text": "What should I eat for breakfast tomorrow?",
+        "start_s": 0.8,
+        "end_s": 2.677
+      }
+    ]
+  },
+  "bench_q6": {
+    "duration_s": 3.564,
+    "speech": [
+      {
+        "text": "Tell me something nice.",
+        "start_s": 0.8,
+        "end_s": 2.064
+      }
+    ]
+  },
+  "bench_q7": {
+    "duration_s": 3.741,
+    "speech": [
+      {
+        "text": "How far away is the moon?",
+        "start_s": 0.8,
+        "end_s": 2.241
+      }
+    ]
+  },
+  "bench_q8": {
+    "duration_s": 3.784,
+    "speech": [
+      {
+        "text": "What is your favorite color?",
+        "start_s": 0.8,
+        "end_s": 2.284
+      }
+    ]
+  },
+  "bench_interrupt": {
+    "duration_s": 3.714,
+    "speech": [
+      {
+        "text": "Wait, stop. What is two plus two?",
+        "start_s": 0.3,
+        "end_s": 2.214
+      }
+    ]
+  },
+  "bench_long": {
+    "duration_s": 4.992,
+    "speech": [
+      {
+        "text": "Please tell me a long story about a brave little fox.",
+        "start_s": 0.8,
+        "end_s": 3.992
+      }
+    ]
+  }
+}
