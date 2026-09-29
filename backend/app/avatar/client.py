@@ -39,7 +39,7 @@ class AvatarClient:
         self._watchdog: asyncio.Task | None = None
         self._stopping = False
         self.restarts = 0
-        self.stats = {"frames_in": 0, "idle_in": 0, "first_frame_ms": [], "segment_fps": []}
+        self.stats = {"frames_in": 0, "idle_in": 0, "first_frame_ms": [], "segment_fps": [], "skipped_frames": 0}
 
     # ------------------------------------------------------------------ lifecycle
     async def start(self, timeout_s: float = 240.0) -> None:
@@ -54,7 +54,7 @@ class AvatarClient:
         port = self.cfg.worker_url.rsplit(":", 1)[1].split("/")[0]
         cmd = [str(py), str(script), "--avatar", self.cfg.avatar_id, "--port", port,
                "--quality", str(self.cfg.jpeg_quality), "--gate-frames", str(self.cfg.gate_frames),
-               "--warm-burst-ms", str(self.cfg.warm_burst_ms)]
+               "--warm-burst-ms", str(self.cfg.warm_burst_ms), "--late-ms", str(self.cfg.late_ms)]
         free_port(int(port), "worker.py")
         log = (self.settings.log_dir / "avatar-worker.log").open("ab")
         logger.info(f"starting avatar worker: {' '.join(cmd)}")
@@ -127,8 +127,12 @@ class AvatarClient:
                         self.stats["first_frame_ms"] = (self.stats["first_frame_ms"] + [data["ms"]])[-50:]
                     if fut and not fut.done():
                         fut.set_result(data["ms"])
-                elif data.get("type") == "segment_done" and data.get("fps"):
-                    self.stats["segment_fps"] = (self.stats["segment_fps"] + [data["fps"]])[-50:]
+                elif data.get("type") == "segment_done":
+                    self.stats["skipped_frames"] += data.get("skipped", 0)
+                    if data.get("vram_reserved_mib") is not None:
+                        self.stats["worker_vram_reserved_mib"] = data["vram_reserved_mib"]
+                    if data.get("fps"):
+                        self.stats["segment_fps"] = (self.stats["segment_fps"] + [data["fps"]])[-50:]
         except websockets.ConnectionClosed:
             pass
         finally:

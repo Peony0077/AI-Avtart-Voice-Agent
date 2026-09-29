@@ -251,18 +251,22 @@ Add your own documents: put files in `data/knowledge/` and run `.venv\Scripts\py
 ### Profiles
 
 One profile = one set of resident models (`config/profiles/*.yaml`, selected with `run.ps1 -Profile`).
-VRAM is for the whole GPU after start-up, including ~2 GiB used by the Windows desktop.
+VRAM = what the stack itself uses right after start-up (GPU memory used after loading minus before
+starting); the Windows desktop and other apps come on top (1.4–3.5 GiB measured on this PC), and
+activations add ~0.4 GiB during use.
 
-| Profile | STT | Voice | Avatar | VRAM | End of speech → first audio (p50 / p90) |
+| Profile | STT | Voice | Avatar | VRAM (stack) | End of speech → first audio (p50 / p90) |
 |---|---|---|---|---|---|
-| `default` | Whisper large-v3-turbo | Kokoro (stock) | – | 5.8 GiB | **922 / 1,048 ms** (Phase 2: 1,109 / 1,254) |
-| `avatar` | large-v3-turbo | Kokoro | MuseTalk | 9.5 GiB | **1,357 / 1,612 ms** (Phase 4: 1,750 / 1,914) |
-| `clone` | large-v3-turbo | XTTS-v2 clone | – | PROFILE_CLONE_VRAM | PROFILE_CLONE_LATENCY |
-| `avatar_clone` | large-v3-turbo | light clone | MuseTalk | 9.5 GiB | **1,438 / 1,600 ms** (first version: 2,854 with XTTS) |
-| `lite` | whisper-small.en | Kokoro | – | PROFILE_LITE_VRAM | PROFILE_LITE_LATENCY |
+| `default` | Whisper large-v3-turbo | Kokoro (stock) | – | 5.2 GiB | **922 / 1,048 ms** (Phase 2: 1,109 / 1,254) |
+| `lite` | whisper-small.en, LLM context 3,072 | Kokoro | – | 4.1 GiB | **873 / 1,007 ms** |
+| `clone` | large-v3-turbo | XTTS-v2 clone | – | 6.7 GiB | **1,271 / 1,425 ms** (before the latency work: 1,526 / 1,768) |
+| `avatar` | large-v3-turbo | Kokoro | MuseTalk | 8.8 GiB | **1,357 / 1,612 ms** (Phase 4: 1,750 / 1,914) |
+| `avatar_clone` | large-v3-turbo | light clone | MuseTalk | 9.0 GiB | **1,438 / 1,600 ms** (first version: 2,854 with XTTS) |
 
-All numbers: `scripts/bench_voice.py latency --rounds 2` (16 spoken questions streamed in real time over
-the real protocol, 16/16 exact transcripts), after the latency work below.
+All latencies: `scripts/bench_voice.py latency --rounds 2` (16 spoken questions streamed in real time over
+the real protocol, 16/16 exact transcripts in every profile), after the latency work below. Raw data:
+[phase6_profile_clone.json](benchmarks/phase6_profile_clone.json), [phase6_profile_lite.json](benchmarks/phase6_profile_lite.json)
+and the files linked below.
 
 A VRAM guard checks free VRAM before each model loads (needs from measurements, plus a 0.8 GiB
 reserve). If a model would not fit it is skipped instead of letting Windows spill VRAM into system RAM
@@ -361,12 +365,47 @@ Fixes that came out of this work (they also protect the XTTS path):
 | Waits for avatar frames > 1.5 s | 0 (was 32 in 8 turns with XTTS) |
 | Live render speed | 20–23 fps |
 | Browser A/V sync (Playwright `phase4_avatar`, 5 runs, gate 6) | 6 of 807 lip-sync frames late; frame offset p50 20–32 ms, p90 37–49 ms |
-| VRAM | 9,748 MiB — the same as the stock-voice avatar profile |
+| VRAM | stack 9.0 GiB (avatar with stock voice: 8.8 GiB); XTTS instead of the converter would need ~2.2 GiB more |
 
 Raw data: [phase6_avatar_clone.json](benchmarks/phase6_avatar_clone.json),
 [phase6_clone_light.json](benchmarks/phase6_clone_light.json),
 [phase6_clone_voice.json](benchmarks/phase6_clone_voice.json) (XTTS),
 [phase6_voice_clone.json](benchmarks/phase6_voice_clone.json) (XTTS profile latency).
+
+### Lip sync when the PC is busy
+
+The first 30-minute avatar soak (morning, quiet desktop) passed with 2.5 % late frames. Later the same
+day the PC was in use — Chrome with ~77 processes and ~8 GB RAM, Slack, VS Code, a screen recorder,
+AnyDesk, Battle.net; 300–600 MB RAM free, up to 3.5 GiB VRAM taken by other apps — and soaks showed
+12–20 % late frames (a frame > 120 ms behind the audio on screen). Measured step by step:
+
+| Question | Measurement | Answer |
+|---|---|---|
+| Caused by the latency work? | A/B, 10 min each, same conditions: current code 11.9 % late vs. the settings of the morning run 12.6 % | no |
+| Browser decoding? | `createImageBitmap` p50 2 ms, p90 5 ms | no |
+| Network / outbox? | outbox backlog ≤ 3 while forwarding speech frames | no |
+| Renderer? | frames were already late *when the backend forwarded them* (p90 up to 330 ms on long answers); MuseTalk alone measured 20.4–22.9 fps instead of 24.3 (other apps on the GPU) | **yes** — the renderer has almost no margin over real time on a busy GPU and drifts behind on long answers |
+
+Fixes in the avatar worker:
+- **Catch-up:** the browser already reports its playback position every 100 ms; the backend forwards it
+  to the worker, which skips frames that could only reach the browser more than 100 ms after their
+  audio (`avatar.late_ms`). The browser keeps showing the newest frame, so under load the lips update
+  a little less often but stay in sync instead of drifting. Stalled playback (no report for 250 ms)
+  is not extrapolated.
+- **Per-frame sending:** frames go out as soon as each one is composited instead of after the whole
+  batch of 8 (~80 ms), which made the first frames of every batch the late ones.
+
+| 10-minute soak, busy PC | late frames on screen | arrived > 100 ms late | A/V offset p90 | frames skipped |
+|---|---|---|---|---|
+| before | 11.9–20 % | 8.4 % | 45–441 ms | – |
+| catch-up (whole-batch timing estimate) | 7.5 % | 3.4 % | 47 ms | 6 % (too eager) |
+| **catch-up per frame + per-frame sending** | **3.9 %** | 2.8 % | **39 ms** | 3 % |
+
+Raw data: [phase6_lipsync_under_load.json](benchmarks/phase6_lipsync_under_load.json).
+
+The soak test now also checks memory growth of *our* processes (PyTorch allocators of the backend and
+the avatar worker, from the 3-minute mark), because the whole-GPU number moves by ±1 GiB with the
+other desktop apps; whole-GPU usage is only checked against the spill limit.
 
 ### Robustness
 
@@ -387,19 +426,40 @@ Found and fixed by these tests:
 - `logs/backend.log` stopped recording as soon as Kokoro loaded, since Phase 2: Kokoro's `__init__`
   calls `logger.remove()`. Kokoro is now imported before logging is configured.
 - Unit tests for both, for the chunk merging (`backend/tests/test_recovery_units.py`), the answer
-  prefetch (`test_prefetch.py`) and the VAD `resume` event — 50 unit tests in total.
+  prefetch (`test_prefetch.py`), the VAD `resume` event and the avatar catch-up rule (`test_avatar_catchup.py`) — 55 unit tests in total.
 
 ### Observability
 
 - `GET /health`: profile, resident models, restarts (LLM, avatar), VRAM guard warnings, load times.
-- `GET /health/gpu`: VRAM and RAM; warns below 400 MiB free VRAM.
+- `GET /health/gpu`: VRAM and RAM (whole GPU, plus the PyTorch memory of the backend and the avatar
+  worker); warns below 400 MiB free VRAM. `/health` → `avatar.stats` has render speed per segment and
+  the number of frames skipped to stay in sync.
+- Per turn (`metrics`): `avatar_forward` — how late the speech frames already were when the backend
+  forwarded them (tells renderer delays apart from network/browser delays).
 - `GET /api/metrics?last=50`: p50/p90 per pipeline stage (ms after the end of the user's speech) over
   the last completed turns; one JSON line per turn in `logs/metrics.jsonl`.
 - Logs: `logs/backend.log`, `llama-server.log`, `avatar-worker.log`, `xtts-worker.log`.
 
 ### 30-minute soak with avatar + cloned voice
 
-SOAK_SECTION
+Playwright `tests/e2e/soak.spec.js`, profile `avatar_clone`, looping fake microphone (a question every
+~19 s), on the final code and on a busy PC (see "Lip sync when the PC is busy"; RAM free 3.3 GB at the
+start, 235 MB at the lowest). Raw data: [phase6_soak_avatar_clone_30min.json](benchmarks/phase6_soak_avatar_clone_30min.json).
+
+| Metric | Value |
+|---|---|
+| Duration / turns | 30 min / 95 turns, all completed; answers were started at the pause in 95/95 |
+| Server errors / browser errors | 0 / 0 |
+| llama-server / avatar worker restarts | 0 / 0 |
+| End of speech → first audio | p50 1,744 ms · p90 1,872 ms · max 2,272 ms (longer questions than the benchmark, busy PC) |
+| Lip sync | 17,043 speech frames; 4.0 % of screen refreshes showed a frame > 120 ms behind the audio; A/V offset p50 29 ms, p90 46 ms; 489 frames (2.8 %) skipped to stay in sync |
+| GPU memory of our processes | backend 2,760 MiB + avatar worker 3,484 MiB, +48 MiB from minute 3 to the end — no leak |
+| Whole GPU | 11,037 → 11,423 MiB of 12,288 (flat after minute 6) |
+
+The first run of this test (morning, quiet desktop, before the latency work) also passed its checks
+(95/95 turns, 2.5 % late frames); it was reported as failed only because stopping a 30-minute Playwright
+trace exceeded the time limit, so tracing is now off for the soak
+([phase6_soak_avatar_clone_run1.json](benchmarks/phase6_soak_avatar_clone_run1.json)).
 
 ### Manual checks (cannot be automated here)
 

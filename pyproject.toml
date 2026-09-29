@@ -33,4 +33,4 @@ ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 # workers run from their own folder (separate venvs): their sibling modules are first-party
-known-first-party = ["app", "common", "engine", "motion", "face_rig", "face_bbox", "worker"]
+known-first-party = ["app", "catchup", "common", "engine", "motion", "face_rig", "face_bbox", "worker"]

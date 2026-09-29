@@ -9,7 +9,8 @@ export default function AvatarStage({ conv, voice }) {
   const idleRef = useRef(null)               // ImageBitmap
   const speechRef = useRef(new Map())        // turnId -> [{pts, bmp}] sorted by pts
   const rejectUpToRef = useRef(0)
-  const statsRef = useRef({ idle: 0, speech: 0, drawnSpeech: 0, late: 0, avOffsets: [], arrivals: [], clock: null })
+  const statsRef = useRef({ idle: 0, speech: 0, drawnSpeech: 0, late: 0, avOffsets: [], arrivals: [], clock: null,
+    arrivedLate: 0, arrivedTimed: 0, recentArrivals: [], decodeMs: [] })
   const [size, setSize] = useState(null)
 
   useEffect(() => {
@@ -24,7 +25,9 @@ export default function AvatarStage({ conv, voice }) {
       const p = parsePacket(buffer)
       if (p.kind !== KIND_IDLE_VIDEO && p.kind !== KIND_VIDEO) return
       if (p.kind === KIND_VIDEO && p.turnId <= rejectUpToRef.current) return
+      const tDecode = performance.now()
       const bmp = await createImageBitmap(new Blob([p.payload], { type: 'image/jpeg' }))
+      const decodeMs = performance.now() - tDecode
       if (p.kind === KIND_IDLE_VIDEO) {
         statsRef.current.idle++
         idleRef.current?.close()
@@ -35,6 +38,15 @@ export default function AvatarStage({ conv, voice }) {
         const audibleNow = eng?.playingTurn === p.turnId ? eng.audibleMs(p.turnId) : null
         const st = statsRef.current
         if (st.arrivals.length < 600) st.arrivals.push(audibleNow === null ? null : Math.round(audibleNow - p.ptsMs))
+        // whole-session diagnostics (test hooks): arrival lateness after decoding, and decode time
+        if (audibleNow !== null) {
+          st.arrivedTimed++
+          if (audibleNow - p.ptsMs > 100) st.arrivedLate++
+          st.recentArrivals.push(Math.round(audibleNow - p.ptsMs))
+          if (st.recentArrivals.length > 2000) st.recentArrivals.shift()
+        }
+        st.decodeMs.push(decodeMs)
+        if (st.decodeMs.length > 2000) st.decodeMs.shift()
         const list = speechRef.current.get(p.turnId) ?? []
         list.push({ pts: p.ptsMs, bmp })
         list.sort((a, b) => a.pts - b.pts)

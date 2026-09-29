@@ -63,6 +63,14 @@ async def health() -> dict:
 @app.get("/health/gpu")
 async def health_gpu() -> dict:
     snap = gpu_snapshot()
+    # our own processes: whole-GPU numbers include every other app on the desktop
+    import torch
+
+    if torch.cuda.is_initialized():
+        snap["backend_torch_reserved_mib"] = round(torch.cuda.memory_reserved() / 2**20)
+    services = app.state.services
+    if services.avatar_ready:
+        snap["avatar_torch_reserved_mib"] = services.avatar.stats.get("worker_vram_reserved_mib")
     if snap.get("available") and snap["vram_free_mib"] < 400:
         snap["warning"] = "less than 400 MiB VRAM free: Windows may spill to system RAM (very slow)"
     return snap

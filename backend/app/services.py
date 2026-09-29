@@ -165,9 +165,10 @@ class Services:
             self.avatar.send_json({"type": "behavior", "expression": behavior.get("expression"),
                                    "emotion": behavior.get("emotion")})
 
-    def avatar_playback(self, turn_id: int, event: str) -> None:
+    def avatar_playback(self, turn_id: int, event: str, played_ms: float = 0.0) -> None:
         if self.avatar_ready:
-            self.avatar.send_json({"type": "playback", "turn_id": turn_id, "event": event})
+            self.avatar.send_json({"type": "playback", "turn_id": turn_id, "event": event,
+                                   "played_ms": round(played_ms)})
 
     async def stop(self) -> None:
         if self.avatar is not None:

@@ -92,6 +92,8 @@ class AvatarCfg(BaseModel):
     jpeg_quality: int = 80
     gate_frames: int = 4        # lip-synced frames rendered before a turn's first audio is released
                                 # (measured with the GPU kept warm: 4 -> no late frames; 2 -> lips lag at start)
+    late_ms: int = 100          # skip speech frames that would reach the browser more than this late
+                                # (keeps lips in sync when the GPU is busy; 0 = render every frame)
     warm_burst_ms: int = 0      # MuseTalk warm-up when a turn enters THINKING; redundant since the STT
                                 # keep-warm, and it slowed the LLM's first clause (~65 ms p50)
 

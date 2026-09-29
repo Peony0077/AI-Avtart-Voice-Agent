@@ -25,6 +25,9 @@ class TurnContext:
     spoken_text: str = ""   # reply text produced so far
     speech: object | None = None                  # SpeechOutput for voice replies
     played_ms: float = 0.0                        # browser playback position on this turn's audio
+    played_at: float = 0.0                        # ... as reported at this time.time()
+    av_lateness: list[float] = field(default_factory=list)   # speech frames: ms behind the audio when forwarded
+    av_max_backlog: int = 0                       # outbox backlog seen while forwarding them
     playback_ended: asyncio.Event = field(default_factory=asyncio.Event)
     utterance_ms: int | None = None
     cancel_ms: float | None = None

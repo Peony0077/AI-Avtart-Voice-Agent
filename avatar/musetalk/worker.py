@@ -31,6 +31,7 @@ import torch
 import websockets
 from loguru import logger
 
+from catchup import audible_ms, first_on_time
 from common import AVATARS
 from engine import Loop, MuseTalkEngine
 from motion import EXPRESSION_TO_LOOP
@@ -52,11 +53,17 @@ class Turn:
     first_frame_sent: set = field(default_factory=set)
     tail: np.ndarray | None = None     # last CONTEXT_FRAMES of audio, left context for the next segment
     next_pts: int = -1                 # where the next segment starts if the audio is contiguous
+    played_ms: float = 0.0             # browser playback position on the turn's timeline ...
+    played_at: float = 0.0             # ... reported at this perf_counter() time
+
+    def audible_ms(self, at: float) -> float:
+        """Playback position at time ``at`` (see catchup.audible_ms)."""
+        return audible_ms(self.played_ms, self.played_at, time.perf_counter(), at)
 
 
 class AvatarWorker:
     def __init__(self, avatar_id: str, batch: int, quality: int, lead_ms: int, gate_frames: int = 4,
-                 warm_burst_ms: int = 0) -> None:
+                 warm_burst_ms: int = 0, late_ms: int = 100) -> None:
         folder = AVATARS / avatar_id
         meta = json.loads((folder / "avatar.json").read_text(encoding="utf-8"))
         self.fps = meta["fps"]
@@ -66,6 +73,9 @@ class AvatarWorker:
         self.quality = quality
         self.gate_frames = gate_frames
         self.warm_burst_ms = warm_burst_ms
+        self.late_ms = late_ms
+        self._frame_ms = 45.0                      # running estimates: GPU time per frame,
+        self._compose_ms = 12.0                    # CPU compositing + JPEG per frame
         self._warming = False
         self.lead_frames = round(lead_ms * self.fps / 1000)
         self.idx = 0
@@ -75,7 +85,7 @@ class AvatarWorker:
         self.turn: Turn | None = None
         self.queue: asyncio.Queue = asyncio.Queue()
         self.ws = None
-        self.stats = {"segments": 0, "frames": 0, "render_ms": 0.0, "late_first_frames": 0}
+        self.stats = {"segments": 0, "frames": 0, "render_ms": 0.0, "late_first_frames": 0, "skipped": 0}
         logger.info(f"avatar {avatar_id}: {len(self.loops)} loops x {len(self.idle_loop and self.loops[self.idle_loop])} frames, "
                     f"fps {self.fps}, warmup {self.warmup_s}s")
 
@@ -123,8 +133,10 @@ class AvatarWorker:
             if loop in self.loops and (self.turn is None or not self.turn.playing):
                 self._switch_idle(loop)
         elif kind == "playback" and self.turn and msg.get("turn_id") == self.turn.turn_id:
-            if msg.get("event") == "started":
+            if msg.get("event") in ("started", "progress"):
                 self.turn.playing = True
+                self.turn.played_ms = float(msg.get("played_ms") or 0)
+                self.turn.played_at = time.perf_counter()
             elif msg.get("event") == "ended":
                 self.turn = None
         elif kind == "cancel" and self.turn and msg.get("turn_id") == self.turn.turn_id:
@@ -240,40 +252,62 @@ class AvatarWorker:
         gate = min(n, self.gate_frames if first_seg else 1)
         pending: asyncio.Task | None = None
         base = turn.base_idx + turn.rendered
+        skipped = 0
         for s, e in spans:
             if turn.cancelled:
                 break
+            if self.late_ms and turn.playing:
+                # Catch up instead of drifting (catchup.py): skip frames that could only reach the
+                # browser more than late_ms after their audio.
+                k = first_on_time(s, e, pts, self.fps, self.late_ms, turn.audible_ms(time.perf_counter()),
+                                  self._frame_ms, self._compose_ms)
+                if k > s:
+                    skipped += k - s
+                    s = k
+                    if s >= e:
+                        continue
+            t_gpu = time.perf_counter()
             idx, faces = await asyncio.to_thread(self.engine.faces, loop, chunks[s:e], base + s)
+            self._frame_ms = 0.8 * self._frame_ms + 0.2 * (time.perf_counter() - t_gpu) * 1000 / (e - s)
             if pending is not None:
                 await pending
             pending = asyncio.create_task(self._compose_and_send(turn, seq, pts, loop, idx, faces, s, t0, gate))
         if pending is not None:
             await pending
+        if seq not in turn.first_frame_sent:
+            await self._release(turn, seq)          # everything was skipped: do not hold the audio back
         turn.rendered += n
+        self.stats["skipped"] += skipped
         ms = (time.perf_counter() - t0) * 1000
         self.stats["segments"] += 1
         self.stats["frames"] += n
         self.stats["render_ms"] += ms
         await self._send_json({"type": "segment_done", "turn_id": turn.turn_id, "seq": seq, "frames": n,
-                               "render_ms": round(ms, 1), "audio_ms": round(len(pcm) / 24),
+                               "skipped": skipped, "render_ms": round(ms, 1), "audio_ms": round(len(pcm) / 24),
+                               "vram_reserved_mib": round(torch.cuda.memory_reserved() / 2**20),
                                "fps": round(n / (ms / 1000), 1) if ms else None})
 
     async def _compose_and_send(self, turn: Turn, seq: int, pts: int, loop: Loop, idx: list[int],
                                 faces: np.ndarray, first: int, t0: float, gate: int) -> None:
-        jpgs = await asyncio.to_thread(self._compose_batch, loop, idx, faces)
-        if turn.cancelled:
-            return
-        for k, jpg in enumerate(jpgs):
+        """CPU stage. Each frame goes out as soon as it is composited: waiting for the whole batch of 8
+        (~80 ms) made the first frames of every batch the ones most likely to arrive late."""
+        for k, (i, face) in enumerate(zip(idx, faces, strict=True)):
+            jpg = await asyncio.to_thread(self._compose_one, loop, i, face)
+            if turn.cancelled:
+                return
             frame_pts = pts + round((first + k) * 1000 / self.fps)
             await self._send(HEADER.pack(KIND_VIDEO, turn.turn_id, seq, frame_pts) + jpg)
-        if seq not in turn.first_frame_sent and first + len(jpgs) >= gate:
-            turn.first_frame_sent.add(seq)
-            await self._send_json({"type": "first_frame", "turn_id": turn.turn_id, "seq": seq,
-                                   "ms": round((time.perf_counter() - t0) * 1000, 1)})
+            if seq not in turn.first_frame_sent and first + k + 1 >= gate:
+                turn.first_frame_sent.add(seq)
+                await self._send_json({"type": "first_frame", "turn_id": turn.turn_id, "seq": seq,
+                                       "ms": round((time.perf_counter() - t0) * 1000, 1)})
 
-    def _compose_batch(self, loop: Loop, idx: list[int], faces: np.ndarray) -> list[bytes]:
-        return [cv2.imencode(".jpg", self.engine.compose(loop, i, f), [cv2.IMWRITE_JPEG_QUALITY, self.quality])[1].tobytes()
-                for i, f in zip(idx, faces, strict=True)]
+    def _compose_one(self, loop: Loop, i: int, face: np.ndarray) -> bytes:
+        t = time.perf_counter()
+        frame = self.engine.compose(loop, i, face)
+        jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.quality])[1].tobytes()
+        self._compose_ms = 0.8 * self._compose_ms + 0.2 * (time.perf_counter() - t) * 1000
+        return jpg
 
     # ------------------------------------------------------------------ io
     async def _send(self, data: bytes) -> None:
@@ -312,8 +346,10 @@ async def main() -> None:
     ap.add_argument("--lead-ms", type=int, default=250, help="expected delay from first audio to playback start")
     ap.add_argument("--gate-frames", type=int, default=4, help="frames rendered before a turn's first audio is released")
     ap.add_argument("--warm-burst-ms", type=int, default=0, help="GPU warm-up when the turn enters THINKING (0 = off)")
+    ap.add_argument("--late-ms", type=int, default=100, help="skip frames that would arrive this late (0 = never skip)")
     args = ap.parse_args()
-    worker = AvatarWorker(args.avatar, args.batch, args.quality, args.lead_ms, args.gate_frames, args.warm_burst_ms)
+    worker = AvatarWorker(args.avatar, args.batch, args.quality, args.lead_ms, args.gate_frames, args.warm_burst_ms,
+                          args.late_ms)
     async with websockets.serve(worker.handle, args.host, args.port, max_size=None, ping_interval=20):
         logger.info(f"avatar worker listening on ws://{args.host}:{args.port}")
         await asyncio.Future()

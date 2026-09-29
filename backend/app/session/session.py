@@ -26,11 +26,20 @@ from app.session.outbox import Outbox
 from app.session.prefetch import AnswerPrefetch
 from app.session.state_machine import Event, State, StateMachine
 from app.session.turn import TurnContext, TurnRegistry
-from app.transport.protocol import KIND_IDLE_VIDEO
+from app.transport.protocol import HEADER, KIND_IDLE_VIDEO
 from app.tts.chunker import ClauseChunker
 from app.tts.speech_output import SpeechOutput
 
 ACTIVE = (State.THINKING, State.SPEAKING)
+
+
+def _lateness_stats(values: list[float], backlog: int) -> dict | None:
+    """Speech frames forwarded after the browser was already playing: how late were they here?"""
+    if not values:
+        return None
+    v = sorted(values)
+    return {"frames": len(v), "late_100ms": sum(x > 100 for x in v), "p50_ms": round(v[len(v) // 2]),
+            "p90_ms": round(v[int(len(v) * 0.9)]), "max_ms": round(v[-1]), "max_outbox_backlog": backlog}
 
 
 class Session:
@@ -382,9 +391,12 @@ class Session:
             return
         event = msg.get("event")
         turn.played_ms = float(msg.get("played_ms", turn.played_ms))
+        turn.played_at = time.time()
         if event == "started":
             turn.mark("client_first_audio")
             self.svc.avatar_playback(turn.turn_id, "started")
+        elif event == "progress":
+            self.svc.avatar_playback(turn.turn_id, "progress", turn.played_ms)   # lets the avatar catch up
         elif event == "ended":
             turn.mark("client_playback_ended")
             turn.playback_ended.set()
@@ -398,6 +410,13 @@ class Session:
                 return
             self.outbox.binary(packet, 0, force=True)
         else:
+            turn = self.turns.current
+            if turn is not None and turn.turn_id == turn_id and turn.played_at:
+                # how late is this frame already here? (browser position + time since its last report)
+                pts = HEADER.unpack_from(packet)[3]
+                audible = turn.played_ms + min((time.time() - turn.played_at) * 1000, 250.0)
+                turn.av_lateness.append(audible - pts)
+                turn.av_max_backlog = max(turn.av_max_backlog, self.outbox.backlog)
             self.outbox.binary(packet, turn_id)
 
     # ------------------------------------------------------------------ interruption
@@ -470,6 +489,7 @@ class Session:
                   "utterance_ms": turn.utterance_ms, "cancel_ms": turn.cancel_ms,
                   "stt_speculative": turn.stt_speculative, "stt_timing": turn.stt_timing,
                   "llm_prefetched": turn.prefetched,
+                  "avatar_forward": _lateness_stats(turn.av_lateness, turn.av_max_backlog),
                   "speech_ms": round(turn.speech.total_ms) if turn.speech else None,
                   "tts_first_timing": turn.speech.first_timing if turn.speech else None,
                   "rag": turn.rag_stats, "avatar_first_ms": turn.avatar_first_ms, "ts": time.time()}
