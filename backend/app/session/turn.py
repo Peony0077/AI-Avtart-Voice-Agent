@@ -21,6 +21,8 @@ class TurnContext:
     cancelled: asyncio.Event = field(default_factory=asyncio.Event)
     timings: dict[str, float] = field(default_factory=dict)  # name -> epoch seconds
     tasks: list[asyncio.Task] = field(default_factory=list)
+    header: str = ""        # raw <meta> header of the reply (kept in history)
+    spoken_text: str = ""   # reply text produced so far
 
     def mark(self, name: str, at: float | None = None) -> float:
         """Record a timestamp once (first occurrence wins)."""

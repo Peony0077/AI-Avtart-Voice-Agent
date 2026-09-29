@@ -1,17 +1,80 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useConversation } from './lib/useConversation.js'
+import MetricsPanel from './components/MetricsPanel.jsx'
 
-// Phase 0 scaffold: shows backend health. Replaced by the conversation UI in Phase 1.
+const STATE_LABEL = {
+  IDLE: 'Idle',
+  LISTENING: 'Listening',
+  END_OF_TURN: 'Got it…',
+  THINKING: 'Thinking…',
+  SPEAKING: 'Speaking',
+  INTERRUPTED: 'Interrupted',
+  ERROR: 'Error',
+}
+
 export default function App() {
-  const [health, setHealth] = useState(null)
+  const conv = useConversation()
+  const [draft, setDraft] = useState('')
+  const listRef = useRef(null)
+  const busy = conv.state === 'THINKING' || conv.state === 'SPEAKING'
 
   useEffect(() => {
-    fetch('/health/gpu').then((r) => r.json()).then(setHealth).catch(() => setHealth({ error: true }))
-  }, [])
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight })
+  }, [conv.messages])
+
+  const submit = (e) => {
+    e.preventDefault()
+    const text = draft.trim()
+    if (!text) return
+    conv.sendText(text)
+    setDraft('')
+  }
 
   return (
-    <main className="app">
-      <h1>AI Avatar</h1>
-      <pre data-testid="health">{health ? JSON.stringify(health, null, 2) : 'checking backend…'}</pre>
-    </main>
+    <div className="app">
+      <header className="topbar">
+        <strong>{conv.session?.persona ?? 'AI Avatar'}</strong>
+        <span className={`badge state-${conv.state}`} data-testid="state">{STATE_LABEL[conv.state] ?? conv.state}</span>
+        <span className="muted" data-testid="conn-status">{conv.status}</span>
+        {conv.behavior && (
+          <span className="muted" data-testid="behavior">
+            {conv.behavior.emotion} · {conv.behavior.gesture} · {conv.behavior.intensity}
+          </span>
+        )}
+      </header>
+
+      <main className="layout">
+        <section className="stage" aria-label="Avatar">
+          <div className="stage-placeholder">Avatar appears here (Phase 4)</div>
+        </section>
+
+        <section className="chat" aria-label="Conversation">
+          <ol className="messages" ref={listRef} data-testid="messages">
+            {conv.messages.map((m, i) => (
+              <li key={i} className={`msg ${m.role}`} data-role={m.role} data-turn={m.turnId}>
+                <span className="text">{m.text || (m.role === 'assistant' ? '…' : '')}</span>
+                {m.interrupted && <span className="tag">interrupted</span>}
+              </li>
+            ))}
+          </ol>
+          <form className="composer" onSubmit={submit}>
+            <input
+              aria-label="Message"
+              data-testid="input"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="Type a message…"
+              autoComplete="off"
+            />
+            <button type="submit" data-testid="send" disabled={!draft.trim() || conv.status !== 'open'}>Send</button>
+            <button type="button" data-testid="stop" onClick={conv.interrupt} disabled={!busy} className="secondary">
+              Stop
+            </button>
+          </form>
+        </section>
+      </main>
+
+      <MetricsPanel metrics={conv.metrics} />
+    </div>
   )
 }

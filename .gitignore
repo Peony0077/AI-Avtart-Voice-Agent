@@ -113,3 +113,4 @@ ehthumbs.db
 desktop.ini
 $RECYCLE.BIN/
 .DS_Store
+tests/e2e/results/

@@ -21,3 +21,6 @@ extend-exclude = ["avatar/*/vendor", "frontend", "tools"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]

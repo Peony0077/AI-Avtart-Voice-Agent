@@ -1,0 +1,632 @@
+{
+  "summary": {
+    "turns": 14,
+    "first_delta_ms_p50": 175.64999999999998,
+    "first_delta_ms_max": 277.8,
+    "done_ms_p50": 556.55,
+    "meta_compliance": 1.0,
+    "tokens_per_s_p50": 87.115384948274,
+    "cancel_interrupted": true,
+    "cancel_ack_ms": 5.8,
+    "after_cancel_ok": true
+  },
+  "turns": [
+    {
+      "prompt": "Hi! Who are you?",
+      "turn_id": 1,
+      "reply": "Hi! I'm Ava, a friendly AI here to chat and help with whatever you need. How can I assist you today?",
+      "interrupted": false,
+      "first_delta_ms": 166.3,
+      "done_ms": 461.5,
+      "behavior": {
+        "emotion": "friendly",
+        "gesture": "small_nod",
+        "intensity": 0.5,
+        "source": "llm"
+      },
+      "server": {
+        "type": "metrics",
+        "session": "02c9ec7a",
+        "turn_id": 1,
+        "source": "text",
+        "interrupted": false,
+        "ms_from_t0": {
+          "t0": 0.0,
+          "llm_request": 0.0,
+          "llm_first_token": 34.8,
+          "llm_first_text": 165.4,
+          "first_output": 165.4,
+          "llm_done": 457.0
+        },
+        "llm": {
+          "prompt_tokens": 10,
+          "prompt_ms": 21.768,
+          "completion_tokens": 38,
+          "tokens_per_s": 87.63556867194218,
+          "cached_tokens": 255,
+          "finish_reason": "stop",
+          "extra": {}
+        },
+        "ts": 1790645131.9320886
+      }
+    },
+    {
+      "prompt": "What's a good way to relax after a long day?",
+      "turn_id": 2,
+      "reply": "Try taking a warm bath or drinking a cup of tea with calming music in the background. It helps your mind slow down and unwind.",
+      "interrupted": false,
+      "first_delta_ms": 167.7,
+      "done_ms": 469.7,
+      "behavior": {
+        "emotion": "friendly",
+        "gesture": "head_tilt",
+        "intensity": 0.4,
+        "source": "llm"
+      },
+      "server": {
+        "type": "metrics",
+        "session": "02c9ec7a",
+        "turn_id": 2,
+        "source": "text",
+        "interrupted": false,
+        "ms_from_t0": {
+          "t0": 0.0,
+          "llm_request": 0.0,
+          "llm_first_token": 35.4,
+          "llm_first_text": 166.0,
+          "first_output": 166.0,
+          "llm_done": 465.8
+        },
+        "llm": {
+          "prompt_tokens": 22,
+          "prompt_ms": 23.055,
+          "completion_tokens": 39,
+          "tokens_per_s": 88.47105715928748,
+          "cached_tokens": 302,
+          "finish_reason": "stop",
+          "extra": {}
+        },
+        "ts": 1790645132.4026616
+      }
+    },
+    {
+      "prompt": "Tell me a fun fact about octopuses.",
+      "turn_id": 3,
+      "reply": "Octopuses have three hearts ,  two pump blood to the gills, and one pumps it to the rest of the body. And they can actually regrow lost limbs!",
+      "interrupted": false,
+      "first_delta_ms": 166.5,
+      "done_ms": 559.6,
+      "behavior": {
+        "emotion": "excited",
+        "gesture": "smile",
+        "intensity": 0.6,
+        "source": "llm"
+      },
+      "server": {
+        "type": "metrics",
+        "session": "02c9ec7a",
+        "turn_id": 3,
+        "source": "text",
+        "interrupted": false,
+        "ms_from_t0": {
+          "t0": 0.0,
+          "llm_request": 0.0,
+          "llm_first_token": 37.9,
+          "llm_first_text": 165.3,
+          "first_output": 165.3,
+          "llm_done": 556.1
+        },
+        "llm": {
+          "prompt_tokens": 20,
+          "prompt_ms": 22.696,
+          "completion_tokens": 47,
+          "tokens_per_s": 88.96040101801643,
+          "cached_tokens": 362,
+          "finish_reason": "stop",
+          "extra": {}
+        },
+        "ts": 1790645132.9627402
+      }
+    },
+    {
+      "prompt": "I feel a bit stressed about my exams.",
+      "turn_id": 4,
+      "reply": "I totally get that ,  stress is normal before exams. Try taking a few deep breaths and break your study time into smaller chunks. You've got this!",
+      "interrupted": false,
+      "first_delta_ms": 195.8,
+      "done_ms": 553.5,
+      "behavior": {
+        "emotion": "empathetic",
+        "gesture": "small_nod",
+        "intensity": 0.5,
+        "source": "llm"
+      },
+      "server": {
+        "type": "metrics",
+        "session": "02c9ec7a",
+        "turn_id": 4,
+        "source": "text",
+        "interrupted": false,
+        "ms_from_t0": {
+          "t0": 0.0,
+          "llm_request": 0.0,
+          "llm_first_token": 46.8,
+          "llm_first_text": 194.9,
+          "first_output": 194.9,
+          "llm_done": 549.0
+        },
+        "llm": {
+          "prompt_tokens": 49,
+          "prompt_ms": 30.76,
+          "completion_tokens": 46,
+          "tokens_per_s": 89.761056068745,
+          "cached_tokens": 399,
+          "finish_reason": "stop",
+          "extra": {}
+        },
+        "ts": 1790645133.515141
+      }
+    },
+    {
+      "prompt": "Can you explain what a black hole is, simply?",
+      "turn_id": 5,
+      "reply": "A black hole is a place in space where gravity is so strong that nothing, not even light, can escape from it. It forms when a massive star collapses at the end of its life.",
+      "interrupted": false,
+      "first_delta_ms": 176.1,
+      "done_ms": 621.5,
+      "behavior": {
+        "emotion": "friendly",
+        "gesture": "head_tilt",
+        "intensity": 0.4,
+        "source": "llm"
+      },
+      "server": {
+        "type": "metrics",
+        "session": "02c9ec7a",
+        "turn_id": 5,
+        "source": "text",
+        "interrupted": false,
+        "ms_from_t0": {
+          "t0": 0.0,
+          "llm_request": 0.0,
+          "llm_first_token": 45.3,
+          "llm_first_text": 175.4,
+          "first_output": 175.4,
+          "llm_done": 617.2
+        },
+        "llm": {
+          "prompt_tokens": 50,
+          "prompt_ms": 30.75,
+          "completion_tokens": 51,
+          "tokens_per_s": 87.56184054988836,
+          "cached_tokens": 465,
+          "finish_reason": "stop",
+          "extra": {}
+        },
+        "ts": 1790645134.1368203
+      }
+    },
+    {
+      "prompt": "What should I cook for dinner tonight?",
+      "turn_id": 6,
+      "reply": "How about a simple chicken and vegetable stir-fry? It's quick, tasty, and easy to customize with your favorite veggies.",
+      "interrupted": false,
+      "first_delta_ms": 173.3,
+      "done_ms": 473.9,
+      "behavior": {
+        "emotion": "friendly",
+        "gesture": "small_nod",
+        "intensity": 0.5,
+        "source": "llm"
+      },
+      "server": {
+        "type": "metrics",
+        "session": "02c9ec7a",
+        "turn_id": 6,
+        "source": "text",
+        "interrupted": false,
+        "ms_from_t0": {
+          "t0": 0.0,
+          "llm_request": 0.0,
+          "llm_first_token": 43.2,
+          "llm_first_text": 171.9,
+          "first_output": 171.9,
+          "llm_done": 468.6
+        },
+        "llm": {
+          "prompt_tokens": 18,
+          "prompt_ms": 22.156,
+          "completion_tokens": 38,
+          "tokens_per_s": 87.1511011659404,
+          "cached_tokens": 565,
+          "finish_reason": "stop",
+          "extra": {}
+        },
+        "ts": 1790645134.6099892
+      }
+    },
+    {
+      "prompt": "How do I stay motivated when learning to code?",
+      "turn_id": 7,
+      "reply": "Break it into small steps, like learning one new concept at a time. Celebrate small wins, and remember, every coder started where you are now. Keep going!",
+      "interrupted": false,
+      "first_delta_ms": 175.2,
+      "done_ms": 664.3,
+      "behavior": {
+        "emotion": "friendly",
+        "gesture": "small_nod",
+        "intensity": 0.5,
+        "source": "llm"
+      },
+      "server": {
+        "type": "metrics",
+        "session": "02c9ec7a",
+        "turn_id": 7,
+        "source": "text",
+        "interrupted": false,
+        "ms_from_t0": {
+          "t0": 0.0,
+          "llm_request": 0.0,
+          "llm_first_token": 43.7,
+          "llm_first_text": 173.5,
+          "first_output": 173.5,
+          "llm_done": 658.1
+        },
+        "llm": {
+          "prompt_tokens": 34,
+          "prompt_ms": 28.301,
+          "completion_tokens": 46,
+          "tokens_per_s": 73.38515956379862,
+          "cached_tokens": 606,
+          "finish_reason": "stop",
+          "extra": {}
+        },
+        "ts": 1790645135.2745802
+      }
+    },
+    {
+      "prompt": "Recommend a book for a rainy weekend.",
+      "turn_id": 8,
+      "reply": "How about The Midnight Library by Matt Haig? It's a heartwarming, thought-provoking read that's perfect for cozy rainy days.",
+      "interrupted": false,
+      "first_delta_ms": 205.2,
+      "done_ms": 573.8,
+      "behavior": {
+        "emotion": "friendly",
+        "gesture": "smile",
+        "intensity": 0.4,
+        "source": "llm"
+      },
+      "server": {
+        "type": "metrics",
+        "session": "02c9ec7a",
+        "turn_id": 8,
+        "source": "text",
+        "interrupted": false,
+        "ms_from_t0": {
+          "t0": 0.0,
+          "llm_request": 0.0,
+          "llm_first_token": 73.3,
+          "llm_first_text": 203.4,
+          "first_output": 203.4,
+          "llm_done": 569.4
+        },
+        "llm": {
+          "prompt_tokens": 30,
+          "prompt_ms": 35.243,
+          "completion_tokens": 43,
+          "tokens_per_s": 84.85534184580573,
+          "cached_tokens": 673,
+          "finish_reason": "stop",
+          "extra": {}
+        },
+        "ts": 1790645135.8495102
+      }
+    },
+    {
+      "prompt": "What's the difference between weather and climate?",
+      "turn_id": 9,
+      "reply": "Weather is what happens in the short term, like today's rain or sunny day. Climate is the long-term pattern of weather in a place over years, like whether a region tends to be hot or cold overall.",
+      "interrupted": false,
+      "first_delta_ms": 186.8,
+      "done_ms": 686.1,
+      "behavior": {
+        "emotion": "friendly",
+        "gesture": "head_tilt",
+        "intensity": 0.4,
+        "source": "llm"
+      },
+      "server": {
+        "type": "metrics",
+        "session": "02c9ec7a",
+        "turn_id": 9,
+        "source": "text",
+        "interrupted": false,
+        "ms_from_t0": {
+          "t0": 0.0,
+          "llm_request": 0.0,
+          "llm_first_token": 48.3,
+          "llm_first_text": 185.9,
+          "first_output": 185.9,
+          "llm_done": 682.0
+        },
+        "llm": {
+          "prompt_tokens": 47,
+          "prompt_ms": 29.392,
+          "completion_tokens": 55,
+          "tokens_per_s": 85.32045731765122,
+          "cached_tokens": 715,
+          "finish_reason": "stop",
+          "extra": {}
+        },
+        "ts": 1790645136.5351572
+      }
+    },
+    {
+      "prompt": "Thanks, that was helpful!",
+      "turn_id": 10,
+      "reply": "You're very welcome! Let me know if you need help with anything else. ",
+      "interrupted": false,
+      "first_delta_ms": 277.8,
+      "done_ms": 495.8,
+      "behavior": {
+        "emotion": "friendly",
+        "gesture": "smile",
+        "intensity": 0.5,
+        "source": "llm"
+      },
+      "server": {
+        "type": "metrics",
+        "session": "02c9ec7a",
+        "turn_id": 10,
+        "source": "text",
+        "interrupted": false,
+        "ms_from_t0": {
+          "t0": 0.0,
+          "llm_request": 0.0,
+          "llm_first_token": 156.5,
+          "llm_first_text": 276.7,
+          "first_output": 276.7,
+          "llm_done": 492.2
+        },
+        "llm": {
+          "prompt_tokens": 262,
+          "prompt_ms": 101.52,
+          "completion_tokens": 30,
+          "tokens_per_s": 86.54365530557371,
+          "cached_tokens": 254,
+          "finish_reason": "stop",
+          "extra": {}
+        },
+        "ts": 1790645137.0315003
+      }
+    },
+    {
+      "prompt": "Hi! Who are you?",
+      "turn_id": 11,
+      "reply": "I'm Ava, a friendly AI here to chat and help with whatever you need, just let me know what's on your mind!",
+      "interrupted": false,
+      "first_delta_ms": 165.6,
+      "done_ms": 478.2,
+      "behavior": {
+        "emotion": "friendly",
+        "gesture": "small_nod",
+        "intensity": 0.4,
+        "source": "llm"
+      },
+      "server": {
+        "type": "metrics",
+        "session": "02c9ec7a",
+        "turn_id": 11,
+        "source": "text",
+        "interrupted": false,
+        "ms_from_t0": {
+          "t0": 0.0,
+          "llm_request": 0.0,
+          "llm_first_token": 35.8,
+          "llm_first_text": 164.6,
+          "first_output": 164.6,
+          "llm_done": 473.3
+        },
+        "llm": {
+          "prompt_tokens": 16,
+          "prompt_ms": 21.203,
+          "completion_tokens": 39,
+          "tokens_per_s": 87.07966873060758,
+          "cached_tokens": 542,
+          "finish_reason": "stop",
+          "extra": {}
+        },
+        "ts": 1790645137.5088494
+      }
+    },
+    {
+      "prompt": "What's a good way to relax after a long day?",
+      "turn_id": 12,
+      "reply": "Try deep breathing for just 5 minutes, slow in, slow out. Then take a walk outside or listen to soft music. Simple, and it really helps.",
+      "interrupted": false,
+      "first_delta_ms": 164.9,
+      "done_ms": 543.1,
+      "behavior": {
+        "emotion": "friendly",
+        "gesture": "smile",
+        "intensity": 0.5,
+        "source": "llm"
+      },
+      "server": {
+        "type": "metrics",
+        "session": "02c9ec7a",
+        "turn_id": 12,
+        "source": "text",
+        "interrupted": false,
+        "ms_from_t0": {
+          "t0": 0.0,
+          "llm_request": 0.0,
+          "llm_first_token": 47.4,
+          "llm_first_text": 163.5,
+          "first_output": 163.5,
+          "llm_done": 538.3
+        },
+        "llm": {
+          "prompt_tokens": 33,
+          "prompt_ms": 28.177,
+          "completion_tokens": 44,
+          "tokens_per_s": 87.82948824004005,
+          "cached_tokens": 585,
+          "finish_reason": "stop",
+          "extra": {}
+        },
+        "ts": 1790645138.051908
+      }
+    },
+    {
+      "prompt": "Tell me a fun fact about octopuses.",
+      "turn_id": 13,
+      "reply": "Octopuses have three hearts ,  two pump blood to the gills, and one pumps it to the rest of the body. And they can squirt ink to escape predators, plus they have nine brains!",
+      "interrupted": false,
+      "first_delta_ms": 194.7,
+      "done_ms": 675.0,
+      "behavior": {
+        "emotion": "excited",
+        "gesture": "head_tilt",
+        "intensity": 0.6,
+        "source": "llm"
+      },
+      "server": {
+        "type": "metrics",
+        "session": "02c9ec7a",
+        "turn_id": 13,
+        "source": "text",
+        "interrupted": false,
+        "ms_from_t0": {
+          "t0": 0.0,
+          "llm_request": 0.0,
+          "llm_first_token": 52.0,
+          "llm_first_text": 194.2,
+          "first_output": 194.2,
+          "llm_done": 669.5
+        },
+        "llm": {
+          "prompt_tokens": 45,
+          "prompt_ms": 28.017,
+          "completion_tokens": 54,
+          "tokens_per_s": 86.02806787452239,
+          "cached_tokens": 636,
+          "finish_reason": "stop",
+          "extra": {}
+        },
+        "ts": 1790645138.7257636
+      }
+    },
+    {
+      "prompt": "I feel a bit stressed about my exams.",
+      "turn_id": 14,
+      "reply": "It's completely normal to feel that way. Try breaking your study time into smaller chunks and take a short break every 25 minutes. You've got this!",
+      "interrupted": false,
+      "first_delta_ms": 224.9,
+      "done_ms": 698.0,
+      "behavior": {
+        "emotion": "empathetic",
+        "gesture": "small_nod",
+        "intensity": 0.6,
+        "source": "llm"
+      },
+      "server": {
+        "type": "metrics",
+        "session": "02c9ec7a",
+        "turn_id": 14,
+        "source": "text",
+        "interrupted": false,
+        "ms_from_t0": {
+          "t0": 0.0,
+          "llm_request": 0.0,
+          "llm_first_token": 51.6,
+          "llm_first_text": 223.2,
+          "first_output": 223.2,
+          "llm_done": 690.5
+        },
+        "llm": {
+          "prompt_tokens": 55,
+          "prompt_ms": 32.007,
+          "completion_tokens": 47,
+          "tokens_per_s": 72.13638167045904,
+          "cached_tokens": 699,
+          "finish_reason": "stop",
+          "extra": {}
+        },
+        "ts": 1790645139.4227624
+      }
+    }
+  ],
+  "cancel": {
+    "prompt": "Please describe the history of the Roman Empire in detail.",
+    "turn_id": 15,
+    "reply": "I'm sorry, but I don't have the full details on hand to describe the entire history of the Roman Empire in detail.",
+    "interrupted": true,
+    "first_delta_ms": 255.6,
+    "done_ms": 554.9,
+    "behavior": {
+      "emotion": "neutral",
+      "gesture": "none",
+      "intensity": 0.4,
+      "source": "default"
+    },
+    "server": {
+      "type": "metrics",
+      "session": "02c9ec7a",
+      "turn_id": 15,
+      "source": "text",
+      "interrupted": true,
+      "ms_from_t0": {
+        "t0": 0.0,
+        "llm_request": 0.0,
+        "llm_first_token": 253.3,
+        "llm_first_text": 253.3,
+        "first_output": 253.3,
+        "interrupted": 547.4
+      },
+      "llm": null,
+      "ts": 1790645139.9798937
+    },
+    "interrupt_ack_ms": 5.8
+  },
+  "after_cancel": {
+    "prompt": "Okay, just say hello in one sentence.",
+    "turn_id": 16,
+    "reply": "Hi there! How can I help you today?",
+    "interrupted": false,
+    "first_delta_ms": 167.8,
+    "done_ms": 284.8,
+    "behavior": {
+      "emotion": "friendly",
+      "gesture": "small_nod",
+      "intensity": 0.4,
+      "source": "llm"
+    },
+    "server": {
+      "type": "metrics",
+      "session": "02c9ec7a",
+      "turn_id": 16,
+      "source": "text",
+      "interrupted": false,
+      "ms_from_t0": {
+        "t0": 0.0,
+        "llm_request": 0.0,
+        "llm_first_token": 38.7,
+        "llm_first_text": 166.7,
+        "first_output": 166.7,
+        "llm_done": 279.5
+      },
+      "llm": {
+        "prompt_tokens": 23,
+        "prompt_ms": 22.406,
+        "completion_tokens": 22,
+        "tokens_per_s": 87.43478822045225,
+        "cached_tokens": 554,
+        "finish_reason": "stop",
+        "extra": {}
+      },
+      "ts": 1790645140.2639089
+    }
+  }
+}

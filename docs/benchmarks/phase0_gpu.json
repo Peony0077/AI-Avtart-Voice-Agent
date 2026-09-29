@@ -1,0 +1,15 @@
+{
+  "gpu": "NVIDIA GeForce RTX 3060",
+  "torch": "2.9.1+cu130",
+  "vram_used_before_ctx_mib": 2047,
+  "vram_used_after_ctx_mib": 2158,
+  "cuda_context_mib_device_delta": 111,
+  "cuda_context_mib_nvml_process": null,
+  "fp16_tflops": 25.57,
+  "bf16_tflops": 25.88,
+  "h2d_pinned_gbs": 12.29,
+  "h2d_pageable_gbs": 3.49,
+  "d2h_pinned_gbs": 10.74,
+  "safe_alloc_ceiling_gib": 10.25,
+  "reserve_gib": 0.5
+}

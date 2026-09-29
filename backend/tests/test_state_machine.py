@@ -1,4 +1,5 @@
 import pytest
+
 from app.session.state_machine import Event, InvalidTransition, State, StateMachine
 from app.session.turn import TurnRegistry
 
