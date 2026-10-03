@@ -1,0 +1,11 @@
+{
+  "test": "speech_gaps",
+  "reply": "Octopuses have three hearts, with two pumping blood to the gills and one to the rest of the body.  \nThey can change color and texture to blend into their surroundings using specialized skin cells.  \nOctopuses are highly intelligent and can solve complex puzzles, like opening jars.  \nThey are solitary creatures and can regenerate lost limbs, including arms.",
+  "segments": 5,
+  "audio_ms": 21434,
+  "leading_silence_ms": 20,
+  "longest_pause_ms": 380,
+  "player_ran_dry_ms": 0,
+  "server_gap_ms": 0,
+  "avatar": true
+}

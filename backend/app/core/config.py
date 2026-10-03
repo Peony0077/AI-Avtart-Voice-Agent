@@ -47,6 +47,7 @@ class STTCfg(BaseModel):
     language: str = "en"
     min_utterance_ms: int = 250
     keep_warm_ms: int = 400           # run the encoder this often while the user speaks (0 = off)
+    debug_audio: bool = False         # save every utterance + transcript to logs/stt_debug (local only)
 
 
 class VADCfg(BaseModel):
@@ -55,7 +56,9 @@ class VADCfg(BaseModel):
     min_speech_ms: int = 200          # speech needed to start an utterance
     bargein_min_ms: int = 260         # speech needed to interrupt the assistant
     endpoint_ms: int = 550            # trailing silence that ends an utterance
-    preroll_ms: int = 300             # audio kept before speech start
+    continue_ms: int = 1000           # extra wait when the transcript looks unfinished ("I would like to")
+    continuation_s: float = 3.0       # user resumes this soon, before hearing much of the reply: same question
+    preroll_ms: int = 500             # audio kept before speech start (300 clipped soft first words: "Can you" -> "and you")
     min_dbfs: float = -55.0           # ignore chunks quieter than this (noise floor)
     early_stt_ms: int = 120           # start STT speculatively after this much silence (0 = off)
     max_utterance_s: float = 30.0

@@ -11,6 +11,8 @@ import re
 import time
 import uuid
 
+import numpy as np
+import soundfile as sf
 from fastapi import WebSocket
 from loguru import logger
 
@@ -22,6 +24,7 @@ from app.core.logging import write_metrics
 from app.llm.client import LLMStats
 from app.llm.prompt import ConversationMemory
 from app.services import Services
+from app.session.endpointing import looks_unfinished
 from app.session.outbox import Outbox
 from app.session.prefetch import AnswerPrefetch
 from app.session.state_machine import Event, State, StateMachine
@@ -103,6 +106,13 @@ class Session:
             self._update_voice_out()
             self.outbox.json({"type": "speaker", "enabled": self.voice_out}, force=True)
         elif kind == "voice":
+            if msg.get("mic"):
+                mic = msg["mic"]
+                logger.info(f"session {self.id} microphone: {mic}")
+                if mic.get("contextRate") not in (None, 16000):
+                    logger.warning(f"browser runs the microphone at {mic['contextRate']} Hz: resampled to 16 kHz in the page")
+                if mic.get("echoCancellation") is False:
+                    logger.warning("browser echo cancellation is OFF: the avatar may hear itself (use headphones)")
             await self._set_voice(bool(msg.get("enabled")))
         elif kind == "user_text":
             text = str(msg.get("text", "")).strip()
@@ -233,13 +243,24 @@ class Session:
                 return
             text = f"{self._carry_text} {text}".strip()
             self._carry_text = ""
+            if text and self.cfg.vad.continue_ms and looks_unfinished(text):
+                # probably a pause in the middle of the sentence: wait a little longer for the rest
+                deadline = t_end + (self.cfg.vad.endpoint_ms + self.cfg.vad.continue_ms) / 1000
+                while time.time() < deadline and self.sm.state is State.END_OF_TURN:
+                    await asyncio.sleep(0.03)
+                if self.sm.state is not State.END_OF_TURN:  # the user went on: this part starts the turn
+                    logger.info(f"utterance continues after a pause: {text!r}")
+                    self._carry_text = text
+                    return
             if text and self._looks_like_echo(text):
                 logger.warning(f"ignored probable echo of the assistant: {text!r}")
                 self.outbox.json({"type": "echo_ignored", "text": text}, force=True)
                 text = ""
             if not text:
+                self._log_utterance(ev, "", 0)            # nothing usable heard (noise, or filtered)
                 self.sm.fire(Event.TRANSCRIPT_EMPTY)
-                self.outbox.json({"type": "transcript", "text": "", "final": True}, force=True)
+                self.outbox.json({"type": "transcript", "text": "", "final": True,
+                                  "duration_ms": ev.stats.get("duration_ms")}, force=True)
                 return
             if prefetch is not None and speculative:
                 adopted = await prefetch.matches(ev.speech_end_t, text)
@@ -256,6 +277,22 @@ class Session:
         turn.utterance_ms = ev.stats.get("duration_ms")
         turn.stt_speculative = speculative
         turn.stt_timing = getattr(self, "_stt_timing", None)
+        self._log_utterance(ev, text, turn.turn_id)
+
+    def _log_utterance(self, ev: VadEvent, text: str, turn_id: int) -> None:
+        """What was heard, how loud and how sure: the first thing to look at when recognition is wrong."""
+        audio = ev.audio if ev.audio is not None else np.zeros(1, np.float32)
+        rms = float(np.sqrt(np.mean(audio ** 2))) if len(audio) else 0.0
+        info = dict(self.svc.stt.last_info) if self.svc.stt else {}
+        info.update(duration_ms=round(len(audio) / 16), rms_dbfs=round(float(20 * np.log10(max(rms, 1e-6))), 1),
+                    peak=round(float(np.abs(audio).max()), 3) if len(audio) else 0.0)
+        logger.info(f"turn {turn_id} heard {text!r} {info}")
+        if self.cfg.stt.debug_audio:
+            folder = self.cfg.log_dir / "stt_debug"
+            folder.mkdir(parents=True, exist_ok=True)
+            stem = folder / f"{time.strftime('%Y%m%d-%H%M%S')}_{self.id}_turn{turn_id}"
+            sf.write(stem.with_suffix(".wav"), audio, 16000)
+            stem.with_suffix(".txt").write_text(f"{text}\n{info}\n", encoding="utf-8")
 
     def _looks_like_echo(self, text: str) -> bool:
         """True if the transcript mostly repeats the assistant's last words (speaker → mic leak)."""
@@ -420,6 +457,7 @@ class Session:
             return
         event = msg.get("event")
         turn.played_ms = float(msg.get("played_ms", turn.played_ms))
+        turn.playback_gap_ms = float(msg.get("gap_ms") or turn.playback_gap_ms)
         turn.played_at = time.time()
         if event == "started":
             turn.mark("client_first_audio")
@@ -428,6 +466,8 @@ class Session:
             self.svc.avatar_playback(turn.turn_id, "progress", turn.played_ms)   # lets the avatar catch up
         elif event == "ended":
             turn.mark("client_playback_ended")
+            if turn.playback_gap_ms > 300:
+                logger.warning(f"turn {turn.turn_id}: {turn.playback_gap_ms:.0f} ms of gaps in the spoken reply")
             turn.playback_ended.set()
             self.svc.avatar_playback(turn.turn_id, "ended")
 
@@ -461,13 +501,23 @@ class Session:
         if self.svc.avatar_ready:
             await self.svc.avatar_cancel(turn.turn_id)
         heard = self._heard_text(turn)
-        body = f"{heard} [interrupted by the user]" if heard else "[interrupted before replying]"
-        self.memory.add(turn.user_text, (turn.header or "") + body)
+        # The user went on talking right after a pause, before hearing much of the reply: that was the
+        # same question, not an interruption. The next utterance completes it (seen in user testing:
+        # one question became three turns, each answered by its last fragment).
+        endpoint = turn.timings.get("vad_endpoint", turn.started_at)
+        continued = (reason == "barge_in" and turn.source == "voice" and turn.played_ms < 1500
+                     and time.time() - endpoint < self.cfg.vad.continuation_s)
+        if continued:
+            self._carry_text = turn.user_text
+        else:
+            body = f"{heard} [interrupted by the user]" if heard else "[interrupted before replying]"
+            self.memory.add(turn.user_text, (turn.header or "") + body)
         self.sm.fire(Event.CANCEL_DONE)
         cancel_ms = (time.perf_counter() - t_start) * 1000
         self.outbox.json({"type": "assistant_done", "turn_id": turn.turn_id, "text": heard, "interrupted": True,
-                          "reason": reason}, force=True)
-        logger.info(f"turn {turn.turn_id} interrupted ({reason}) in {cancel_ms:.1f} ms; heard={heard[:60]!r}")
+                          "reason": reason, "continued": continued}, force=True)
+        logger.info(f"turn {turn.turn_id} interrupted ({reason}) in {cancel_ms:.1f} ms; heard={heard[:60]!r}"
+                    + (" - the user continued the question" if continued else ""))
         turn.cancel_ms = round(cancel_ms, 2)
         self._emit_metrics(turn, None, interrupted=True)
 
@@ -521,7 +571,7 @@ class Session:
                   "interrupted": interrupted, "ms_from_t0": rel, "llm": stats.__dict__ if stats else None,
                   "utterance_ms": turn.utterance_ms, "cancel_ms": turn.cancel_ms,
                   "stt_speculative": turn.stt_speculative, "stt_timing": turn.stt_timing,
-                  "llm_prefetched": turn.prefetched,
+                  "llm_prefetched": turn.prefetched, "playback_gap_ms": round(turn.playback_gap_ms),
                   "avatar_forward": _lateness_stats(turn.av_lateness, turn.av_max_backlog),
                   "speech_ms": round(turn.speech.total_ms) if turn.speech else None,
                   "tts_first_timing": turn.speech.first_timing if turn.speech else None,

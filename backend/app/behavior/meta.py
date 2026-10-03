@@ -23,8 +23,10 @@ class MetaStreamParser:
         self._buf = ""
         self._header_done = False
         self._spoke = False
+        self._pending = ""       # text from a "[" that may be a repeated tag, until its "]" arrives
         self.meta: dict | None = None
         self.raw_header: str | None = None
+        self.later_tags = 0      # tags the model repeated mid-reply (removed from the speech)
 
     def feed(self, delta: str) -> tuple[dict | None, str]:
         if self._header_done:
@@ -54,7 +56,8 @@ class MetaStreamParser:
     def flush(self) -> str:
         """End of stream: return any text still buffered as speech."""
         if self._header_done:
-            return ""
+            rest, self._pending = self._pending, ""
+            return rest
         self._header_done = True
         rest = self._buf.lstrip()
         return "" if rest.startswith("<meta>") else self._speech(rest)
@@ -65,11 +68,39 @@ class MetaStreamParser:
         return meta, self._speech(speech)
 
     def _speech(self, text: str) -> str:
-        text = re.sub(r"</?meta>", "", text)
+        text = re.sub(r"</?meta>", "", self._strip_later_tags(text))
         if not self._spoke:
             text = text.lstrip()
             self._spoke = bool(text)
         return text
+
+    def _strip_later_tags(self, text: str) -> str:
+        """In longer replies the model sometimes repeats the tag before each sentence
+        ("...body. [friendly|head_tilt|0.5]They can..."); it was displayed and spoken aloud.
+        Remove such tags, also when a tag arrives split over several deltas."""
+        text = self._pending + text
+        self._pending = ""
+        out, i = [], 0
+        while True:
+            start = text.find("[", i)
+            if start == -1:
+                out.append(text[i:])
+                break
+            out.append(text[i:start])
+            end = text.find("]", start)
+            if end == -1:
+                if len(text) - start <= MAX_HEADER_CHARS:
+                    self._pending = text[start:]          # wait for the rest of a possible tag
+                else:
+                    out.append(text[start:])
+                break
+            if _parse_compact(text[start + 1:end]) is not None:
+                self.later_tags += 1
+                i = end + 1                               # drop the tag
+            else:
+                out.append(text[start:end + 1])           # an ordinary bracket in speech
+                i = end + 1
+        return "".join(out)
 
 
 def _parse_compact(body: str) -> dict | None:

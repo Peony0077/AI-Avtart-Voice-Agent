@@ -1,0 +1,23 @@
+{
+ "question": {
+  "test": "pause",
+  "fixture": "mic_pause_question.wav",
+  "user_turns": [
+   "Could you explain?",
+   "Could you explain? How rain forms in the clouds"
+  ],
+  "continued": 1,
+  "answered": 1,
+  "reply": "Sure! Rain forms when water vapor in the cloud cools and turns into tiny water droplets. When these droplets stick together and get heavy enough, they fall as rain."
+ },
+ "unfinished": {
+  "test": "pause",
+  "fixture": "mic_pause_unfinished.wav",
+  "user_turns": [
+   "I would like to know. what the weather will be like tomorrow."
+  ],
+  "continued": 0,
+  "answered": 1,
+  "reply": "I'd love to help with that! Could you let me know your city or location so I can check the forecast for you?"
+ }
+}

@@ -212,15 +212,18 @@ class MuseTalkEngine:
 
     @torch.no_grad()
     def faces(self, loop: Loop, chunks: torch.Tensor, start_idx: int,
-              sources: list[Loop] | None = None) -> tuple[list[int], np.ndarray]:
+              sources: list[Loop] | None = None, frame_idx: list[int] | None = None) -> tuple[list[int], np.ndarray]:
         """GPU stage: audio chunks [B,50,384] → lower part of the 256x256 face crops (BGR uint8).
+
+        Frames start_idx, start_idx + 1, ... of the loop, or the frames ``frame_idx`` (not consecutive
+        when the worker renders every 2nd or 3rd frame to keep up).
 
         Only latent rows >= DECODE_FROM_ROW are decoded: MuseTalk's blend mask covers the lower half
         of the crop (y >= 128), so decoding the top is wasted work. Measured on the RTX 3060:
         44.7 → 27.7 ms/frame, mean abs difference 1.9/255 in the blended area (profile_vae.py).
         """
         b = chunks.shape[0]
-        idx = [(start_idx + i) % len(loop) for i in range(b)]
+        idx = [i % len(loop) for i in (frame_idx if frame_idx is not None else range(start_idx, start_idx + b))]
         if sources is None:
             latent = loop.latents[idx].to(self.device, self.dtype)
         else:   # per-frame source loop (base loop, or its gesture variant inside a gesture window)

@@ -31,7 +31,7 @@ import torch
 import websockets
 from loguru import logger
 
-from catchup import audible_ms, first_on_time
+from catchup import audible_ms, batch_frames, first_on_time, stride_for
 from common import AVATARS
 from engine import Loop, LoopDelta, MuseTalkEngine
 from gestures import choose_gesture, cycle_windows, earliest_start, next_window
@@ -41,6 +41,7 @@ HEADER = struct.Struct("<B3xIII")
 KIND_AUDIO, KIND_VIDEO, KIND_IDLE = 1, 2, 3
 CONTEXT_FRAMES = 4   # 200 ms at 20 fps
 PLAYBACK_SILENT_S = 5.0   # speaking turn without a playback report for this long = playback stopped
+SMALL_BATCH = 4           # batch size while the renderer is only a little ahead of the audio
 STATE_TO_LOOP = {"THINKING": "thinking", "LISTENING": "friendly", "IDLE": "friendly", "END_OF_TURN": "friendly"}  # warm idle
 
 
@@ -100,7 +101,7 @@ class AvatarWorker:
         self.turn: Turn | None = None
         self.queue: asyncio.Queue = asyncio.Queue()
         self.ws = None
-        self.stats = {"segments": 0, "frames": 0, "render_ms": 0.0, "late_first_frames": 0, "skipped": 0,
+        self.stats = {"segments": 0, "frames": 0, "render_ms": 0.0, "late_first_frames": 0, "skipped": 0, "strided": 0,
                       "gestures": {}}
         logger.info(f"avatar {avatar_id}: {len(self.loops)} loops x {len(self.idle_loop and self.loops[self.idle_loop])} frames, "
                     f"fps {self.fps}, warmup {self.warmup_s}s, {len(self.variants)} gesture variants")
@@ -308,63 +309,88 @@ class AvatarWorker:
         # The first batch is exactly the gate: one batch of 4 opens a 4-frame gate in 243 ms; the
         # earlier 2 + 4 ramp rendered 6 frames before the gate could open (337 ms).
         first_seg = turn.rendered == 0
-        sizes = ([self.gate_frames, 4] if first_seg else []) + [b] * n
-        spans, s = [], 0
-        for size in sizes:
-            if s >= n:
-                break
-            spans.append((s, min(n, s + size)))
-            s += size
+        ramp = [self.gate_frames, 4] if first_seg else []
         gate = min(n, self.gate_frames if first_seg else 1)
         pending: asyncio.Task | None = None
         base = turn.base_idx + turn.rendered
-        skipped = 0
-        for s, e in spans:
+        skipped = strided = 0
+        s = 0
+        while s < n:
             if turn.cancelled:
                 break
+            ramped = bool(ramp)
+            size = ramp.pop(0) if ramp else b
+            stride = 1
+            if ramped and s >= gate:
+                # the ramp batch after the gate: the audio starts now, so a GPU slower than real time
+                # (LLM still writing the reply) would put these frames behind at once
+                stride = stride_for(self._frame_ms, self.fps)
+            elif size == b and turn.playing:
+                # A batch of b delays its first frame by b GPU frames (~b x 45 ms). Since the later sentences
+                # no longer wait for their frames (no gaps in the speech), the renderer is often only a
+                # little ahead of the audio: then smaller batches keep the frames on time instead of
+                # skipped (measured: 11 % of the frames of a 5-sentence reply skipped with batches of 8).
+                lead = pts + s * 1000 / self.fps - turn.audible_ms(time.perf_counter())
+                if lead < b * self._frame_ms + self._compose_ms + self.late_ms:
+                    size = SMALL_BATCH
+                    stride = stride_for(self._frame_ms, self.fps)   # GPU slower than real time: every 2nd/3rd frame
             if self.late_ms and turn.playing:
                 # Catch up instead of drifting (catchup.py): skip frames that could only reach the
-                # browser more than late_ms after their audio.
-                k = first_on_time(s, e, pts, self.fps, self.late_ms, turn.audible_ms(time.perf_counter()),
-                                  self._frame_ms, self._compose_ms)
+                # browser more than late_ms after their audio; the batch keeps its size.
+                k = first_on_time(s, size, n, pts, self.fps, self.late_ms, turn.audible_ms(time.perf_counter()),
+                                  self._frame_ms, self._compose_ms, stride)
                 if k > s:
+                    logger.debug(f"turn {turn.turn_id} seq {seq}: skip frames {s}-{k - 1} of {n} (pts {pts}, audible "
+                                 f"{turn.audible_ms(time.perf_counter()):.0f}, gpu {self._frame_ms:.0f} ms/frame)")
                     skipped += k - s
                     s = k
-                    if s >= e:
-                        continue
+                    if s >= n:
+                        break
+            frames = batch_frames(s, size, n, stride)
             t_gpu = time.perf_counter()
-            srcs = [self._source(turn.loop, base + k) for k in range(s, e)]
-            idx, faces = await asyncio.to_thread(self.engine.faces, loop, chunks[s:e], base + s, srcs)
-            self._frame_ms = 0.8 * self._frame_ms + 0.2 * (time.perf_counter() - t_gpu) * 1000 / (e - s)
+            srcs = [self._source(turn.loop, base + k) for k in frames]
+            idx, faces = await asyncio.to_thread(self.engine.faces, loop, chunks[frames], base + s, srcs,
+                                                 [base + k for k in frames])
+            # running estimate: quick to rise (the LLM starts writing at turn start, 45 -> 100+ ms per frame,
+            # and a slow estimate chose too small a stride for the first batches), slow to fall
+            ms = (time.perf_counter() - t_gpu) * 1000 / len(frames)
+            a = 0.6 if ms > self._frame_ms else 0.2
+            self._frame_ms = (1 - a) * self._frame_ms + a * ms
             if pending is not None:
                 await pending
-            pending = asyncio.create_task(self._compose_and_send(turn, seq, pts, srcs, idx, faces, s, t0, gate))
+            pending = asyncio.create_task(self._compose_and_send(turn, seq, pts, srcs, idx, faces, frames, t0, gate))
+            e = min(n, frames[-1] + stride)
+            skipped += (e - s) - len(frames)            # left out by the stride
+            strided += (e - s) - len(frames)
+            s = e
         if pending is not None:
             await pending
         if seq not in turn.first_frame_sent:
             await self._release(turn, seq)          # everything was skipped: do not hold the audio back
         turn.rendered += n
         self.stats["skipped"] += skipped
+        self.stats["strided"] += strided
         ms = (time.perf_counter() - t0) * 1000
         self.stats["segments"] += 1
         self.stats["frames"] += n
         self.stats["render_ms"] += ms
         await self._send_json({"type": "segment_done", "turn_id": turn.turn_id, "seq": seq, "frames": n,
-                               "skipped": skipped, "render_ms": round(ms, 1), "audio_ms": round(len(pcm) / 24),
+                               "skipped": skipped, "strided": strided, "render_ms": round(ms, 1), "audio_ms": round(len(pcm) / 24),
                                "vram_reserved_mib": round(torch.cuda.memory_reserved() / 2**20),
                                "fps": round(n / (ms / 1000), 1) if ms else None})
 
     async def _compose_and_send(self, turn: Turn, seq: int, pts: int, srcs: list[Loop], idx: list[int],
-                                faces: np.ndarray, first: int, t0: float, gate: int) -> None:
+                                faces: np.ndarray, frames: list[int], t0: float, gate: int) -> None:
         """CPU stage. Each frame goes out as soon as it is composited: waiting for the whole batch of 8
-        (~80 ms) made the first frames of every batch the ones most likely to arrive late."""
+        (~80 ms) made the first frames of every batch the ones most likely to arrive late.
+        ``frames``: the frames' positions in the segment (every 2nd/3rd when the GPU is too slow)."""
         for k, (i, face) in enumerate(zip(idx, faces, strict=True)):
             jpg = await asyncio.to_thread(self._compose_one, srcs[k], i, face)
             if turn.cancelled:
                 return
-            frame_pts = pts + round((first + k) * 1000 / self.fps)
+            frame_pts = pts + round(frames[k] * 1000 / self.fps)
             await self._send(HEADER.pack(KIND_VIDEO, turn.turn_id, seq, frame_pts) + jpg)
-            if seq not in turn.first_frame_sent and first + k + 1 >= gate:
+            if seq not in turn.first_frame_sent and frames[k] + 1 >= gate:
                 turn.first_frame_sent.add(seq)
                 await self._send_json({"type": "first_frame", "turn_id": turn.turn_id, "seq": seq,
                                        "ms": round((time.perf_counter() - t0) * 1000, 1)})

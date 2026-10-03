@@ -466,6 +466,106 @@ first audio p50 1,280 ms (the soak's questions are longer than the benchmark's),
 Hand / upper-body gestures remain out of scope: the portrait is head-and-shoulders and no real-time
 engine that runs on this PC animates a body (see the renderer comparison in Phase 4).
 
+### Speech recognition, speech output and gaps (owner's test, 2026-10-03)
+
+The owner reported that their speech was not recognised correctly and that the avatar's speech had
+"lots of gaps". The log of that session: three spoken turns, each interrupted by the next one; one had
+5.3 s of speech but a 2-word transcript; and before every sentence after the first the backend waited
+up to 1.5 s for avatar frames (`avatar first frame ... not ready after 1.5s`). Checked one by one:
+
+**Gaps in the avatar's speech** — three causes, all fixed; measured in the browser with a 5-sentence
+reply (`tests/e2e/phase6_speech_gaps.spec.js`: silences inside the received audio + time the player
+ran dry):
+
+| Cause | Before | After |
+|---|---|---|
+| Every sentence after the first waited for its first lip-sync frame (up to 1.5 s) | player ran dry up to 1.5 s per sentence | only the first sentence waits (A/V start); later ones are sent at once: **player never ran dry** |
+| Kokoro wraps every clause in ~0.3 s silence before and ~0.5 s after | ~0.8 s between sentences; first word 0.3 s late | padding replaced by a natural pause (sentence 260 ms, comma 130 ms): **longest pause 380–400 ms, first word after 20 ms** |
+| The sentence splitter broke after "Dr.", "Mr.", "e.g.", "p.m.", initials | "Dr." was a 1.45 s clip of its own | abbreviation-aware (but "No." and "I." still end sentences) |
+
+**A new TTS bug found by that test**: in longer answers the LLM repeated its behaviour tag before
+each sentence (`[friendly|head_tilt|0.5]They can…`); only the first tag was removed, so the others
+were shown in the chat **and read aloud**. Now every tag is removed, also when it arrives split over
+several stream pieces, and the prompt asks for the tag once.
+
+**Spoken forms** (TTS → Whisper round trip): "100°C" was read "degrees C", "9:00" "nine zero zero",
+"~20" "tilde 20", "2-3" "two three", and an en dash in "2–3" became a comma. Now normalised before
+synthesis (Celsius/Fahrenheit, clock times, "about", ranges, e.g./i.e./etc., units such as km, kg,
+km/h); the chat shows the text as written. XTTS (voice-only clone profile) adds almost no padding
+(~10 ms before, ~100 ms after) and needs no trimming.
+
+**Speech recognition** — `scripts/bench_stt.py`: 6 accents (American, British, Indian, Japanese,
+Spanish, Chinese Kokoro voices speaking English) × 9 sentences × 5 conditions (clean, noise at 10 dB SNR,
+quiet microphone, laptop-microphone bandwidth, fast speech) = 270 recordings through the app's own VAD +
+Whisper in 20 ms packets ([phase6_stt_robustness.json](benchmarks/phase6_stt_robustness.json)):
+
+| | before | after |
+|---|---|---|
+| Word error rate, all recordings | 24.4 % | **4.4 %** |
+| Short answers "Thank you." / "Okay." / "No." | 72 % WER, **55 of 90 empty** | 12 % WER, 3 empty |
+| Normal sentences, all accents and conditions | ~0.3 % | 0.1 % |
+
+- **Short answers were thrown away**: a filter against Whisper's hallucinations dropped every
+  "Thank you" and "Okay". Measured: on breath, clicks, hum or room noise Whisper writes "you" or
+  "."; real short answers have avg log-prob −0.02 … −0.63. Now "you"/"."/"uh" are always dropped,
+  subtitle phrases ("Thanks for watching") too, and "Thank you"/"Okay"/"Bye" only when Whisper is
+  unsure (log-prob < −1.0). (`<|nospeech|>` is ~0 even for silence with large-v3-turbo, and the
+  language probability is low for accented English — neither is usable as a filter.)
+- **A pause in the middle of a question split it into separate turns** (60 of 60 sentences with a
+  0.9 s pause), each answered by its last fragment — the owner's symptom. Two fixes, tested with
+  spoken fixtures in the browser (`phase6_pause.spec.js`):
+  - if the transcript ends unfinished ("…to", "…and", "…the", "I would like to know"), the session
+    waits up to 1 s more for the rest (`session/endpointing.py`; finished questions are not delayed:
+    latency p50 1,188 ms, 16/16 exact);
+  - if the user goes on talking within 3 s, before hearing 1.5 s of the reply, the next utterance is
+    merged into the same question instead of being an interruption; the chat shows one question.
+  Both fixtures: one question, answered once ("I would like to know. What the weather will be like
+  tomorrow.", "Could you explain? How rain forms in the clouds").
+- **First word clipped** ("Can you…" → "and you…"): the VAD keeps 500 ms before speech onset (was 300).
+- **Browsers that do not run audio at 16 kHz** (Firefox refuses a 16 kHz microphone context, some
+  Safari versions ignore the rate): the microphone worklet now resamples to 16 kHz (windowed-sinc
+  low-pass + interpolation) and playback is resampled to the browser's rate. Sending 48 kHz audio
+  labelled as 16 kHz would make Whisper hear slow, deep speech.
+- **Diagnostics**: the page reports its real microphone settings (rates, echo cancellation, device,
+  browser) to `logs/backend.log`; every utterance is logged with its transcript, duration, level,
+  Whisper confidence and English probability; `stt.debug_audio: true` additionally saves each utterance
+  as a WAV in `logs/stt_debug` (off by default). When speech was heard but nothing usable came out,
+  the page says "Sorry, I didn't catch that."
+- Unchanged and still possible: single, isolated words with a strong accent ("No." heard as "Note")
+  and speaker echo without headphones.
+
+**Lip sync without the gaps.** The gaps had been giving the lip-sync renderer time to catch up: it
+runs at ~23 fps alone (the avatar plays 20 fps), but while the LLM is still writing the rest of a long
+reply — ~2.5 s after the avatar starts speaking, at 34 instead of 80+ tokens/s — each frame takes
+100–150 ms instead of 45. With continuous speech, frames in that window came too late and were
+skipped. Measured on the 5-sentence reply of `phase6_speech_gaps.spec.js` (3 runs each; `/health` →
+`avatar.stats.skipped_frames`, `strided_frames`):
+
+| Version | frames not rendered | of which catch-up skips (lips freeze) | what it looks like at the start of a long reply |
+|---|---|---|---|
+| gaps removed, all sentences synthesised at once | 9.3–11.2 % | all | 1 frame in 4, jerky |
+| + just-in-time TTS: the next sentence is synthesised when < 2.5 s of audio is queued (`AHEAD_MS`) | 6.6–7.7 % | all | 1 frame in 4 (single-frame batches) |
+| + a batch keeps its size when late frames are skipped | 5.9–7.0 % | 27–34 frames | 160 ms of movement, 240 ms freeze |
+| **+ every 2nd or 3rd frame while the GPU is too slow** | 9.8–13.5 % | **3–7 frames** | **even, 7–10 lip updates per second, then 20 fps** |
+
+- The catch-up rule used to shrink a batch to its on-time frames; under load that meant batches of
+  one frame, the least efficient size on the GPU (115–150 ms each), so the worker fell further behind.
+- `catchup.stride_for`: a GPU up to 25 % slower than real time keeps every frame; beyond that the
+  worker renders every 2nd or 3rd frame with ~15 % headroom. The running GPU-time estimate rises
+  quickly (the LLM starts at turn start) and falls slowly.
+- Tried without effect: a lower WDDM GPU scheduling priority for `llama-server` than for the worker
+  (7.5–8.4 %); the GPU does not prioritise between the two processes.
+- After all changes: latency p50 1,170 ms / p90 1,305 ms, 16/16 transcripts exact
+  ([phase6_latency_after_gap_fixes.json](benchmarks/phase6_latency_after_gap_fixes.json)); barge-in
+  2/2, detected in p50 383 ms, 0 stale packets
+  ([phase6_bargein_after_gap_fixes.json](benchmarks/phase6_bargein_after_gap_fixes.json)); avatar A/V
+  test: 0 late frames, offset p50 21 ms / p90 54 ms; speech: longest pause 380–460 ms, player never ran dry
+  (cloned voice, `avatar_clone`: 370 ms, never dry).
+- 10-minute voice soak with the avatar: 32/32 turns, first audio p50 1,203 ms / p90 1,369 ms, 0 errors,
+  0 restarts, late lip-sync frames on screen 0.53 %, A/V offset p50 26 ms / p90 45 ms, 5.5 % of the
+  frames not rendered — 160 of them strided, only 9 catch-up skips in 10 minutes — and +2 MiB GPU
+  memory ([phase6_soak_avatar_after_gap_fixes_10min.json](benchmarks/phase6_soak_avatar_after_gap_fixes_10min.json)).
+
 ### Warm persona: soft smile by default, a real smile in happy moments
 
 Owner request after testing: "make the avatar warm and sometimes smile according to the case".
@@ -565,13 +665,17 @@ Found in the owner's first test over the tunnel, fixed, and covered by `tests/e2
   session closes, and the worker treats a speaking turn without a playback report for 5 s as ended.
 
 Found and fixed by these tests:
+- The text test "Stop cancels a long reply" failed once right after a restart. Its check "the reply has
+  started" (`not.toHaveText('…')`) also passed while the reply bubble did not exist yet, so Stop came
+  0.35 s after sending, before there was a reply to tag "interrupted"; the app behaved correctly. The
+  text tests now wait for reply text, and for a *new* reply after the cancelled one.
 - A turn that hit the LLM while it was restarting failed immediately. The client now waits for the
   supervisor's restart (connection refused, or HTTP 503 while the model loads) and retries once — only
   if nothing was streamed yet. `/health` has `llm_ready`.
 - `logs/backend.log` stopped recording as soon as Kokoro loaded, since Phase 2: Kokoro's `__init__`
   calls `logger.remove()`. Kokoro is now imported before logging is configured.
 - Unit tests for both, for the chunk merging (`backend/tests/test_recovery_units.py`), the answer
-  prefetch (`test_prefetch.py`), the VAD `resume` event, the avatar catch-up rule (`test_avatar_catchup.py`), head gestures (`test_avatar_gestures.py`, `test_gesture_from_text.py`) and warmth (`test_warmth.py`) — 121 unit tests in total.
+  prefetch (`test_prefetch.py`), the VAD `resume` event, the avatar catch-up and frame-stride rules (`test_avatar_catchup.py`), head gestures (`test_avatar_gestures.py`, `test_gesture_from_text.py`), warmth (`test_warmth.py`), speech output (`test_speech_output_text.py`) and endpointing (`test_endpointing.py`) — 178 unit tests in total.
 
 ### Observability
 

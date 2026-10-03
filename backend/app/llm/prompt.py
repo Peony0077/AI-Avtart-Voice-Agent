@@ -22,7 +22,7 @@ Every reply MUST start with a short tag [emotion|gesture|intensity] and then the
 emotion: neutral, friendly, happy, empathetic, concerned, serious, thinking, excited.
 gesture: none, small_nod, nod, head_tilt, shake, smile.
 intensity: 0.0 to 1.0, keep it subtle (usually 0.2 to 0.6).
-Never mention or explain the tag.{extra}"""
+Write the tag only once, at the very start of the reply. Never mention or explain the tag.{extra}"""
 
 KNOWLEDGE_TEMPLATE = """{question}
 

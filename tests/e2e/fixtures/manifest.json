@@ -10,7 +10,7 @@
     ]
   },
   "mic_story_bargein": {
-    "duration_s": 28.227,
+    "duration_s": 28.204,
     "speech": [
       {
         "text": "Can you tell me a long story about a lighthouse keeper and the sea?",
@@ -20,12 +20,12 @@
       {
         "text": "Wait, stop please. What is two plus two?",
         "start_s": 11.764,
-        "end_s": 14.227
+        "end_s": 14.204
       }
     ]
   },
   "mic_resume": {
-    "duration_s": 16.519,
+    "duration_s": 16.529,
     "speech": [
       {
         "text": "I was thinking about",
@@ -35,17 +35,47 @@
       {
         "text": "buying a new bicycle.",
         "start_s": 3.296,
-        "end_s": 4.519
+        "end_s": 4.528
+      }
+    ]
+  },
+  "mic_pause_unfinished": {
+    "duration_s": 19.181,
+    "speech": [
+      {
+        "text": "I would like to know",
+        "start_s": 1.5,
+        "end_s": 2.468
+      },
+      {
+        "text": "what the weather will be like tomorrow.",
+        "start_s": 3.468,
+        "end_s": 5.181
+      }
+    ]
+  },
+  "mic_pause_question": {
+    "duration_s": 19.247,
+    "speech": [
+      {
+        "text": "Could you explain?",
+        "start_s": 1.5,
+        "end_s": 2.498
+      },
+      {
+        "text": "how rain forms in the clouds.",
+        "start_s": 3.598,
+        "end_s": 5.247
       }
     ]
   },
   "mic_soak": {
-    "duration_s": 18.937,
+    "duration_s": 18.939,
     "speech": [
       {
         "text": "Tell me one short interesting fact.",
         "start_s": 1.0,
-        "end_s": 2.937
+        "end_s": 2.939
       }
     ]
   },
@@ -60,12 +90,12 @@
     ]
   },
   "bench_q1": {
-    "duration_s": 3.944,
+    "duration_s": 3.945,
     "speech": [
       {
         "text": "What is the capital of Japan?",
         "start_s": 0.8,
-        "end_s": 2.444
+        "end_s": 2.445
       }
     ]
   },
@@ -100,12 +130,12 @@
     ]
   },
   "bench_q5": {
-    "duration_s": 4.177,
+    "duration_s": 4.159,
     "speech": [
       {
         "text": "What should I eat for breakfast tomorrow?",
         "start_s": 0.8,
-        "end_s": 2.677
+        "end_s": 2.659
       }
     ]
   },
@@ -140,12 +170,12 @@
     ]
   },
   "bench_interrupt": {
-    "duration_s": 3.714,
+    "duration_s": 3.718,
     "speech": [
       {
         "text": "Wait, stop. What is two plus two?",
         "start_s": 0.3,
-        "end_s": 2.214
+        "end_s": 2.218
       }
     ]
   },

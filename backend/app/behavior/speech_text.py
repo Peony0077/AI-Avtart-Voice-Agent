@@ -12,8 +12,8 @@ _EMOJI = re.compile(
 )
 _MARKDOWN = re.compile(r"[*_`#~>]")
 _URL = re.compile(r"https?://\S+")
-_DASH = re.compile(r"\s*[—–]\s*")
-_REPLACE = {"…": "...", "“": '"', "”": '"', "‘": "'", "’": "'", " ": " "}
+_DASH = re.compile(r"\s*—\s*")   # em dash = a pause; an en dash is a range ("2–3") -> hyphen
+_REPLACE = {"…": "...", "“": '"', "”": '"', "‘": "'", "’": "'", " ": " ", "–": "-"}
 
 
 def clean_delta(text: str) -> str:
@@ -28,3 +28,36 @@ def clean_delta(text: str) -> str:
 
 def collapse_spaces(text: str) -> str:
     return re.sub(r"[ \t]{2,}", " ", text).strip()
+
+
+# Spoken forms Kokoro gets wrong (TTS -> Whisper round trip, docs/ARCHITECTURE.md "Speech output"):
+# "100°C" -> "degrees C", "9:00" -> "nine zero zero", "~20" -> "tilde 20", "2-3" -> "two three".
+# Applied to each clause right before synthesis; the chat text stays as the LLM wrote it.
+_UNITS = {"km": "kilometers", "kg": "kilograms", "cm": "centimeters", "mm": "millimeters", "ml": "milliliters",
+          "mph": "miles per hour", "km/h": "kilometers per hour", "kph": "kilometers per hour", "lbs": "pounds",
+          "lb": "pounds", "hrs": "hours", "mins": "minutes", "sec": "seconds", "secs": "seconds"}
+_SPEECH_RULES: list[tuple[re.Pattern, object]] = [
+    (re.compile(r"(\d)\s?°\s?C\b"), r"\1 degrees Celsius"),
+    (re.compile(r"(\d)\s?°\s?F\b"), r"\1 degrees Fahrenheit"),
+    (re.compile(r"(\d)\s?°"), r"\1 degrees"),
+    (re.compile(r"(?:\babout\s+)?~\s?(?=\d)", re.I), "about "),
+    (re.compile(r"\be\.g\.,?", re.I), "for example"),
+    (re.compile(r"\bi\.e\.,?", re.I), "that is"),
+    (re.compile(r"\betc\.(?=\s*$)", re.I), "et cetera."),
+    (re.compile(r"\betc\.", re.I), "et cetera"),
+    (re.compile(r"\bapprox\.", re.I), "approximately"),
+    # numeric range "2-3", "10-15" (short numbers only: not phone numbers or dates)
+    (re.compile(r"(?<![\d/.-])\b(\d{1,3})\s?-\s?(\d{1,3})\b(?![-/:.]\d)"), r"\1 to \2"),
+    # clock times: "9:00" -> "9 o'clock", "13:00" -> "13 hundred", "9:05" -> "9 oh 5", "9:30" -> "9 30"
+    (re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b"),
+     lambda m: (f"{int(m[1])} o'clock" if int(m[1]) <= 12 else f"{int(m[1])} hundred") if m[2] == "00"
+     else f"{int(m[1])} oh {int(m[2])}" if m[2][0] == "0" else f"{int(m[1])} {m[2]}"),
+    (re.compile(r"(\d)\s?(" + "|".join(sorted(map(re.escape, _UNITS), key=len, reverse=True)) + r")\b"),
+     lambda m: f"{m[1]} {_UNITS[m[2]]}"),
+]
+
+
+def normalize_for_speech(text: str) -> str:
+    for pattern, repl in _SPEECH_RULES:
+        text = pattern.sub(repl, text)
+    return collapse_spaces(text)

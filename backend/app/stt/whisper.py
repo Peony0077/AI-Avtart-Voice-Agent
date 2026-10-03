@@ -18,11 +18,17 @@ from loguru import logger
 
 from app.core.config import STTCfg
 
-# Whisper sometimes "hears" these in noise/silence.
-_HALLUCINATIONS = {
-    "you", "thank you", "thank you.", "thanks for watching", "thanks for watching!", "bye", "bye.",
-    "thank you for watching.", "you.", ".", "", "so", "okay.", "hmm.", "uh", "um",
-}
+# What Whisper "hears" in breath, clicks, hum or room noise (measured: "you" or "."), never a real turn.
+_JUNK = {"", ".", "you", "you.", "so", "so.", "uh", "uh.", "um", "um.", "hmm", "hmm.", "mm.", "ah."}
+# Subtitle phrases from its training data: never said to an avatar.
+_SUBTITLE = {"thanks for watching", "thanks for watching!", "thank you for watching", "thank you for watching.",
+             "thank you for watching!", "please subscribe.", "subscribe to my channel."}
+# Real short answers that are also classic hallucinations: kept when Whisper is confident. Dropping them
+# always (the earlier rule) threw away 55 of 90 spoken "Thank you." / "Okay." in scripts/bench_stt.py;
+# real ones scored avg log-prob -0.02 .. -0.63 (one noisy -1.14), the threshold is OpenAI's default.
+_SHORT_ANSWERS = {"thank you", "thank you.", "thank you!", "thanks.", "thanks", "thanks!", "okay", "okay.",
+                  "ok.", "bye", "bye.", "bye-bye.", "bye!"}
+_MIN_LOGPROB_SHORT = -1.0
 
 
 class WhisperSTT:
@@ -51,6 +57,11 @@ class WhisperSTT:
         self._suppress = torch.tensor(g.suppress_tokens or [], dtype=torch.long, device=self.device)
         self._begin_suppress = torch.tensor(g.begin_suppress_tokens or [], dtype=torch.long, device=self.device)
         self._eos = g.eos_token_id
+        lang_to_id = getattr(g, "lang_to_id", None) or {}
+        self._lang_ids = torch.tensor(list(lang_to_id.values()), device=self.device) if lang_to_id else None
+        self._lang_index = (list(lang_to_id).index(f"<|{cfg.language}|>")
+                            if f"<|{cfg.language}|>" in lang_to_id else None)
+        self.last_info: dict = {}
         self.fast_decode = True
         self._warm_feats = torch.zeros(1, self.model.config.num_mel_bins, 3000, dtype=torch.float16,
                                        device=self.device)
@@ -70,7 +81,10 @@ class WhisperSTT:
         self.last_timing = {"features_ms": round((t1 - t0) * 1000, 1), "generate_ms": round((t2 - t1) * 1000, 1),
                             "tokens": int(ids.shape[-1])}
         text = re.sub(r"\s+", " ", text)
-        if text.lower() in _HALLUCINATIONS:
+        key = text.lower()
+        if key in _JUNK or key in _SUBTITLE:
+            return ""
+        if key in _SHORT_ANSWERS and self.last_info.get("avg_logprob", 0.0) < _MIN_LOGPROB_SHORT:
             return ""
         return text
 
@@ -82,20 +96,30 @@ class WhisperSTT:
         """Greedy decoding equivalent to generate() for short-form transcription without timestamps."""
         m = self.model
         enc = m.model.encoder(feats)
-        step, past, out = self._prompt, None, []
+        step, past, out, logprob = self._prompt, None, [], 0.0
+        info: dict = {}
         for i in range(max_new_tokens):
             res = m(encoder_outputs=enc, decoder_input_ids=step, past_key_values=past, use_cache=True)
             past = res.past_key_values
+            if i == 0 and self._lang_ids is not None and self._lang_index is not None:
+                # for the log only: how sure Whisper is the speech is English (low for strong accents too,
+                # measured 0.02-0.36 for accented English, so it is not used to reject anything).
+                # (large-v3-turbo gives <|nospeech|> ~0 at this position even for silence: not usable.)
+                langs = torch.softmax(res.logits[0, 0].float(), dim=-1)[self._lang_ids]
+                info["language_prob"] = round(float(langs[self._lang_index] / langs.sum()), 3)
             logits = res.logits[0, -1]
             if len(self._suppress):
                 logits[self._suppress] = -float("inf")
             if i == 0 and len(self._begin_suppress):
                 logits[self._begin_suppress] = -float("inf")
             token = int(logits.argmax())
+            logprob += float(torch.log_softmax(logits.float(), dim=-1)[token])
             if token == self._eos:
                 break
             out.append(token)
             step = torch.tensor([[token]], device=self.device)
+        info["avg_logprob"] = round(logprob / (len(out) + 1), 3)
+        self.last_info = info
         return torch.cat([self._prompt[0], torch.tensor(out, dtype=torch.long, device=self.device)])[None]
 
     @torch.inference_mode()

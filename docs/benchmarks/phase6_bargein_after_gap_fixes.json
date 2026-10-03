@@ -1,0 +1,34 @@
+{
+  "summary": {
+    "rounds": 2,
+    "interrupted": 2,
+    "detect_ms_p50": 383.0,
+    "detect_ms_max": 389,
+    "stale_audio_packets_total": 0,
+    "follow_up_ok": 2
+  },
+  "rows": [
+    {
+      "round": 0,
+      "interrupt_received": true,
+      "detect_ms_after_speech_onset": 389,
+      "server_cancel_ms": 0.17,
+      "stale_audio_packets_after_interrupt": 0,
+      "assistant_played_ms_at_onset": 2810,
+      "heard_text_recorded": "I'm sorry, but I can't tell a long story about a brave",
+      "follow_up_transcript": "Wait, stop. What is 2 plus 2?",
+      "follow_up_reply": "2 plus 2 is 4."
+    },
+    {
+      "round": 1,
+      "interrupt_received": true,
+      "detect_ms_after_speech_onset": 377,
+      "server_cancel_ms": 0.27,
+      "stale_audio_packets_after_interrupt": 0,
+      "assistant_played_ms_at_onset": 2799,
+      "heard_text_recorded": "I'd love to tell you a story about a brave little fox, but",
+      "follow_up_transcript": "Wait, stop. What is 2 plus 2?",
+      "follow_up_reply": "2 plus 2 is 4."
+    }
+  ]
+}

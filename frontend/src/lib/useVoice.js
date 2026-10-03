@@ -17,7 +17,7 @@ export function useVoice(conv) {
   const [level, setLevel] = useState(0)
   const [speechDetected, setSpeechDetected] = useState(false)
   const [error, setError] = useState(null)
-  const statsRef = useRef({ interrupts: [], blockedStale: 0, pushes: {} })
+  const statsRef = useRef({ interrupts: [], blockedStale: 0, pushes: {}, gaps: {} })
 
   const send = (msg) => conv.connRef.current?.sendJson(msg)
 
@@ -42,7 +42,7 @@ export function useVoice(conv) {
         case 'session':
           // (re)connected: restore speaker and microphone on the server
           if (engine && !mutedRef.current) send({ type: 'speaker', enabled: true })
-          if (engine?.micOn) send({ type: 'voice', enabled: true })
+          if (engine?.micOn) send({ type: 'voice', enabled: true, mic: engine.micInfo })
           break
         default:
           break
@@ -81,7 +81,9 @@ export function useVoice(conv) {
         if (last && last.flushedAt === undefined) last.flushedAt = performance.now()
       }
       if (m.type === 'started' || m.type === 'progress' || m.type === 'ended') {
-        send({ type: 'playback', turn_id: m.turnId, event: m.type, played_ms: Math.round(m.playedMs ?? 0), client_time: Date.now() })
+        send({ type: 'playback', turn_id: m.turnId, event: m.type, played_ms: Math.round(m.playedMs ?? 0),
+          gap_ms: Math.round(m.gapMs ?? 0), client_time: Date.now() })
+        if (m.type === 'ended') statsRef.current.gaps[m.turnId] = Math.round(m.gapMs ?? 0)
       }
     })
     engineRef.current = e
@@ -115,7 +117,7 @@ export function useVoice(conv) {
       const playback = e.startPlayback()               // AudioContext created inside the click
       await playback
       await e.startMic((pcm) => conv.connRef.current?.sendBinary(pcm))
-      send({ type: 'voice', enabled: true })
+      send({ type: 'voice', enabled: true, mic: e.micInfo })
       if (!mutedRef.current) send({ type: 'speaker', enabled: true })
       setSpeaker(true)
       setActive(true)

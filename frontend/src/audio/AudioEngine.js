@@ -48,10 +48,26 @@ export class AudioEngine extends EventTarget {
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
     })
-    this.micCtx = new AudioContext({ sampleRate: MIC_SAMPLE_RATE, latencyHint: 'interactive' })
+    // 16 kHz where the browser allows it; otherwise its own rate and the worklet resamples to 16 kHz
+    // (Firefox throws for a 16 kHz context with a 48 kHz microphone; some Safari versions ignore the rate).
+    let source
+    try {
+      this.micCtx = new AudioContext({ sampleRate: MIC_SAMPLE_RATE, latencyHint: 'interactive' })
+      source = this.micCtx.createMediaStreamSource(this.stream)
+    } catch {
+      await this.micCtx?.close()
+      this.micCtx = new AudioContext({ latencyHint: 'interactive' })
+      source = this.micCtx.createMediaStreamSource(this.stream)
+    }
     await this.micCtx.audioWorklet.addModule(micWorkletUrl)
-    const source = this.micCtx.createMediaStreamSource(this.stream)
     const capture = new AudioWorkletNode(this.micCtx, 'mic-capture')
+    const track = this.stream.getAudioTracks()[0]
+    const s = track?.getSettings?.() ?? {}
+    // reported to the server log: what the browser really does with the microphone
+    this.micInfo = { contextRate: this.micCtx.sampleRate, deviceRate: s.sampleRate ?? null, channels: s.channelCount ?? null,
+      echoCancellation: s.echoCancellation ?? null, noiseSuppression: s.noiseSuppression ?? null,
+      autoGainControl: s.autoGainControl ?? null, device: track?.label ?? '', playbackRate: this.playCtx?.sampleRate ?? null,
+      userAgent: navigator.userAgent }
     capture.port.onmessage = (e) => {
       this.level = e.data.level
       onMicFrame(e.data.pcm)
@@ -81,8 +97,21 @@ export class AudioEngine extends EventTarget {
       return
     }
     const pcm = new Int16Array(pcm16Buffer)
-    const f32 = new Float32Array(pcm.length)
+    let f32 = new Float32Array(pcm.length)
     for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 32768
+    const rate = this.playCtx.sampleRate
+    if (rate !== TTS_SAMPLE_RATE) {
+      // the browser ignored the requested 24 kHz: resample, or the voice plays too fast and too high
+      const out = new Float32Array(Math.round((f32.length * rate) / TTS_SAMPLE_RATE))
+      const step = TTS_SAMPLE_RATE / rate
+      for (let i = 0; i < out.length; i++) {
+        const x = i * step
+        const k = Math.floor(x)
+        const a = f32[k] ?? 0
+        out[i] = a + ((f32[k + 1] ?? a) - a) * (x - k)
+      }
+      f32 = out
+    }
     this.player.port.postMessage({ type: 'push', turnId, samples: f32 }, [f32.buffer])
   }
 

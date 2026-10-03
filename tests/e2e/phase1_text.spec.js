@@ -22,7 +22,9 @@ test('streams a reply and returns to LISTENING', async ({ page }) => {
   await page.getByTestId('send').click()
 
   const assistant = page.locator('li[data-role="assistant"]').last()
-  await expect(assistant).not.toHaveText('…', { timeout: 15_000 })
+  // reply text has arrived (not only the "…" placeholder); not.toHaveText('…') also passed while the
+  // bubble did not exist yet
+  await expect(assistant).toHaveText(/\w/, { timeout: 15_000 })
   const firstTextMs = Date.now() - t0
   await expect(page.getByTestId('state')).toHaveText('Listening', { timeout: 30_000 })
   const reply = await assistant.innerText()
@@ -41,7 +43,9 @@ test('Stop cancels a long reply and the next turn still works', async ({ page })
   await page.getByTestId('send').click()
 
   const assistant = page.locator('li[data-role="assistant"]').last()
-  await expect(assistant).not.toHaveText('…', { timeout: 15_000 })
+  // wait for reply text: right after a restart the old check passed before the bubble existed, and
+  // Stop then cancelled the turn before it had a bubble to tag "interrupted"
+  await expect(assistant).toHaveText(/\w/, { timeout: 15_000 })
   await page.getByTestId('stop').click()
   await expect(assistant.locator('.tag')).toHaveText('interrupted', { timeout: 5_000 })
   await expect(page.getByTestId('state')).toHaveText('Listening')
@@ -51,10 +55,13 @@ test('Stop cancels a long reply and the next turn still works', async ({ page })
   await page.waitForTimeout(1500)
   expect(await assistant.innerText()).toBe(frozen)
 
+  const replies = page.locator('li[data-role="assistant"]')
+  const before = await replies.count()
   await page.getByTestId('input').fill('Now just say OK.')
   await page.getByTestId('send').click()
-  const next = page.locator('li[data-role="assistant"]').last()
-  await expect(next).not.toHaveText('…', { timeout: 15_000 })
+  await expect(replies).toHaveCount(before + 1, { timeout: 15_000 })   // a new reply, not the cancelled one
+  const next = replies.last()
+  await expect(next).toHaveText(/\w/, { timeout: 15_000 })
   await expect(page.getByTestId('state')).toHaveText('Listening', { timeout: 30_000 })
   expect((await next.innerText()).length).toBeGreaterThan(0)
 })
@@ -68,7 +75,7 @@ test('reconnects automatically after the socket drops', async ({ page }) => {
   expect(firstSession).toContain('/ws')
   await page.getByTestId('input').fill('Say hi.')
   await page.getByTestId('send').click()
-  await expect(page.locator('li[data-role="assistant"]').last()).not.toHaveText('…', { timeout: 15_000 })
+  await expect(page.locator('li[data-role="assistant"]').last()).toHaveText(/\w/, { timeout: 15_000 })
 })
 
 test('a wrong access token is rejected when a token is configured', async ({ page }) => {

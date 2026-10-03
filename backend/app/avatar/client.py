@@ -3,8 +3,9 @@
 * starts ``avatar/musetalk/.venv`` → ``worker.py`` (separate venv/process: MuseTalk deps
   must not touch the backend environment) and restarts it if it dies
 * forwards avatar video frames to the active browser session
-* ``speak()`` sends one TTS clause and resolves when its FIRST lip-synced frame exists,
-  so the session can hold the audio until the video is ready (A/V sync at clause start)
+* ``speak()`` sends a turn's first TTS clause and resolves when its first lip-synced frames exist,
+  so the session can hold the reply's audio until the video is ready (A/V sync at the start);
+  ``send_audio()`` sends the later clauses without waiting (they play after queued audio)
 """
 from __future__ import annotations
 
@@ -39,7 +40,7 @@ class AvatarClient:
         self._watchdog: asyncio.Task | None = None
         self._stopping = False
         self.restarts = 0
-        self.stats = {"frames_in": 0, "idle_in": 0, "first_frame_ms": [], "segment_fps": [], "skipped_frames": 0,
+        self.stats = {"frames_in": 0, "idle_in": 0, "first_frame_ms": [], "segment_fps": [], "skipped_frames": 0, "strided_frames": 0,
                       "gestures": {}}
 
     # ------------------------------------------------------------------ lifecycle
@@ -131,7 +132,8 @@ class AvatarClient:
                 elif data.get("type") == "gesture":
                     self.stats["gestures"][data["name"]] = self.stats["gestures"].get(data["name"], 0) + 1
                 elif data.get("type") == "segment_done":
-                    self.stats["skipped_frames"] += data.get("skipped", 0)
+                    self.stats["skipped_frames"] += data.get("skipped", 0)   # incl. strided
+                    self.stats["strided_frames"] += data.get("strided", 0)
                     if data.get("vram_reserved_mib") is not None:
                         self.stats["worker_vram_reserved_mib"] = data["vram_reserved_mib"]
                     if data.get("fps"):
@@ -154,6 +156,12 @@ class AvatarClient:
             await self.ws.send(data)
         except (websockets.ConnectionClosed, AttributeError):
             self.connected = False
+
+    def send_audio(self, turn_id: int, seq: int, pcm16_24k: np.ndarray, pts_ms: int) -> None:
+        """Send a clause to lip-sync without waiting for its frames (all clauses after the first)."""
+        if self.connected:
+            asyncio.get_running_loop().create_task(
+                self._safe_send(HEADER.pack(KIND_AUDIO, turn_id, seq, pts_ms) + pcm16_24k.tobytes()))
 
     async def speak(self, turn_id: int, seq: int, pcm16_24k: np.ndarray, pts_ms: int,
                     timeout_s: float = 1.5) -> float | None:

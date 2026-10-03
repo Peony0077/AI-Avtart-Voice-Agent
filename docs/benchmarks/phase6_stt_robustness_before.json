@@ -1,0 +1,3387 @@
+{
+ "label": "baseline",
+ "overall": {
+  "wer": 0.244,
+  "n": 270,
+  "empty": 55,
+  "split": 60
+ },
+ "by_condition": {
+  "clean": {
+   "wer": 0.215,
+   "n": 54,
+   "empty": 11,
+   "split": 12
+  },
+  "noise_10db": {
+   "wer": 0.273,
+   "n": 54,
+   "empty": 11,
+   "split": 12
+  },
+  "quiet": {
+   "wer": 0.244,
+   "n": 54,
+   "empty": 11,
+   "split": 12
+  },
+  "laptop_mic": {
+   "wer": 0.245,
+   "n": 54,
+   "empty": 11,
+   "split": 12
+  },
+  "fast": {
+   "wer": 0.245,
+   "n": 54,
+   "empty": 11,
+   "split": 12
+  }
+ },
+ "by_voice": {
+  "am_michael (US male)": {
+   "wer": 0.227,
+   "n": 45,
+   "empty": 9,
+   "split": 10
+  },
+  "bf_emma (British female)": {
+   "wer": 0.244,
+   "n": 45,
+   "empty": 10,
+   "split": 10
+  },
+  "hf_alpha (Indian female)": {
+   "wer": 0.267,
+   "n": 45,
+   "empty": 10,
+   "split": 10
+  },
+  "jf_alpha (Japanese female)": {
+   "wer": 0.21,
+   "n": 45,
+   "empty": 9,
+   "split": 10
+  },
+  "ef_dora (Spanish female)": {
+   "wer": 0.291,
+   "n": 45,
+   "empty": 10,
+   "split": 10
+  },
+  "zf_xiaobei (Chinese female)": {
+   "wer": 0.227,
+   "n": 45,
+   "empty": 7,
+   "split": 10
+  }
+ },
+ "short_answers": {
+  "wer": 0.722,
+  "n": 90,
+  "empty": 55,
+  "split": 0
+ },
+ "pause_sentences": {
+  "wer": 0.012,
+  "n": 60,
+  "empty": 0,
+  "split": 60
+ },
+ "rows": [
+  {
+   "voice": "am_michael",
+   "sentence": "What is the capital of Japan?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 215
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "What is the capital of Japan?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 207
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "What is the capital of Japan?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 210
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "What is the capital of Japan?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 194
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "What is the capital of Japan?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 191
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 230
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 230
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 231
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "and you recommend a good book for the weekend."
+   ],
+   "wer": 0.111,
+   "empty": false,
+   "ms": 221
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "and you recommend a good book for the weekend."
+   ],
+   "wer": 0.111,
+   "empty": false,
+   "ms": 204
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 204
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 218
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 207
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 194
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 203
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Thank you.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 189
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Thank you.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 173
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Thank you.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 176
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Thank you.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 180
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Thank you.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 174
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Okay.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 170
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Okay.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 174
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Okay.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "OK."
+   ],
+   "wer": 1.0,
+   "empty": false,
+   "ms": 167
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Okay.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 174
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Okay.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 169
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "No.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 167
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "No.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 170
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "No.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 165
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "No.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 165
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "No.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 169
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Yes, please tell me more.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 201
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Yes, please tell me more.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 207
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Yes, please tell me more.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 208
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Yes, please tell me more.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 200
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Yes, please tell me more.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 190
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "clean",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "what the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 391
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "noise_10db",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "What the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 398
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "quiet",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "What the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 376
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "laptop_mic",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "what the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 405
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "fast",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "what the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 387
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "clean",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "How rain forms in the clouds."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 386
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "noise_10db",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "how rain forms in the clouds,"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 380
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "quiet",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "How rain forms in the clouds."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 372
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "laptop_mic",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "how rain forms in the clouds."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 379
+  },
+  {
+   "voice": "am_michael",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "fast",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "How Rain Forms in the Clouds"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 384
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "What is the capital of Japan?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 201
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "What is the capital of Japan?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 201
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "What is the capital of Japan?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 201
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "What is the capital of Japan?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 203
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "What is the capital of Japan?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 192
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 221
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 208
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 204
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 214
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 207
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 195
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 208
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 210
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 203
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 219
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Thank you.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 176
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Thank you.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 178
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Thank you.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 181
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Thank you.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 172
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Thank you.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 174
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Okay.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 169
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Okay.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 173
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Okay.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 171
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Okay.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 177
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Okay.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 181
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "No.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 178
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "No.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 177
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "No.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 175
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "No.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "No"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 167
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "No.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "Know"
+   ],
+   "wer": 1.0,
+   "empty": false,
+   "ms": 162
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Yes, please tell me more.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 191
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Yes, please tell me more.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 191
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Yes, please tell me more.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 205
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Yes, please tell me more.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 201
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Yes, please tell me more.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "Yes please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 183
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "clean",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "What the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 395
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "noise_10db",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "what the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 398
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "quiet",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "what the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 385
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "laptop_mic",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "what the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 398
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "fast",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "What the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 387
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "clean",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "How rain forms in the clouds."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 369
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "noise_10db",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "how rain forms in the clouds."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 373
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "quiet",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "how rain forms in the clouds."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 379
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "laptop_mic",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "how rain forms in the clouds."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 388
+  },
+  {
+   "voice": "bf_emma",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "fast",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "How rain forms in the clouds."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 375
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "What is the capital of Japan?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 216
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "What is the capital of Japan?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 203
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "What is the capital of Japan?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 220
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "What is the capital of Japan?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 197
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "What is the capital of Japan?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 193
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 224
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 220
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 221
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 206
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 221
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 248
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 254
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 217
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 220
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 220
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Thank you.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 204
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Thank you.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 205
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Thank you.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 197
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Thank you.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 186
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Thank you.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 177
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Okay.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 177
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Okay.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 171
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Okay.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 171
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Okay.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 176
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Okay.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 181
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "No.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 178
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "No.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "Nails"
+   ],
+   "wer": 1.0,
+   "empty": false,
+   "ms": 178
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "No.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "No, no."
+   ],
+   "wer": 1.0,
+   "empty": false,
+   "ms": 184
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "No.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 171
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "No.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 172
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Yes, please tell me more.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 207
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Yes, please tell me more.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 209
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Yes, please tell me more.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 219
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Yes, please tell me more.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 221
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Yes, please tell me more.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 229
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "clean",
+   "segments": 2,
+   "texts": [
+    "I would like to know",
+    "What the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 412
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "noise_10db",
+   "segments": 2,
+   "texts": [
+    "I would like to know",
+    "What the weather will be like tomorrow"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 397
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "quiet",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "what the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 406
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "laptop_mic",
+   "segments": 2,
+   "texts": [
+    "I would like to know",
+    "what the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 394
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "fast",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "What the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 387
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "clean",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "How Rain Forms in the Clouds"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 394
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "noise_10db",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "How Rain Forms in the Clouds"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 401
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "quiet",
+   "segments": 2,
+   "texts": [
+    "Could you explain",
+    "How Rain Forms in the Clouds"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 396
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "laptop_mic",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "how rain forms in the clouds."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 435
+  },
+  {
+   "voice": "hf_alpha",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "fast",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "How Rain Forms in the Clouds"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 382
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "What is the capital of Japan?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 195
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "What is the capital of Japan?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 199
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "What is the capital of Japan?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 204
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "What is the capital of Japan?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 206
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "What is the capital of Japan?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 216
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 222
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 220
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 220
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 219
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 212
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 222
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 205
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 212
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 208
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 202
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Thank you.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 175
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Thank you.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 180
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Thank you.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 178
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Thank you.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 171
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Thank you.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 174
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Okay.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 179
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Okay.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 170
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Okay.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 174
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Okay.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 172
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Okay.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "Okay?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 178
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "No.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 167
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "No.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 170
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "No.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 170
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "No.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 171
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "No.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 170
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Yes, please tell me more.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "Yes please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 189
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Yes, please tell me more.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "Yes please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 189
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Yes, please tell me more.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "Yes please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 204
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Yes, please tell me more.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 203
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Yes, please tell me more.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "Yes please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 191
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "clean",
+   "segments": 2,
+   "texts": [
+    "I would like to know...",
+    "What the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 406
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "noise_10db",
+   "segments": 2,
+   "texts": [
+    "I would like to know...",
+    "What the weather will be like tomorrow?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 401
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "quiet",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "What the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 404
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "laptop_mic",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "What the weather will be like tomorrow?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 419
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "fast",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "What the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 397
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "clean",
+   "segments": 2,
+   "texts": [
+    "Could you explain it?",
+    "How rain forms in the clouds."
+   ],
+   "wer": 0.111,
+   "empty": false,
+   "ms": 433
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "noise_10db",
+   "segments": 2,
+   "texts": [
+    "Could you explain that?",
+    "How rain forms in the clouds"
+   ],
+   "wer": 0.111,
+   "empty": false,
+   "ms": 392
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "quiet",
+   "segments": 2,
+   "texts": [
+    "Could you explain it?",
+    "How rain forms in the clouds."
+   ],
+   "wer": 0.111,
+   "empty": false,
+   "ms": 389
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "laptop_mic",
+   "segments": 2,
+   "texts": [
+    "Could you explain it?",
+    "How rain forms in the clouds."
+   ],
+   "wer": 0.111,
+   "empty": false,
+   "ms": 392
+  },
+  {
+   "voice": "jf_alpha",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "fast",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "How rain forms in the clouds."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 369
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "What is the capital of Japan?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 199
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "What is the capital of Japan?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 203
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "What is the capital of Japan?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 205
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "What is the capital of Japan?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 201
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "What is the capital of Japan?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 201
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 217
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 221
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 225
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 217
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 229
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 224
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 203
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 208
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 206
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 205
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Thank you.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 177
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Thank you.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 192
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Thank you.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 176
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Thank you.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 179
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Thank you.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 183
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Okay.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 178
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Okay.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 173
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Okay.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 170
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Okay.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 171
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Okay.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 175
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "No.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 174
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "No.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "Note,"
+   ],
+   "wer": 1.0,
+   "empty": false,
+   "ms": 177
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "No.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 169
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "No.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "Note."
+   ],
+   "wer": 1.0,
+   "empty": false,
+   "ms": 173
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "No.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "Nose."
+   ],
+   "wer": 1.0,
+   "empty": false,
+   "ms": 177
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Yes, please tell me more.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 198
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Yes, please tell me more.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 196
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Yes, please tell me more.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 197
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Yes, please tell me more.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 205
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Yes, please tell me more.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 201
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "clean",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "What the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 409
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "noise_10db",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "what the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 387
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "quiet",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "the weather will be like tomorrow."
+   ],
+   "wer": 0.083,
+   "empty": false,
+   "ms": 386
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "laptop_mic",
+   "segments": 2,
+   "texts": [
+    "I would like to know",
+    "what the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 431
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "fast",
+   "segments": 2,
+   "texts": [
+    "I would like to know.",
+    "What the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 382
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "clean",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "How Rain Forms in the Clouds"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 383
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "noise_10db",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "how rain forms in the clouds,"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 385
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "quiet",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "How rain forms in the clouds"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 375
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "laptop_mic",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "how rain forms in the clouds."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 386
+  },
+  {
+   "voice": "ef_dora",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "fast",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "How rain forms in the clouds."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 373
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "What is the capital of Japan?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 201
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "What is the capital of Japan?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 215
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "What is the capital of Japan?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 198
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "What is the capital of Japan?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 203
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "What is the capital of Japan?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "What is the capital of Japan?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 197
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 219
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 235
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 213
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 217
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Can you recommend a good book for the weekend?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "Can you recommend a good book for the weekend?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 217
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 208
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 213
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 208
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 209
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "How many hearts does an octopus have?",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "How many hearts does an octopus have?"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 197
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Thank you.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "3. You"
+   ],
+   "wer": 0.5,
+   "empty": false,
+   "ms": 177
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Thank you.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "3-1-5"
+   ],
+   "wer": 1.5,
+   "empty": false,
+   "ms": 192
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Thank you.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 196
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Thank you.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "315"
+   ],
+   "wer": 1.0,
+   "empty": false,
+   "ms": 175
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Thank you.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 175
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Okay.",
+   "condition": "clean",
+   "segments": 0,
+   "texts": [],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 17
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Okay.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 171
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Okay.",
+   "condition": "quiet",
+   "segments": 0,
+   "texts": [],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 17
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Okay.",
+   "condition": "laptop_mic",
+   "segments": 0,
+   "texts": [],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 20
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Okay.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    ""
+   ],
+   "wer": 1.0,
+   "empty": true,
+   "ms": 170
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "No.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 172
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "No.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "No!"
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 175
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "No.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 182
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "No.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 174
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "No.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "No."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 172
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Yes, please tell me more.",
+   "condition": "clean",
+   "segments": 1,
+   "texts": [
+    "Yes please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 205
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Yes, please tell me more.",
+   "condition": "noise_10db",
+   "segments": 1,
+   "texts": [
+    "Yes, please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 193
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Yes, please tell me more.",
+   "condition": "quiet",
+   "segments": 1,
+   "texts": [
+    "Yes please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 192
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Yes, please tell me more.",
+   "condition": "laptop_mic",
+   "segments": 1,
+   "texts": [
+    "Yes please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 189
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Yes, please tell me more.",
+   "condition": "fast",
+   "segments": 1,
+   "texts": [
+    "Yes please tell me more."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 190
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "clean",
+   "segments": 2,
+   "texts": [
+    "I would like to know",
+    "What the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 387
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "noise_10db",
+   "segments": 2,
+   "texts": [
+    "I would like to know...",
+    "What the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 402
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "quiet",
+   "segments": 2,
+   "texts": [
+    "I would like to know",
+    "what the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 389
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "laptop_mic",
+   "segments": 2,
+   "texts": [
+    "I would like to know",
+    "what the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 387
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "I would like to know | what the weather will be like tomorrow.",
+   "condition": "fast",
+   "segments": 2,
+   "texts": [
+    "I would like to know",
+    "what the weather will be like tomorrow."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 412
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "clean",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "How rain forms in the clouds."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 386
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "noise_10db",
+   "segments": 2,
+   "texts": [
+    "Could you explain it?",
+    "how rain forms in the clouds,"
+   ],
+   "wer": 0.111,
+   "empty": false,
+   "ms": 392
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "quiet",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "How rain forms in the clouds."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 386
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "laptop_mic",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "how rain forms in the clouds."
+   ],
+   "wer": 0.0,
+   "empty": false,
+   "ms": 389
+  },
+  {
+   "voice": "zf_xiaobei",
+   "sentence": "Could you explain | how rain forms in the clouds?",
+   "condition": "fast",
+   "segments": 2,
+   "texts": [
+    "Could you explain?",
+    "How rain formed in the clouds."
+   ],
+   "wer": 0.111,
+   "empty": false,
+   "ms": 384
+  }
+ ]
+}

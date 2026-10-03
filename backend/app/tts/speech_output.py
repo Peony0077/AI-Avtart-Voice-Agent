@@ -13,7 +13,11 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from app.behavior.speech_text import normalize_for_speech
 from app.transport.protocol import KIND_AUDIO, pack
+from app.tts.base import pause_after, trim_silence
+
+AHEAD_MS = 2500.0   # with the avatar: synthesise the next sentence when less audio than this is still queued
 
 
 @dataclass
@@ -58,6 +62,10 @@ class SpeechOutput:
             clause = await self.queue.get()
             if clause is None or self.turn.is_cancelled:
                 break
+            if seq and self.avatar_sink is not None:
+                await self._pace()
+                if self.turn.is_cancelled:
+                    break
             if hasattr(self.tts, "stream"):
                 seq = await self._stream_clause(clause, seq)
                 continue
@@ -66,7 +74,9 @@ class SpeechOutput:
                 if self.turn.is_cancelled:
                     break
                 t_lock = time.perf_counter()
-                result = await asyncio.to_thread(self.tts.synthesize, clause)
+                result = await asyncio.to_thread(self.tts.synthesize, normalize_for_speech(clause))
+            # the engine's ~0.3 s + ~0.5 s padding made ~0.8 s gaps between sentences: natural pause instead
+            result = trim_silence(result, pause_after(clause))
             if seq == 0:
                 self.first_timing = {"lock_wait_ms": round((t_lock - t_req) * 1000, 1),
                                      "thread_ms": round((time.perf_counter() - t_lock) * 1000, 1),
@@ -96,6 +106,19 @@ class SpeechOutput:
                               "segments": seq}, tid)
         self.finished.set()
 
+    async def _pace(self) -> None:
+        """With the avatar: synthesise the next sentence just in time (AHEAD_MS of audio queued ahead
+        of what the listener hears). Synthesising all sentences at once competed with the lip-sync
+        renderer for the GPU at the start of a reply (MuseTalk 45 -> 106-177 ms per frame, ~10 % of the
+        frames skipped); the earlier per-sentence avatar wait avoided that but made gaps in the speech."""
+        last, since = self.turn.played_ms, time.perf_counter()
+        while not self.turn.is_cancelled and self.total_ms - self.turn.played_ms > AHEAD_MS:
+            if self.turn.played_ms != last:
+                last, since = self.turn.played_ms, time.perf_counter()
+            elif time.perf_counter() - since > 3.0:      # no playback reports: do not hold the speech back
+                return
+            await asyncio.sleep(0.05)
+
     async def _emit(self, seq: int, pcm: np.ndarray) -> None:
         tid = self.turn.turn_id
         if self.avatar_sink is not None:
@@ -116,7 +139,7 @@ class SpeechOutput:
 
         def produce() -> None:
             try:
-                for chunk in self.tts.stream(clause):
+                for chunk in self.tts.stream(normalize_for_speech(clause)):
                     loop.call_soon_threadsafe(queue.put_nowait, chunk)
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)

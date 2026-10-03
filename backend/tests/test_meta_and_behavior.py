@@ -79,3 +79,20 @@ def test_memory_window_and_knowledge_placement():
 def test_binary_header_roundtrip():
     header, payload = unpack(pack(KIND_AUDIO, 7, 3, 1234, b"abc"))
     assert (header.kind, header.turn_id, header.seq, header.pts_ms, payload) == (KIND_AUDIO, 7, 3, 1234, b"abc")
+
+
+def test_tags_repeated_mid_reply_are_never_spoken():
+    # found in testing: longer replies repeated the tag before each sentence; it was displayed and read aloud
+    text = ("[friendly|small_nod|0.4]Octopuses have three hearts.  \n[friendly|headtilt|0.5]They change color. "
+            "[neutral|none|0.3]They are smart, see [1] and [the docs].")
+    for step in (1, 2, 5, 13, len(text)):
+        p = MetaStreamParser()
+        out = "".join(p.feed(text[i:i + step])[1] for i in range(0, len(text), step)) + p.flush()
+        assert out == "Octopuses have three hearts.  \nThey change color. They are smart, see [1] and [the docs]."
+        assert p.meta["gesture"] == "small_nod" and p.later_tags == 2
+
+
+def test_unclosed_bracket_at_the_end_is_still_spoken():
+    p = MetaStreamParser()
+    out = p.feed("[friendly|none|0.4]The ratio is [3")[1] + p.flush()
+    assert out == "The ratio is [3"

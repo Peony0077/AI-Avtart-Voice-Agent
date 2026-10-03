@@ -5,8 +5,10 @@
 //   {type:'flush'}                                 drop everything immediately (barge-in)
 // Messages out:
 //   {type:'started', turnId}                       first sample of a turn reached the output
-//   {type:'progress', turnId, playedMs}            every ~100 ms while playing
-//   {type:'ended', turnId, playedMs}               all audio of an ended turn has been played
+//   {type:'progress', turnId, playedMs, gapMs}     every ~100 ms while playing
+//   {type:'ended', turnId, playedMs, gapMs}        all audio of an ended turn has been played
+// gapMs: time the player ran dry in the middle of a turn (started, more audio still to come) =
+// audible gaps in the reply.
 //   {type:'flushed'}
 const CAPACITY = 24000 * 180 // 3 minutes
 
@@ -19,6 +21,7 @@ class PcmPlayer extends AudioWorkletProcessor {
     this.size = 0
     this.turnId = 0          // turn whose audio is at the read head
     this.played = 0          // samples played for turnId
+    this.gap = 0             // samples of silence while waiting for more audio of turnId
     this.endedTurns = new Set()
     this.startedTurns = new Set()
     this.sinceReport = 0
@@ -32,6 +35,7 @@ class PcmPlayer extends AudioWorkletProcessor {
         this.read = this.write = this.size = 0
         this.turnId = msg.turnId
         this.played = 0
+        this.gap = 0
       }
       const s = msg.samples
       const n = Math.min(s.length, CAPACITY - this.size)
@@ -46,6 +50,7 @@ class PcmPlayer extends AudioWorkletProcessor {
       this.read = this.write = this.size = 0
       this.turnId = 0
       this.played = 0
+      this.gap = 0
       this.port.postMessage({ type: 'flushed' })
     }
   }
@@ -61,6 +66,9 @@ class PcmPlayer extends AudioWorkletProcessor {
     for (let i = take; i < n; i++) out[i] = 0
     for (let c = 1; c < outputs[0].length; c++) outputs[0][c].set(out)
     this.size -= take
+    if (take < n && this.turnId && this.startedTurns.has(this.turnId) && !this.endedTurns.has(this.turnId)) {
+      this.gap += n - take                     // ran dry mid-reply: the listener hears a gap
+    }
 
     if (take > 0) {
       if (!this.startedTurns.has(this.turnId)) {
@@ -72,12 +80,12 @@ class PcmPlayer extends AudioWorkletProcessor {
       this.sinceReport += take
       if (this.sinceReport >= 2400) {
         this.sinceReport = 0
-        this.port.postMessage({ type: 'progress', turnId: this.turnId, playedMs: (this.played / sampleRate) * 1000 })
+        this.port.postMessage({ type: 'progress', turnId: this.turnId, playedMs: (this.played / sampleRate) * 1000, gapMs: (this.gap / sampleRate) * 1000 })
       }
     }
     if (this.size === 0 && this.turnId && this.endedTurns.has(this.turnId)) {
       this.endedTurns.delete(this.turnId)
-      this.port.postMessage({ type: 'ended', turnId: this.turnId, playedMs: (this.played / sampleRate) * 1000 })
+      this.port.postMessage({ type: 'ended', turnId: this.turnId, playedMs: (this.played / sampleRate) * 1000, gapMs: (this.gap / sampleRate) * 1000 })
     }
     return true
   }

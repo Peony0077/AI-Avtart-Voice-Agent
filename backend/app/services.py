@@ -146,10 +146,15 @@ class Services:
     # ---- avatar hooks; no-ops when no avatar worker is connected ----
     def avatar_sink_for(self, session, turn):
         async def sink(turn_id: int, seq: int, pcm, pts_ms: int) -> None:
+            if seq != 1:
+                # Later clauses play after the audio already queued in the browser; holding them until
+                # their first frame existed made gaps of up to 1.5 s between sentences (seen in user
+                # testing). Their frames carry pts and are drawn by the audio clock (late ones skipped).
+                self.avatar.send_audio(turn_id, seq, pcm, pts_ms)
+                return
             ms = await self.avatar.speak(turn_id, seq, pcm, pts_ms)
-            if seq == 1:
-                turn.mark("avatar_first_frame")
-                turn.avatar_first_ms = ms
+            turn.mark("avatar_first_frame")
+            turn.avatar_first_ms = ms
         return sink
 
     async def avatar_cancel(self, turn_id: int) -> None:

@@ -9,6 +9,8 @@ export function useConversation() {
   const [messages, setMessages] = useState([]) // {turnId, role, text, interrupted, source}
   const [behavior, setBehavior] = useState(null)
   const [metrics, setMetrics] = useState([])
+  const [notice, setNotice] = useState(null)
+  const noticeTimer = useRef(0)
   const [session, setSession] = useState(null)
   const handlersRef = useRef({ binary: [], json: [] })
 
@@ -46,6 +48,11 @@ export function useConversation() {
           upsertAssistant(msg.turn_id, (m) => ({ ...m, text: m.text + msg.text }))
           break
         case 'assistant_done':
+          if (msg.continued) {
+            // the user only paused: the next message repeats this part together with the rest
+            setMessages((prev) => prev.filter((m) => m.turnId !== msg.turn_id))
+            break
+          }
           upsertAssistant(msg.turn_id, (m) => ({ ...m, text: msg.interrupted ? msg.text : m.text, interrupted: msg.interrupted, done: true }))
           break
         case 'citations':
@@ -53,6 +60,14 @@ export function useConversation() {
           break
         case 'behavior':
           setBehavior(msg)
+          break
+        case 'transcript':
+          // speech was heard but nothing usable came out (noise, a cough, or too unclear)
+          if (msg.final && !msg.text && (msg.duration_ms ?? 0) >= 500) {
+            setNotice("Sorry, I didn't catch that. Please say it again.")
+            clearTimeout(noticeTimer.current)
+            noticeTimer.current = setTimeout(() => setNotice(null), 4000)
+          }
           break
         case 'metrics':
           setMetrics((prev) => [...prev.slice(-19), msg])
@@ -76,5 +91,5 @@ export function useConversation() {
     return () => { handlersRef.current.binary = handlersRef.current.binary.filter((x) => x !== h) }
   }, [])
 
-  return { connRef, status, state, messages, behavior, metrics, session, sendText, interrupt, onJson, onBinary }
+  return { connRef, status, state, messages, behavior, metrics, session, notice, sendText, interrupt, onJson, onBinary }
 }

@@ -10,6 +10,10 @@ import re
 
 _SENTENCE_END = re.compile(r"[.!?]+[\"')\]]*(\s+|$)")
 _SOFT_BREAK = re.compile(r"[,;:]\s+")
+# a period after these is not a sentence end ("Dr. Lee", "e.g. apples"): splitting there made a
+# one-word clause with its own pauses (measured: "Dr." alone was a 1.45 s clip)
+_ABBREVIATION = re.compile(r"(?:\b(?:mr|mrs|ms|dr|prof|sr|jr|st|mt|vs|etc|approx|dept|inc|ltd|co|fig|vol)"
+                           r"|\b(?:e\.g|i\.e|a\.m|p\.m|u\.s|u\.k)|(?:^|\s)(?-i:[A-HJ-Z]))\.$", re.I)   # initials, not "I."
 
 
 class ClauseChunker:
@@ -38,11 +42,14 @@ class ClauseChunker:
 
     def _take(self) -> str | None:
         buf = self._buf
-        match = _SENTENCE_END.search(buf)
         # require at least one more char after the punctuation unless the buffer ends there,
-        # so "3.5" or "Dr." mid-stream is less likely to split (the regex needs whitespace/end)
-        if match and match.end() < len(buf) or (match and buf.endswith(("\n",))):
-            return self._cut(match.end())
+        # so "3.5" mid-stream is less likely to split (the regex needs whitespace/end)
+        for match in _SENTENCE_END.finditer(buf):
+            if buf[match.start()] == "." and _ABBREVIATION.search(buf[:match.start() + 1]):
+                continue
+            if match.end() < len(buf) or buf.endswith("\n"):
+                return self._cut(match.end())
+            break
         if self._emitted == 0:
             soft = None
             for m in _SOFT_BREAK.finditer(buf):

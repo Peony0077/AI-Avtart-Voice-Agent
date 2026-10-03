@@ -42,6 +42,11 @@ SCRIPTS = {
         ("silence", 1.5), ("say", "I was thinking about"), ("silence", 0.8), ("say", "buying a new bicycle."),
         ("silence", 12.0),
     ],
+    # a 1 s pause in the middle of a question (found in user testing: each half became its own turn)
+    "mic_pause_unfinished": [("silence", 1.5), ("say", "I would like to know"), ("silence", 1.0),
+                             ("say", "what the weather will be like tomorrow."), ("silence", 14.0)],
+    "mic_pause_question": [("silence", 1.5), ("say", "Could you explain?"), ("silence", 1.1),
+                           ("say", "how rain forms in the clouds."), ("silence", 14.0)],
     "mic_soak": [("silence", 1.0), ("say", "Tell me one short interesting fact."), ("silence", 16.0)],
     "mic_rag": [("silence", 1.5), ("say", "What are the opening hours of the Moonlight Bakery on Sundays?"),
                 ("silence", 14.0)],

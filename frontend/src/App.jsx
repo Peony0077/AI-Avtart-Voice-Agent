@@ -59,6 +59,7 @@ export default function App() {
             </button>
           )}
           {voice.error && <span className="error" data-testid="voice-error">{voice.error}</span>}
+          {conv.notice && <span className="muted" data-testid="notice">{conv.notice}</span>}
         </span>
         {conv.behavior && (
           <span className="muted" data-testid="behavior">
