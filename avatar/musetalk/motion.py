@@ -25,10 +25,13 @@ class RigParams:
 
 
 # name -> expression offsets (tuned on the dev portrait; LivePortrait retargeting units)
+# "eye" scales eye openness (blinks stay complete): slightly narrowed eyes read as a real, warm smile.
+# friendly is the avatar's default face (idle, listening, ordinary replies), so it must look warm:
+# the earlier 0.35 smile was not visible next to neutral (logs/expressions_now.jpg vs smile_trials.jpg).
 EXPRESSIONS: dict[str, dict] = {
     "neutral": {"smile": 0.0, "eyebrow": 0.0},
-    "friendly": {"smile": 0.35, "eyebrow": 2.0},
-    "happy": {"smile": 0.85, "eyebrow": 4.0},
+    "friendly": {"smile": 0.6, "eyebrow": 3.0, "eye": 0.92},
+    "happy": {"smile": 1.15, "eyebrow": 5.0, "eye": 0.85},
     "concerned": {"smile": -0.15, "eyebrow": -8.0},
     "thinking": {"smile": 0.0, "eyebrow": 3.0, "gaze": (-7.0, 5.0), "yaw": -1.5, "pitch": -1.0},
 }
@@ -146,7 +149,7 @@ def loop_params(curves: dict, expression: str) -> list[RigParams]:
             pitch=float(curves["pitch"][i] + e.get("pitch", 0.0)),
             yaw=float(curves["yaw"][i] + e.get("yaw", 0.0)),
             roll=float(curves["roll"][i]),
-            eye_open=float(curves["eye_open"][i]),
+            eye_open=float(curves["eye_open"][i] * e.get("eye", 1.0)),
             gaze_x=float(curves["gaze_x"][i] + gx),
             gaze_y=float(curves["gaze_y"][i] + gy),
             smile=e["smile"],

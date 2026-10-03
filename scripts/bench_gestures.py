@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
-from app.behavior.manager import from_meta, refine_gesture  # noqa: E402
+from app.behavior.manager import from_meta, refine_behavior  # noqa: E402
 from app.behavior.meta import MetaStreamParser  # noqa: E402
 from app.behavior.speech_text import clean_delta  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
@@ -61,7 +61,7 @@ async def ask(llm: LLMClient, memory: ConversationMemory, text: str) -> dict:
     reply = "".join(spoken).strip()
     chunker = ClauseChunker()
     first_clause = (chunker.feed(reply) + chunker.flush() + [""])[0]
-    final = refine_gesture(behavior, first_clause) or behavior       # what the avatar plays (session.py)
+    final = refine_behavior(behavior, first_clause) or behavior       # what the avatar plays (session.py)
     return {"tag_ok": parser.meta is not None, "llm_gesture": behavior.gesture, "gesture": final.gesture,
             "emotion": behavior.emotion,
             "intensity": final.intensity, "first_text_ms": round(first_text or 0), "reply": reply}

@@ -466,6 +466,43 @@ first audio p50 1,280 ms (the soak's questions are longer than the benchmark's),
 Hand / upper-body gestures remain out of scope: the portrait is head-and-shoulders and no real-time
 engine that runs on this PC animates a body (see the renderer comparison in Phase 4).
 
+### Warm persona: soft smile by default, a real smile in happy moments
+
+Owner request after testing: "make the avatar warm and sometimes smile according to the case".
+
+![Expressions before (top) and after (bottom)](images/avatar_expressions_warm.jpg)
+
+*Top: before. The "friendly" face (used for idle, listening and most replies) was indistinguishable from
+neutral. Bottom: now. Friendly has a visible soft smile with slightly narrowed "smiling eyes" (smile 0.6,
+eyes 0.92), happy a clear smile (smile 1.15, eyes 0.85); neutral, concerned and thinking are unchanged.*
+
+![Speaking with a smile](images/avatar_smiling.jpg)
+
+*Answering "I just got the job!": smiling face and eyes, lip-synced mouth, a nod.*
+
+- **Faces** (`motion.EXPRESSIONS`): only friendly and happy were re-rendered, with their gesture
+  variants (`build_avatar.py --update friendly,happy`, 7 minutes; head and blink motion are shared, so
+  loop switches stay seamless). The previous avatar is kept in `E:\AI-models\avatars\_backup_dev_girl_20261003`.
+- **Warm by default**: idle, listening and ordinary ("neutral") replies use the soft smile; the plain
+  face is kept for serious answers.
+- **Smiles when the moment is happy** (`behavior/manager.py`): greetings, thanks, good news,
+  congratulations, birthdays, jokes, compliments — read from the user's words (the avatar smiles at
+  once, instead of the thinking look, and keeps smiling while it answers) and from the reply's first
+  words ("Congratulations!", "You're welcome!", "Haha"). An LLM "smile" gesture also shows a smile.
+- **Never next to sad or worrying content**: no smile if the message or the reply mentions loss,
+  illness, failure, worry, stress, …, or if the reply's emotion is empathetic, concerned or serious.
+
+Measured with the real LLM (`scripts/bench_warmth.py`, 15 messages × 2, [phase6_warmth.json](benchmarks/phase6_warmth.json)):
+
+| | before | now |
+|---|---|---|
+| Happy messages (greeting, thanks, good news, joke, compliment): avatar smiles | 31 % | **100 %** |
+| Sad messages (sick pet, failed exam, a death, stress): avatar smiles | 0 % | **0 %** |
+| Plain questions: warm face | 17–33 % | **100 %** |
+
+Browser test (`phase6_typed_speech.spec.js`): good news → smile while answering; "My grandmother passed
+away" → concerned face, no smile; lip sync unchanged (0 late frames in 2 runs, A/V offset p90 42–44 ms).
+
 ### Lip sync when the PC is busy
 
 The first 30-minute avatar soak (morning, quiet desktop) passed with 2.5 % late frames. Later the same
@@ -534,7 +571,7 @@ Found and fixed by these tests:
 - `logs/backend.log` stopped recording as soon as Kokoro loaded, since Phase 2: Kokoro's `__init__`
   calls `logger.remove()`. Kokoro is now imported before logging is configured.
 - Unit tests for both, for the chunk merging (`backend/tests/test_recovery_units.py`), the answer
-  prefetch (`test_prefetch.py`), the VAD `resume` event, the avatar catch-up rule (`test_avatar_catchup.py`), head gestures (`test_avatar_gestures.py`, `test_gesture_from_text.py`) — 92 unit tests in total.
+  prefetch (`test_prefetch.py`), the VAD `resume` event, the avatar catch-up rule (`test_avatar_catchup.py`), head gestures (`test_avatar_gestures.py`, `test_gesture_from_text.py`) and warmth (`test_warmth.py`) — 121 unit tests in total.
 
 ### Observability
 

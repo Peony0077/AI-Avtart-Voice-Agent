@@ -15,7 +15,7 @@ from fastapi import WebSocket
 from loguru import logger
 
 from app.audio.vad import StreamingVAD, VadEvent
-from app.behavior.manager import for_state, from_meta, refine_gesture
+from app.behavior.manager import for_state, from_meta, refine_behavior, smile_for_happy_user, smile_for_user_text
 from app.behavior.meta import MetaStreamParser
 from app.behavior.speech_text import clean_delta
 from app.core.logging import write_metrics
@@ -325,7 +325,7 @@ class Session:
             if first_clause and behavior is not None:
                 # the first words show the reply's stance ("Yes, ..." -> nod, "No, ..." -> shake) better
                 # than the LLM's tag; refined before this clause's audio reaches the avatar
-                refined = refine_gesture(behavior, clause)
+                refined = refine_behavior(behavior, clause)
                 if refined is not None:
                     self._send_behavior(turn, refined)
             first_clause = False
@@ -342,7 +342,7 @@ class Session:
             _meta, text = parser.feed(delta)
             text = clean_delta(text)
             if not behavior_sent and (parser.meta is not None or text):
-                behavior = from_meta(parser.meta)
+                behavior = smile_for_happy_user(from_meta(parser.meta), turn.user_text)
                 self._send_behavior(turn, behavior)
                 behavior_sent = True
             if text:
@@ -500,7 +500,11 @@ class Session:
         self.outbox.json({"type": "state", "state": new.value, "prev": old.value, "event": event.value,
                           "turn_id": self.turns.current_id}, force=True)
         if new in (State.LISTENING, State.THINKING):
-            self._send_behavior(None, for_state(new.value))
+            behavior = for_state(new.value)
+            if new is State.THINKING and self.turns.current is not None:
+                # a greeting, thanks or good news gets a smile right away instead of the thinking look
+                behavior = smile_for_user_text(self.turns.current.user_text) or behavior
+            self._send_behavior(None, behavior)
         if self.svc.avatar_ready:
             self.svc.avatar_state(new.value)
 

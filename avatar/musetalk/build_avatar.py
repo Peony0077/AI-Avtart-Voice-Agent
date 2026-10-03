@@ -9,6 +9,8 @@ Output: E:/AI-models/avatars/<avatar_id>/{avatar.json, preview/*.jpg, loops/<nam
 Usage (avatar venv):
     avatar\\musetalk\\.venv\\Scripts\\python avatar\\musetalk\\build_avatar.py --photo me.jpg --id me
     avatar\\musetalk\\.venv\\Scripts\\python avatar\\musetalk\\build_avatar.py --id me --gestures-only   # add gestures
+    avatar\\musetalk\\.venv\\Scripts\\python avatar\\musetalk\\build_avatar.py --id me --update friendly,happy
+        # re-render some expression loops (after changing motion.EXPRESSIONS) and their gesture variants
 """
 from __future__ import annotations
 
@@ -83,16 +85,20 @@ def main() -> None:
     ap.add_argument("--gestures-only", action="store_true",
                     help="add gesture variants to an existing avatar (keeps its loops and existing variants)")
     ap.add_argument("--force", action="store_true", help="with --gestures-only: re-render existing variants too")
+    ap.add_argument("--update", default="", help="re-render these loops of an existing avatar (and their gestures)")
     args = ap.parse_args()
 
     out = AVATARS / args.id
     meta: dict = {}
-    if args.gestures_only:
+    update = [n.strip() for n in args.update.split(",") if n.strip()]
+    if update or args.gestures_only:
         meta = json.loads((out / "avatar.json").read_text(encoding="utf-8"))
         args.photo = Path(meta["photo"])
         args.fps, args.size = meta["fps"], meta["size"]
         args.seconds = meta["frames_per_loop"] / 2 / meta["fps"]
-        names: list[str] = []
+        names: list[str] = [n for n in update if n in meta["loops"]]
+        if update and not names:
+            ap.error(f"--update: none of {update} is a loop of {args.id} ({meta['loops']})")
     else:
         if args.photo is None:
             ap.error("--photo is required")
@@ -101,7 +107,9 @@ def main() -> None:
     wanted = [g.strip() for g in args.gestures.split(",") if g.strip()]
     gestures = {g: tuple(e for e in GESTURE_VARIANTS[g] if e in available) for g in wanted}
     to_render = gestures
-    if args.gestures_only and not args.force:     # only the variants that do not exist yet
+    if update:                                    # the updated loops' variants (their base frames changed)
+        to_render = {g: tuple(e for e in ex if e in names) for g, ex in gestures.items()}
+    elif args.gestures_only and not args.force:   # only the variants that do not exist yet
         to_render = {g: tuple(e for e in ex if not (out / "loops" / variant_name(e, g) / "delta.pkl").exists())
                      for g, ex in gestures.items()}
 
@@ -131,11 +139,12 @@ def main() -> None:
     timings["prepare_gestures_s"] = round(time.perf_counter() - t1, 1)
 
     n_forward = int(args.seconds * args.fps)
-    if not args.gestures_only:
+    if not (args.gestures_only or update):
         meta = {"id": args.id, "photo": str(args.photo), "fps": args.fps, "size": args.size, "loops": names,
                 "frames_per_loop": 2 * n_forward, "timings": timings}
     else:
-        meta.setdefault("timings", {}).update({f"gestures_{k}": v for k, v in timings.items()})
+        prefix = "update" if update else "gestures"
+        meta.setdefault("timings", {}).update({f"{prefix}_{k}": v for k, v in timings.items()})
     meta["gestures"] = gesture_meta(gestures, n_forward, args.fps)
     meta["built"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     (out / "avatar.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")

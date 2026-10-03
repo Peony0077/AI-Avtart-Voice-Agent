@@ -61,3 +61,33 @@ test('closing the tab while the avatar speaks does not freeze the avatar for the
   expect(idle).toBeGreaterThan(20)                                       // idle video streams (~20 fps)
   await second.close()
 })
+
+// Warm persona: good news gets a smile (while thinking and while speaking); sad news never does.
+test('the avatar smiles at good news and not at sad news', async ({ page }) => {
+  const messages = captureServerMessages(page)
+  await page.goto(appPath())
+  await expect(page.getByTestId('conn-status')).toHaveText('open', { timeout: 30_000 })
+  const session = await waitFor(messages, (m) => m.type === 'session', 10_000)
+  test.skip(!session.avatar_available, 'backend not started with an avatar profile')
+
+  const ask = async (text) => {
+    await expect(page.getByTestId('state')).toHaveText('Listening', { timeout: 60_000 })
+    await page.getByTestId('input').fill(text)
+    await page.getByTestId('send').click()
+    const q = await waitFor(messages, (m) => m.type === 'user_message' && m.text === text, 10_000)
+    return q
+  }
+  const happy = await ask('I just got the job I applied for!')
+  await waitFor(messages, (m) => m.type === 'state' && m.state === 'SPEAKING' && m.turn_id === happy.turn_id, 30_000)
+  await page.waitForTimeout(900)
+  await page.getByTestId('avatar-canvas').screenshot({ path: 'results/avatar_smiling.png' })
+  await waitFor(messages, (m) => m.type === 'assistant_done' && m.turn_id === happy.turn_id, 60_000)
+  const faces = (q) => messages.filter((m) => m.type === 'behavior' && m._t >= q._t && m._t <= (messages.find(
+    (d) => d.type === 'assistant_done' && d.turn_id === q.turn_id)?._t ?? Infinity)).map((m) => m.expression)
+  expect(faces(happy)).toContain('smile')
+
+  const sad = await ask('My grandmother passed away last week.')
+  await waitFor(messages, (m) => m.type === 'assistant_done' && m.turn_id === sad.turn_id, 60_000)
+  expect(faces(sad)).not.toContain('smile')
+  console.log(JSON.stringify({ test: 'warmth', happy_faces: faces(happy), sad_faces: faces(sad) }))
+})

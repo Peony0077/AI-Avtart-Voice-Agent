@@ -41,7 +41,7 @@ HEADER = struct.Struct("<B3xIII")
 KIND_AUDIO, KIND_VIDEO, KIND_IDLE = 1, 2, 3
 CONTEXT_FRAMES = 4   # 200 ms at 20 fps
 PLAYBACK_SILENT_S = 5.0   # speaking turn without a playback report for this long = playback stopped
-STATE_TO_LOOP = {"THINKING": "thinking", "LISTENING": "friendly", "IDLE": "neutral", "END_OF_TURN": "friendly"}
+STATE_TO_LOOP = {"THINKING": "thinking", "LISTENING": "friendly", "IDLE": "friendly", "END_OF_TURN": "friendly"}  # warm idle
 
 
 @dataclass

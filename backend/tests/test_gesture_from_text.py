@@ -1,7 +1,7 @@
 """BehaviorManager: the reply's first words refine the head gesture the LLM's tag suggested."""
 import pytest
 
-from app.behavior.manager import from_meta, gesture_from_text, refine_gesture
+from app.behavior.manager import from_meta, gesture_from_text, refine_behavior
 
 
 @pytest.mark.parametrize("text, gesture", [
@@ -35,9 +35,9 @@ def test_no_gesture_without_a_clear_cue(text):
 
 def test_refine_keeps_the_tag_unless_the_words_say_otherwise():
     llm = from_meta({"emotion": "serious", "gesture": "none", "intensity": 0.3})
-    refined = refine_gesture(llm, "No, it's not safe to look at the sun.")
+    refined = refine_behavior(llm, "No, it's not safe to look at the sun.")
     assert refined.gesture == "shake" and refined.intensity == 0.5 and refined.source == "llm+text"
     assert (refined.emotion, refined.expression) == (llm.emotion, llm.expression)     # only the gesture changes
-    assert refine_gesture(llm, "The capital of Japan is Tokyo.") is None               # no cue: keep the tag
+    assert refine_behavior(llm, "The capital of Japan is Tokyo.") is None               # no cue: keep the tag
     nodding = from_meta({"emotion": "friendly", "gesture": "nod", "intensity": 0.6})
-    assert refine_gesture(nodding, "Yes, definitely.") is None                         # already right
+    assert refine_behavior(nodding, "Yes, definitely.") is None                         # already right
