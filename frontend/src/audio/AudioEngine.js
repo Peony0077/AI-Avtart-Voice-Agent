@@ -19,12 +19,32 @@ export class AudioEngine extends EventTarget {
 
   // Must be called from a user gesture (click) so the AudioContexts may start.
   async start(onMicFrame) {
-    this.playCtx = new AudioContext({ sampleRate: TTS_SAMPLE_RATE, latencyHint: 'interactive' })
-    await this.playCtx.audioWorklet.addModule(playerWorkletUrl)
-    this.player = new AudioWorkletNode(this.playCtx, 'pcm-player', { outputChannelCount: [1] })
-    this.player.connect(this.playCtx.destination)
-    this.player.port.onmessage = (e) => this._onPlayer(e.data)
+    await this.startPlayback()
+    await this.startMic(onMicFrame)
+  }
 
+  // Assistant audio only (typed messages are spoken too). Call from a user gesture: the
+  // AudioContext is created synchronously, before the first await, so the browser lets it run.
+  async startPlayback() {
+    if (this.playCtx) return
+    this.playCtx = new AudioContext({ sampleRate: TTS_SAMPLE_RATE, latencyHint: 'interactive' })
+    const ready = (async () => {
+      await this.playCtx.audioWorklet.addModule(playerWorkletUrl)
+      this.player = new AudioWorkletNode(this.playCtx, 'pcm-player', { outputChannelCount: [1] })
+      this.player.connect(this.playCtx.destination)
+      this.player.port.onmessage = (e) => this._onPlayer(e.data)
+      await this.playCtx.resume()
+    })()
+    this._playbackReady = ready
+    await ready
+  }
+
+  get micOn() {
+    return Boolean(this.stream)
+  }
+
+  async startMic(onMicFrame) {
+    if (this.stream) return
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
     })
@@ -37,18 +57,29 @@ export class AudioEngine extends EventTarget {
       onMicFrame(e.data.pcm)
     }
     source.connect(capture)
-    await Promise.all([this.playCtx.resume(), this.micCtx.resume()])
+    await this.micCtx.resume()
+  }
+
+  async stopMic() {
+    this.stream?.getTracks().forEach((t) => t.stop())
+    await this.micCtx?.close()
+    this.micCtx = this.stream = null
+    this.level = 0
   }
 
   async stop() {
-    this.stream?.getTracks().forEach((t) => t.stop())
-    await Promise.all([this.micCtx?.close(), this.playCtx?.close()].filter(Boolean))
-    this.micCtx = this.playCtx = this.player = this.stream = null
+    await this.stopMic()
+    await this.playCtx?.close()
+    this.playCtx = this.player = null
   }
 
   // PCM16 mono 24 kHz from the server.
   push(turnId, pcm16Buffer) {
-    if (!this.player) return
+    if (!this.player) {
+      // playback still starting (first typed message): queue until the worklet exists
+      this._playbackReady?.then(() => this.push(turnId, pcm16Buffer))
+      return
+    }
     const pcm = new Int16Array(pcm16Buffer)
     const f32 = new Float32Array(pcm.length)
     for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 32768
@@ -56,7 +87,11 @@ export class AudioEngine extends EventTarget {
   }
 
   endTurn(turnId) {
-    this.player?.port.postMessage({ type: 'end', turnId })
+    if (!this.player) {
+      this._playbackReady?.then(() => this.endTurn(turnId))
+      return
+    }
+    this.player.port.postMessage({ type: 'end', turnId })
   }
 
   flush() {

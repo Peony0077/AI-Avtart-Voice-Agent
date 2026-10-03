@@ -156,6 +156,11 @@ class Services:
         if self.avatar_ready:
             self.avatar.send_json({"type": "cancel", "turn_id": turn_id})
 
+    def avatar_reset(self) -> None:
+        """Session closed (e.g. the tab was closed while the avatar spoke): back to the idle stream."""
+        if self.avatar_ready:
+            self.avatar.send_json({"type": "reset"})
+
     def avatar_state(self, state: str) -> None:
         if self.avatar_ready:
             self.avatar.send_json({"type": "state", "state": state})

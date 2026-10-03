@@ -68,7 +68,8 @@ scripts\tunnel.ps1 -Profile avatar -Detach # same, keeps running in the backgrou
 scripts\run.ps1 -Profile avatar -Https     # same network: prints https://<LAN IP>:8000/?token=...
 ```
 
-Open the printed link (it contains a random access token), click **Start voice**, and use headphones.
+Open the printed link (it contains a random access token). Type a message — the avatar answers aloud
+with lip sync (**Mute** for text-only replies) — or click **Start voice** to talk. Use headphones.
 
 ## Make it yours
 

@@ -53,7 +53,9 @@ class Session:
         self.memory = ConversationMemory(persona=self.cfg.persona_name, max_turns=self.cfg.llm.history_turns,
                                          knowledge_enabled=self.cfg.rag.enabled)
         self.outbox = Outbox(ws, self.turns.is_current)
-        self.voice_out = False            # client plays assistant audio
+        self.voice_out = False            # replies are spoken (client plays assistant audio)
+        self.speaker_on = False           # client asked for spoken replies (also for typed messages)
+        self.mic_on = False               # client streams the microphone
         self.vad: StreamingVAD | None = None
         self._stt_task: asyncio.Task | None = None
         self._carry_text = ""             # transcript of an utterance the user continued
@@ -81,6 +83,7 @@ class Session:
         self._closed = True
         if self.turns.current:
             self.turns.current.cancel()
+        self.svc.avatar_reset()
         self._drop_prefetch()
         for task in (self._stt_task, self._summary_task, self._warm_task):
             if task and not task.done():
@@ -93,7 +96,12 @@ class Session:
     async def on_json(self, msg: dict) -> None:
         kind = msg.get("type")
         if kind == "hello":
-            self.voice_out = bool(msg.get("voice_out", False)) and self.svc.voice_ready
+            self.speaker_on = bool(msg.get("voice_out", False))
+            self._update_voice_out()
+        elif kind == "speaker":
+            self.speaker_on = bool(msg.get("enabled"))
+            self._update_voice_out()
+            self.outbox.json({"type": "speaker", "enabled": self.voice_out}, force=True)
         elif kind == "voice":
             await self._set_voice(bool(msg.get("enabled")))
         elif kind == "user_text":
@@ -127,12 +135,18 @@ class Session:
         if enabled and not self.svc.voice_ready:
             self.outbox.json({"type": "error", "message": "voice models are not loaded"}, force=True)
             return
-        self.voice_out = enabled
+        self.mic_on = enabled
+        self._update_voice_out()
         if enabled and self.vad is None:
             self.vad = await asyncio.to_thread(StreamingVAD, self.cfg.vad)
         elif not enabled:
             self.vad = None
         self.outbox.json({"type": "voice", "enabled": enabled}, force=True)
+
+    def _update_voice_out(self) -> None:
+        # Typed messages are spoken too when the client has a speaker on: the avatar's lip sync is
+        # driven by the speech audio, so a text-only reply would leave the avatar silent.
+        self.voice_out = (self.speaker_on or self.mic_on) and self.svc.voice_ready
 
     # ------------------------------------------------------------------ voice input
     async def _on_speech_start(self, ev: VadEvent) -> None:

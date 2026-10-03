@@ -40,6 +40,7 @@ from motion import EXPRESSION_TO_LOOP
 HEADER = struct.Struct("<B3xIII")
 KIND_AUDIO, KIND_VIDEO, KIND_IDLE = 1, 2, 3
 CONTEXT_FRAMES = 4   # 200 ms at 20 fps
+PLAYBACK_SILENT_S = 5.0   # speaking turn without a playback report for this long = playback stopped
 STATE_TO_LOOP = {"THINKING": "thinking", "LISTENING": "friendly", "IDLE": "neutral", "END_OF_TURN": "friendly"}
 
 
@@ -162,8 +163,10 @@ class AvatarWorker:
                 self.turn.played_at = time.perf_counter()
             elif msg.get("event") == "ended":
                 self.turn = None
-        elif kind == "cancel" and self.turn and msg.get("turn_id") == self.turn.turn_id:
-            self.turn.cancelled = True
+        elif (kind == "cancel" and self.turn and msg.get("turn_id") == self.turn.turn_id) or kind == "reset":
+            # reset: the browser session ended (tab closed while the avatar spoke) - back to idle
+            if self.turn is not None:
+                self.turn.cancelled = True
             self.turn = None
             while not self.queue.empty():
                 self.queue.get_nowait()
@@ -235,6 +238,13 @@ class AvatarWorker:
             await asyncio.sleep(max(0.0, next_t - time.perf_counter()))
             if next_t < time.perf_counter() - 1.0:       # fell far behind (e.g. system stall): resync
                 next_t = time.perf_counter()
+            turn = self.turn
+            if turn is not None and turn.playing and time.perf_counter() - turn.played_at > PLAYBACK_SILENT_S:
+                # the browser reports playback every ~100 ms; silence means it stopped without saying
+                # so (connection lost) - never leave the avatar frozen without idle frames
+                logger.warning(f"turn {turn.turn_id}: no playback report for {PLAYBACK_SILENT_S:.0f} s, back to idle")
+                turn.cancelled = True
+                self.turn = None
             if self.turn is None or not self.turn.playing:
                 loop = self.loops[self.idle_loop]
                 if self._fade:

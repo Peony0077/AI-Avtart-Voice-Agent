@@ -516,6 +516,17 @@ Playwright `tests/e2e/phase6_recovery.spec.js` kills processes in the middle of 
 | Wrong access token | rejected (4003), UI shows "access denied (token)"; right token: 4/4 text tests pass |
 | Reconnect / second tab | reconnect with backoff; a new tab takes over (4001) — Phases 1–3 |
 
+Found in the owner's first test over the tunnel, fixed, and covered by `tests/e2e/phase6_typed_speech.spec.js`:
+- **The avatar did not speak typed messages.** Audio output only started with *Start voice* (together
+  with the microphone), so typed messages got text-only replies and the avatar's lips, which follow the
+  speech audio, never moved. Now the Send click starts audio output (it is the user gesture browsers
+  require), typed replies are spoken and lip-synced, *Start voice* only adds the microphone, and a
+  *Mute* button gives text-only replies (`speaker` message; the server speaks a turn if the speaker
+  or the microphone is on).
+- **Closing the tab while the avatar spoke froze the avatar for the next visitor** (no idle video):
+  the worker waited for a "playback ended" that never came. The backend now resets the worker when a
+  session closes, and the worker treats a speaking turn without a playback report for 5 s as ended.
+
 Found and fixed by these tests:
 - A turn that hit the LLM while it was restarting failed immediately. The client now waits for the
   supervisor's restart (connection refused, or HTTP 503 while the model loads) and retries once — only

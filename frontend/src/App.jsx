@@ -29,6 +29,7 @@ export default function App() {
     e.preventDefault()
     const text = draft.trim()
     if (!text) return
+    voice.ensureSpeaker()        // typed messages are spoken (and lip-synced) too; needs this user gesture
     conv.sendText(text)
     setDraft('')
   }
@@ -50,6 +51,12 @@ export default function App() {
             <span className={`mic ${voice.speechDetected ? 'hot' : ''}`} data-testid="mic" title="microphone level">
               <span className="mic-bar" style={{ width: `${Math.min(100, voice.level * 400)}%` }} />
             </span>
+          )}
+          {voice.speaker && (
+            <button type="button" className="secondary" data-testid="speaker-toggle" onClick={voice.toggleMute}
+              title={voice.muted ? 'Replies are text only' : 'Replies are spoken'}>
+              {voice.muted ? 'Unmute' : 'Mute'}
+            </button>
           )}
           {voice.error && <span className="error" data-testid="voice-error">{voice.error}</span>}
         </span>
