@@ -1,0 +1,26 @@
+{
+  "engine": "LiteAvatar (HumanAIGC/lite-avatar @5b7ec85, sample gallery avatar)",
+  "device": "CPU (i5-12400, 6 cores / 12 threads)",
+  "torch": "2.9.1+cpu",
+  "load_s": 6.9,
+  "audio_s": 10.5,
+  "audio_to_params_ms": 1195,
+  "audio_to_params_rtf": 0.114,
+  "frames": 315,
+  "fps_native": 30,
+  "frame_ms_p50_all_threads": 57.3,
+  "fps_all_threads": 17.4,
+  "frame_ms_p50_one_thread": 126.4,
+  "fps_one_thread": 7.9,
+  "parallel_workers": 4,
+  "fps_parallel_workers": 20.4,
+  "first_frame_after_2s_clause_ms": 443,
+  "output_resolution": [
+    890,
+    1920
+  ],
+  "rss_mib": 3137,
+  "rss_added_mib": 2814,
+  "vram_mib": 0,
+  "sample_frame": "logs/liteavatar_frame.jpg"
+}

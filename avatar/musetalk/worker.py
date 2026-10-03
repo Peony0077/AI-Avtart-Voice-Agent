@@ -33,7 +33,8 @@ from loguru import logger
 
 from catchup import audible_ms, first_on_time
 from common import AVATARS
-from engine import Loop, MuseTalkEngine
+from engine import Loop, LoopDelta, MuseTalkEngine
+from gestures import choose_gesture, cycle_windows, earliest_start, next_window
 from motion import EXPRESSION_TO_LOOP
 
 HEADER = struct.Struct("<B3xIII")
@@ -68,6 +69,19 @@ class AvatarWorker:
         meta = json.loads((folder / "avatar.json").read_text(encoding="utf-8"))
         self.fps = meta["fps"]
         self.loops = {name: Loop.load(folder / "loops" / name) for name in meta["loops"]}
+        # head gestures: variants of the expression loops that differ only inside gesture windows
+        n_forward = len(next(iter(self.loops.values()))) // 2
+        self.cycle = 2 * n_forward
+        self.variants: dict[tuple[str, str], Loop] = {}
+        self.gesture_windows: dict[str, list[tuple[int, int]]] = {}
+        for gesture, gm in meta.get("gestures", {}).items():
+            for expression in gm["expressions"]:
+                vdir = folder / "loops" / f"{expression}__{gesture}"
+                if expression in self.loops and (vdir / "delta.pkl").exists():
+                    self.variants[(expression, gesture)] = self.loops[expression].with_delta(LoopDelta.load(vdir))
+            self.gesture_windows[gesture] = cycle_windows([tuple(w) for w in gm["windows"]], n_forward)
+        self._gesture: tuple[str, int, int] | None = None      # (gesture, first frame, end frame), absolute
+        self._reply_gesture: tuple[str, float] | None = None   # requested by the LLM for the next reply
         self.engine = MuseTalkEngine(fps=self.fps, batch_size=batch)
         self.warmup_s = self.engine.warmup(next(iter(self.loops.values())))
         self.quality = quality
@@ -85,9 +99,10 @@ class AvatarWorker:
         self.turn: Turn | None = None
         self.queue: asyncio.Queue = asyncio.Queue()
         self.ws = None
-        self.stats = {"segments": 0, "frames": 0, "render_ms": 0.0, "late_first_frames": 0, "skipped": 0}
+        self.stats = {"segments": 0, "frames": 0, "render_ms": 0.0, "late_first_frames": 0, "skipped": 0,
+                      "gestures": {}}
         logger.info(f"avatar {avatar_id}: {len(self.loops)} loops x {len(self.idle_loop and self.loops[self.idle_loop])} frames, "
-                    f"fps {self.fps}, warmup {self.warmup_s}s")
+                    f"fps {self.fps}, warmup {self.warmup_s}s, {len(self.variants)} gesture variants")
 
     # ------------------------------------------------------------------ protocol
     async def handle(self, ws) -> None:
@@ -97,7 +112,8 @@ class AvatarWorker:
         self.ws = ws
         await ws.send(json.dumps({"type": "hello", "fps": self.fps, "loops": list(self.loops),
                                   "frames": len(self.loops[self.idle_loop]), "size": self.loops[self.idle_loop].size,
-                                  "load_s": self.engine.load_s, "warmup_s": self.warmup_s}))
+                                  "load_s": self.engine.load_s, "warmup_s": self.warmup_s,
+                                  "gestures": sorted({g for _, g in self.variants})}))
         tasks = [asyncio.create_task(self._idle()), asyncio.create_task(self._render())]
         try:
             async for msg in ws:
@@ -122,6 +138,13 @@ class AvatarWorker:
             if loop in self.loops:
                 self.speech_loop = loop
                 self._switch_idle(loop)
+            gesture, intensity = msg.get("gesture"), float(msg.get("intensity") or 0.0)
+            if str(msg.get("source", "")).startswith("state"):
+                # e.g. a small nod when the avatar starts listening: at most one every ~5 s
+                if self.turn is None or not self.turn.playing:
+                    self._schedule_gesture(gesture, intensity, self.idx + 2, self.idle_loop, min_gap=5 * self.fps)
+            else:
+                self._reply_gesture = (gesture, intensity)          # played at the start of the reply
         elif kind == "state":
             if msg.get("state") == "THINKING":
                 # the first clause arrives a few hundred ms later; a GPU that sat idle is measurably
@@ -153,6 +176,10 @@ class AvatarWorker:
                 return  # stale
             self.turn = Turn(turn_id, base_idx=self.idx + self.lead_frames, loop=self.speech_loop)
             logger.info(f"turn {turn_id}: speaking with loop '{self.speech_loop}' from frame {self.turn.base_idx}")
+            if self._reply_gesture is not None:
+                gesture, intensity = self._reply_gesture
+                self._reply_gesture = None
+                self._schedule_gesture(gesture, intensity, self.turn.base_idx, self.turn.loop)
         self.queue.put_nowait((self.turn, seq, pts, pcm))
 
     async def _warm_burst(self, ms: float = 150.0) -> None:
@@ -167,6 +194,32 @@ class AvatarWorker:
                 await asyncio.to_thread(self.engine.faces, loop, chunks, 0)
         finally:
             self._warming = False
+
+    def _schedule_gesture(self, name: str | None, intensity: float, after: int, loop_name: str,
+                          min_gap: int = 0) -> None:
+        """Play ``name`` in the next gesture window starting at or after frame ``after``."""
+        available = {g for e, g in self.variants if e == loop_name}
+        chosen = choose_gesture(name, intensity, available)
+        if chosen is None or chosen not in self.gesture_windows:
+            return
+        after = earliest_start(self._gesture, self.idx, after, state_default=min_gap > 0, min_gap=min_gap)
+        if after is None:
+            return
+        start, end = next_window(after, self.gesture_windows[chosen], self.cycle)
+        self._gesture = (chosen, start, end)
+        self.stats["gestures"][chosen] = self.stats["gestures"].get(chosen, 0) + 1
+        logger.info(f"gesture {chosen} (requested {name}, intensity {intensity}) at frames {start}-{end}")
+        asyncio.get_running_loop().create_task(self._send_json(
+            {"type": "gesture", "name": chosen, "requested": name, "in_ms": round((start - self.idx) * 1000 / self.fps)}))
+
+    def _source(self, loop_name: str, i: int) -> Loop:
+        """The loop that provides frame ``i``: the gesture variant inside a scheduled gesture window."""
+        g = self._gesture
+        if g is not None and g[1] <= i < g[2]:
+            variant = self.variants.get((loop_name, g[0]))
+            if variant is not None:
+                return variant
+        return self.loops[loop_name]
 
     def _switch_idle(self, loop: str) -> None:
         if loop != self.idle_loop:
@@ -191,7 +244,8 @@ class AvatarWorker:
                     jpg = cv2.imencode(".jpg", blend, [cv2.IMWRITE_JPEG_QUALITY, self.quality])[1].tobytes()
                     self._fade = (prev, left - 1) if left > 1 else None
                 else:
-                    jpg = loop.frames_jpg[self.idx % len(loop)]
+                    src = self._source(self.idle_loop, self.idx)
+                    jpg = src.frames_jpg[self.idx % len(src)]
                 await self._send(HEADER.pack(KIND_IDLE, 0, self.idx, 0) + jpg)
             self.idx += 1
 
@@ -267,11 +321,12 @@ class AvatarWorker:
                     if s >= e:
                         continue
             t_gpu = time.perf_counter()
-            idx, faces = await asyncio.to_thread(self.engine.faces, loop, chunks[s:e], base + s)
+            srcs = [self._source(turn.loop, base + k) for k in range(s, e)]
+            idx, faces = await asyncio.to_thread(self.engine.faces, loop, chunks[s:e], base + s, srcs)
             self._frame_ms = 0.8 * self._frame_ms + 0.2 * (time.perf_counter() - t_gpu) * 1000 / (e - s)
             if pending is not None:
                 await pending
-            pending = asyncio.create_task(self._compose_and_send(turn, seq, pts, loop, idx, faces, s, t0, gate))
+            pending = asyncio.create_task(self._compose_and_send(turn, seq, pts, srcs, idx, faces, s, t0, gate))
         if pending is not None:
             await pending
         if seq not in turn.first_frame_sent:
@@ -287,12 +342,12 @@ class AvatarWorker:
                                "vram_reserved_mib": round(torch.cuda.memory_reserved() / 2**20),
                                "fps": round(n / (ms / 1000), 1) if ms else None})
 
-    async def _compose_and_send(self, turn: Turn, seq: int, pts: int, loop: Loop, idx: list[int],
+    async def _compose_and_send(self, turn: Turn, seq: int, pts: int, srcs: list[Loop], idx: list[int],
                                 faces: np.ndarray, first: int, t0: float, gate: int) -> None:
         """CPU stage. Each frame goes out as soon as it is composited: waiting for the whole batch of 8
         (~80 ms) made the first frames of every batch the ones most likely to arrive late."""
         for k, (i, face) in enumerate(zip(idx, faces, strict=True)):
-            jpg = await asyncio.to_thread(self._compose_one, loop, i, face)
+            jpg = await asyncio.to_thread(self._compose_one, srcs[k], i, face)
             if turn.cancelled:
                 return
             frame_pts = pts + round((first + k) * 1000 / self.fps)

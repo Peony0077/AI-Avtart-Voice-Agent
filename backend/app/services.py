@@ -163,7 +163,8 @@ class Services:
     def avatar_behavior(self, behavior: dict) -> None:
         if self.avatar_ready:
             self.avatar.send_json({"type": "behavior", "expression": behavior.get("expression"),
-                                   "emotion": behavior.get("emotion")})
+                                   "emotion": behavior.get("emotion"), "gesture": behavior.get("gesture"),
+                                   "intensity": behavior.get("intensity"), "source": behavior.get("source")})
 
     def avatar_playback(self, turn_id: int, event: str, played_ms: float = 0.0) -> None:
         if self.avatar_ready:

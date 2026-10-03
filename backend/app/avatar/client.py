@@ -39,7 +39,8 @@ class AvatarClient:
         self._watchdog: asyncio.Task | None = None
         self._stopping = False
         self.restarts = 0
-        self.stats = {"frames_in": 0, "idle_in": 0, "first_frame_ms": [], "segment_fps": [], "skipped_frames": 0}
+        self.stats = {"frames_in": 0, "idle_in": 0, "first_frame_ms": [], "segment_fps": [], "skipped_frames": 0,
+                      "gestures": {}}
 
     # ------------------------------------------------------------------ lifecycle
     async def start(self, timeout_s: float = 240.0) -> None:
@@ -127,6 +128,8 @@ class AvatarClient:
                         self.stats["first_frame_ms"] = (self.stats["first_frame_ms"] + [data["ms"]])[-50:]
                     if fut and not fut.done():
                         fut.set_result(data["ms"])
+                elif data.get("type") == "gesture":
+                    self.stats["gestures"][data["name"]] = self.stats["gestures"].get(data["name"], 0) + 1
                 elif data.get("type") == "segment_done":
                     self.stats["skipped_frames"] += data.get("skipped", 0)
                     if data.get("vram_reserved_mib") is not None:

@@ -9,6 +9,7 @@ This is a personal, non-commercial project. Components and their licenses:
 | OpenAvatarChat (HumanAIGC-Engineering) | `avatar/musetalk/face_bbox.py`, ideas in `avatar/musetalk/engine.py` | Apache-2.0 | DWPose-via-ONNX preprocessing and MuseTalk real-time loop design adapted; modified. |
 | MuseTalk (TMElyralab) | `avatar/musetalk/vendor/MuseTalk` (fetched by `setup.ps1`, not committed) | MIT | Pinned at `0a89dec`. |
 | LivePortrait (KlingAIResearch) | `avatar/musetalk/vendor/LivePortrait` (fetched, not committed); `face_rig.py` mirrors its retargeting composition | MIT | Pinned at `9b294b3`. |
+| LiteAvatar (HumanAIGC) — renderer comparison only | `avatar/liteavatar/vendor/lite-avatar` (fetched by `setup.ps1`, not committed; includes FunASR code, MIT) | MIT | Pinned at `5b7ec85`; weights (Paraformer, audio2mouth, sample avatar) from ModelScope LiteAvatarGallery — license not stated [unverified]; used for a local benchmark only. |
 | OpenVoice (MyShell.ai) | `backend/app/tts/openvoice/` (models, modules, attentions, commons, transforms) | MIT | Vendored at `74a1d14`, only imports changed; license text in that folder. `converted_tts.py` re-implements its converter API without librosa/watermarking. |
 
 ## Models (downloaded to `E:\AI-models`, never committed)

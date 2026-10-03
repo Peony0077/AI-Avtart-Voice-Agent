@@ -1,0 +1,33 @@
+{
+  "gpu": "NVIDIA GeForce RTX 3060",
+  "h2d_note": "pageable copies (no pinned buffers)",
+  "rows": [
+    {
+      "model": "whisper-large-v3-turbo (STT)",
+      "load_from_disk_ms": 11490,
+      "resident_infer_ms": 186.3,
+      "vram_freed_when_parked_mib": 1543,
+      "extra_ram_when_parked_mib": 1246,
+      "swap_in_ms": 469.5,
+      "swap_out_ms": 473.0,
+      "swap_turn_ms": 666.9,
+      "swap_added_latency_ms": 480.6,
+      "load_on_demand_turn_ms": 2950.7,
+      "load_on_demand_added_latency_ms": 2764
+    },
+    {
+      "model": "kokoro-82M (TTS)",
+      "load_from_disk_ms": 3794,
+      "resident_infer_ms": 121.1,
+      "vram_freed_when_parked_mib": 318,
+      "extra_ram_when_parked_mib": 287,
+      "swap_in_ms": 136.3,
+      "swap_out_ms": 126.7,
+      "swap_turn_ms": 241.1,
+      "swap_added_latency_ms": 120.0,
+      "load_on_demand_turn_ms": 1907.2,
+      "load_on_demand_added_latency_ms": 1786
+    }
+  ],
+  "ram_available_mib": 2253
+}

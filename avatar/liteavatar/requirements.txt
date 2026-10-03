@@ -1,0 +1,28 @@
+# LiteAvatar benchmark venv (avatar/liteavatar/.venv) - CPU only, isolated from the backend and MuseTalk.
+# Upstream pins a Python 3.10 / torch 2.1.1+cu118 dev environment; the inference path only needs these.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.9.1+cpu
+torchvision==0.24.1+cpu
+torchaudio==2.9.1+cpu
+# imported by the vendored FunASR code on the inference path (found by trial import)
+six
+jamo
+jaconv
+torch-complex
+h5py
+oss2
+modelscope
+onnxruntime>=1.20
+numpy==1.26.4
+scipy>=1.11
+librosa>=0.10
+soundfile>=0.12
+pydub>=0.25
+typeguard==2.13.3
+loguru>=0.7
+opencv-python-headless>=4.9
+tqdm
+pyyaml
+sentencepiece
+humanfriendly
+psutil

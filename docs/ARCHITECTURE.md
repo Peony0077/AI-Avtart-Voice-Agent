@@ -114,6 +114,7 @@ assistant tells a story). Raw data: [phase3_bargein.json](benchmarks/phase3_barg
 
 | Metric | Value |
 |---|---|
+| Spec target: stop ≤ 200–300 ms after *confident* speech detection | **met** — cancel fan-out ~0.1 ms + browser flush 1–8 ms after detection (confident detection itself needs 260 ms of speech, the echo guard, so ~350 ms after the first sound) |
 | Barge-ins detected | 4/4 (bench) + 1/1 (browser) |
 | Detection after the user's speech onset | p50 348 ms, max 362 ms (bench); ~414 ms (browser, approx.) |
 | — of which the confidence rule | 260 ms of speech with p ≥ 0.75 while the assistant is active |
@@ -160,6 +161,32 @@ get barged into). Raw data: [phase3_soak_30min.json](benchmarks/phase3_soak_30mi
 by the face rig.* While speaking, MuseTalk replaces the mouth region:
 
 ![Speaking frame](images/avatar_speaking.jpg)
+
+### Renderer comparison (measured on this PC)
+
+The Phase 0 report compared ten engines on paper ([PHASE0_TECHNICAL_REPORT.md §4](PHASE0_TECHNICAL_REPORT.md));
+Ditto, AVTR-1, FlashHead and LAM asset generation need Linux/WSL2, TensorRT or flash-attn builds
+(ruled out by the "no source compilation, keep the Windows CUDA stack" rules), and the diffusion
+models (EchoMimic, Hallo, LiveAvatar) are offline-only. Three approaches that run natively were measured:
+
+| | **MuseTalk 1.5 + LivePortrait face rig** (chosen) | **LivePortrait, driven live** (e.g. JoyVASA-style audio → motion → LivePortrait) | **LiteAvatar** (HumanAIGC, MIT) |
+|---|---|---|---|
+| Avatar from one photo | ✓ (loops rendered offline from the photo) | ✓ | ✗ — gallery avatars made from recorded video; no public creator |
+| Speed on this PC | **24.3 fps** (GPU, batch 8), 20–23 fps live with the full stack | **4.7 fps** (213 ms/frame, PyTorch; real time needs TensorRT → WSL2/Linux) | **20.4 fps** CPU with 4 parallel workers (7.9 fps one thread; native rate 30 fps) |
+| Resource use | 3.5 GiB VRAM reserved (2.6 GiB allocated) | not measured alone (avatar build with MuseTalk prep peaked at 6.8 GiB) | 0 VRAM, **3.1 GB RAM**, all CPU cores busy at 20 fps |
+| First frame | 4–6 frames in 370–650 ms (A/V gate) | — | 443 ms for a 2 s clause (audio features 0.11× real time) |
+| Blink / gaze / head / expression | ✓ via the rig (5 expression loops) | ✓ (full control) | from the recorded video only |
+| Output | 512×512 face | 512×512 face | 890×1920 upper body |
+| Language of the lip model | multilingual (Whisper features) | depends on the motion model | Chinese ASR features (Paraformer zh-cn) |
+| Coexists with LLM + STT + TTS on 12 GB | ✓ (measured, 30-minute soak) | ✗ not real time | ✓ on GPU, but competes for CPU and RAM (both scarce here) |
+
+MuseTalk was chosen because it is the only one that is real time on this PC **and** works from one
+photo; LivePortrait is kept for what it does well offline (expressions, blinks, gaze, head motion).
+LiteAvatar is the fallback for a GPU-less machine if a video-recorded avatar is acceptable.
+Raw data: [phase4_musetalk_engine.json](benchmarks/phase4_musetalk_engine.json),
+[phase6_liteavatar.json](benchmarks/phase6_liteavatar.json); LivePortrait speed from `logs/build_avatar.log`.
+Reproduce LiteAvatar: `powershell -File avatar\liteavatar\setup.ps1`, then
+`avatar\liteavatar\.venv\Scripts\python avatar\liteavatar\bench_liteavatar.py`.
 
 ### How it works
 
@@ -211,8 +238,9 @@ Raw data: [phase4_musetalk_engine.json](benchmarks/phase4_musetalk_engine.json),
 
 ### Limitations
 
-- Upper body / hand gestures are not animated (only head, eyes, brows, mouth). The LLM's `gesture`
-  field is sent to the browser but not rendered yet.
+- Hand / upper-body gestures are not animated: the avatar is a head-and-shoulders portrait, and none of
+  the real-time engines that run on this PC animate a body (see the comparison above). Head gestures
+  (nod, small nod, head tilt, shake) are rendered since Phase 6 — see "Head gestures".
 - MuseTalk renders the mouth at 256×256 inside a 512×512 frame; larger output needs a stronger GPU.
 - The development photo is AI-generated (from OpenAvatarChat's resources). Build your own avatar with
   `build_avatar.py --photo <your photo> --id <name>` and set `avatar.avatar_id`.
@@ -244,7 +272,10 @@ in all four formats, so correct answers can only come from retrieval
 Raw data: [phase5_rag.json](benchmarks/phase5_rag.json), [phase5_rag_browser.json](benchmarks/phase5_rag_browser.json).
 
 Add your own documents: put files in `data/knowledge/` and run `.venv\Scripts\python scripts\ingest.py`
-(the backend loads the index at start-up).
+(the backend loads the index at start-up). Web pages (Phase 6): `scripts\ingest.py --url <page>`
+(repeatable) saves the page into `data/knowledge/web/` and indexes it with the rest; the citation shows
+host and path. Checked with a Wikipedia article (72 chunks, 26 s): "How many hearts does an octopus
+have?" → its "Circulatory system" section (score 0.755); an unrelated question → no passage.
 
 ## Phase 6 results (hardening, remote access, cloned voice)
 
@@ -267,6 +298,19 @@ All latencies: `scripts/bench_voice.py latency --rounds 2` (16 spoken questions 
 the real protocol, 16/16 exact transcripts in every profile), after the latency work below. Raw data:
 [phase6_profile_clone.json](benchmarks/phase6_profile_clone.json), [phase6_profile_lite.json](benchmarks/phase6_profile_lite.json)
 and the files linked below.
+
+**Model scheduling — measured** (`scripts/bench_scheduling.py`, [phase6_scheduling.json](benchmarks/phase6_scheduling.json)).
+The Phase 0 plan listed A (all resident) vs B (controlled scheduling). Cost per turn for the backend's GPU models:
+
+| Model | A resident (inference) | B2 park in CPU RAM between turns | B3 load from disk every turn |
+|---|---|---|---|
+| Whisper large-v3-turbo | 186 ms | +481 ms per turn (swap-in 470 ms); frees 1.5 GiB VRAM, needs +1.2 GiB RAM | +2,764 ms |
+| Kokoro-82M | 121 ms | +120 ms; frees 0.3 GiB VRAM, +0.3 GiB RAM | +1,786 ms |
+
+So the stack keeps its models **resident (A)** and serialises its own GPU work with one lock (B1:
+STT, TTS and the keep-warm pass never overlap); swapping would add ~0.6 s to every turn to save
+1.8 GiB, and needs system RAM this PC does not have. What does not fit is handled by profiles and
+the VRAM guard instead of swapping.
 
 A VRAM guard checks free VRAM before each model loads (needs from measurements, plus a 0.8 GiB
 reserve). If a model would not fit it is skipped instead of letting Windows spill VRAM into system RAM
@@ -372,6 +416,43 @@ Raw data: [phase6_avatar_clone.json](benchmarks/phase6_avatar_clone.json),
 [phase6_clone_voice.json](benchmarks/phase6_clone_voice.json) (XTTS),
 [phase6_voice_clone.json](benchmarks/phase6_voice_clone.json) (XTTS profile latency).
 
+### Head gestures
+
+The BehaviorManager's `gesture` (from the LLM's tag, or a state default such as a small nod when the
+avatar starts listening) is now rendered as real 3D head motion, not a 2D warp:
+
+- **Offline** (`build_avatar.py`): for each natural expression/gesture pair the LivePortrait rig renders
+  a *gesture variant* of the expression loop that differs only inside short windows (nod: head down
+  and up twice, 6° then 3.6°; small nod: once, 4°; head tilt: ease in, hold, ease out, 5°; shake:
+  side to side, ≤ 5.5°; `avatar/musetalk/motion.py`). Every gesture curve starts and ends at the
+  loop's own pose, so window frames join the loop seamlessly. Only the window frames are rendered
+  and MuseTalk-prepared and stored as a delta. 14 variants for the dev avatar: 1,272 frames,
+  ~10 min once (`--gestures-only` adds them to an existing avatar and skips variants that exist),
+  6–7.5 MB each on disk, **+98 MiB RAM** in the worker (unchanged frames and latents are shared).
+- **Live** (`gestures.py`, worker): a requested gesture is played in the next window of the current
+  loop (within ~0.6–2 s; loops play ping-pong, so windows exist mirrored too), per frame for both the
+  idle stream and the lip-synced frames, so MuseTalk paints the mouth onto the moving head. A gesture
+  that is playing is never cut short; a reply's gesture replaces a listening nod that has not started
+  yet, or follows one that is playing; state gestures are limited to one every 5 s; a "nod" below
+  intensity 0.45 is played as a small nod; "smile" is an expression, not a head motion.
+
+| Checked | Result |
+|---|---|
+| Rendered gestures (contact sheet, `gesture_strip.py`) | nod / small nod / tilt / shake visible, subtle, no jump at window edges |
+| LLM → avatar (worker log) | "Do you agree…" (friendly, small_nod 0.5) → played; "I failed my exam…" (empathetic, small_nod 0.7) → played; "Yes or no: is water wet?" (thinking, head_tilt 0.4) → played. Which gesture the LLM picks varies; small nods and "none" are its most common choices |
+| Found and fixed | first version dropped a reply's gesture whenever the listening nod was still scheduled (the 30-minute run B shows only small nods for that reason); now covered by `test_earliest_start_rules` |
+| Browser A/V with gestures (Playwright `phase4_avatar`, which now also asserts gestures were played) | 0–6 late refreshes of ~160, A/V offset p90 48–75 ms |
+| Unit tests | curves start/end at rest, ≤ 6°; windows inside the loop, non-overlapping; mirrored windows; scheduling; intensity rules (`test_avatar_gestures.py`) |
+
+Soaks with gestures (busy PC, profile `avatar_clone`): the 30-minute run B in "30-minute soak" below
+(0.46 % late frames, first version of the scheduling), and a 10-minute run on the final code: 31/31
+turns, 0 errors and restarts, **63 gestures — 34 requested by the replies, 29 listening nods**,
+1.7 % late frames, A/V offset p90 42 ms, first audio p50 1,440 ms, our GPU memory +54 MiB in the
+second half ([phase6_soak_gestures_10min.json](benchmarks/phase6_soak_gestures_10min.json)).
+
+Hand / upper-body gestures remain out of scope: the portrait is head-and-shoulders and no real-time
+engine that runs on this PC animates a body (see the renderer comparison in Phase 4).
+
 ### Lip sync when the PC is busy
 
 The first 30-minute avatar soak (morning, quiet desktop) passed with 2.5 % late frames. Later the same
@@ -403,9 +484,12 @@ Fixes in the avatar worker:
 
 Raw data: [phase6_lipsync_under_load.json](benchmarks/phase6_lipsync_under_load.json).
 
-The soak test now also checks memory growth of *our* processes (PyTorch allocators of the backend and
-the avatar worker, from the 3-minute mark), because the whole-GPU number moves by ±1 GiB with the
-other desktop apps; whole-GPU usage is only checked against the spill limit.
+The soak test now checks the memory of *our* processes (PyTorch allocators of the backend and the
+avatar worker), because the whole-GPU number moves by ±1 GiB with the other desktop apps; whole-GPU
+usage is only checked against the spill limit. The leak criterion is the growth over the second half
+of the run (< 150 MiB): the allocator reserves a block once when an input is larger than any before
+(measured: one +346 MiB step at minute 4 of a 10-minute run, flat afterwards), which is not a leak.
+Restarts are counted during the soak only, so it can run after the crash-recovery test.
 
 ### Robustness
 
@@ -426,7 +510,7 @@ Found and fixed by these tests:
 - `logs/backend.log` stopped recording as soon as Kokoro loaded, since Phase 2: Kokoro's `__init__`
   calls `logger.remove()`. Kokoro is now imported before logging is configured.
 - Unit tests for both, for the chunk merging (`backend/tests/test_recovery_units.py`), the answer
-  prefetch (`test_prefetch.py`), the VAD `resume` event and the avatar catch-up rule (`test_avatar_catchup.py`) — 55 unit tests in total.
+  prefetch (`test_prefetch.py`), the VAD `resume` event, the avatar catch-up rule (`test_avatar_catchup.py`) and head gestures (`test_avatar_gestures.py`) — 69 unit tests in total.
 
 ### Observability
 
@@ -443,18 +527,27 @@ Found and fixed by these tests:
 ### 30-minute soak with avatar + cloned voice
 
 Playwright `tests/e2e/soak.spec.js`, profile `avatar_clone`, looping fake microphone (a question every
-~19 s), on the final code and on a busy PC (see "Lip sync when the PC is busy"; RAM free 3.3 GB at the
-start, 235 MB at the lowest). Raw data: [phase6_soak_avatar_clone_30min.json](benchmarks/phase6_soak_avatar_clone_30min.json).
+~19 s), on a busy PC (see "Lip sync when the PC is busy"). Both runs passed every check.
 
-| Metric | Value |
-|---|---|
-| Duration / turns | 30 min / 95 turns, all completed; answers were started at the pause in 95/95 |
-| Server errors / browser errors | 0 / 0 |
-| llama-server / avatar worker restarts | 0 / 0 |
-| End of speech → first audio | p50 1,744 ms · p90 1,872 ms · max 2,272 ms (longer questions than the benchmark, busy PC) |
-| Lip sync | 17,043 speech frames; 4.0 % of screen refreshes showed a frame > 120 ms behind the audio; A/V offset p50 29 ms, p90 46 ms; 489 frames (2.8 %) skipped to stay in sync |
-| GPU memory of our processes | backend 2,760 MiB + avatar worker 3,484 MiB, +48 MiB from minute 3 to the end — no leak |
-| Whole GPU | 11,037 → 11,423 MiB of 12,288 (flat after minute 6) |
+| Metric | Run A: lip-sync fixes | **Run B: + head gestures (final)** |
+|---|---|---|
+| Duration / turns | 30 min / 95 turns, all completed | 30 min / **95 turns, all completed** |
+| Answers started at the pause (prefetch) | 95/95 | 95/95 |
+| Server errors / browser errors | 0 / 0 | **0 / 0** |
+| llama-server / avatar worker restarts | 0 / 0 | **0 / 0** |
+| End of speech → first audio | p50 1,744 · p90 1,872 · max 2,272 ms | **p50 1,450 · p90 1,560 · max 1,729 ms** |
+| Late lip-sync frames (> 120 ms behind the audio on screen) | 4.0 % | **0.46 %** (153 of 32,957) |
+| A/V offset | p50 29 ms, p90 46 ms | **p50 31 ms, p90 48 ms** |
+| Frames skipped to stay in sync | 489 (2.8 %) | 55 (0.5 %) |
+| Head gestures played | – | 143 (small nods; see the note in "Head gestures") |
+| GPU memory of our processes | 6,244 MiB, +48 MiB from minute 3 | **6,152 MiB, +0 MiB from minute 3** |
+| Whole GPU / RAM free at start, lowest | 11.4 GiB / 3.3 GB, 235 MB | 10.3 GiB / 1.5 GB, 294 MB |
+
+The PC was busy in both runs; run B happened to have less load on the GPU (whole-GPU 10.3 vs 11.4 GiB),
+which explains most of the lower latency and late frames — the code differences between the runs are
+the head gestures and the soak's own checks. Raw data:
+[phase6_soak_avatar_clone_30min.json](benchmarks/phase6_soak_avatar_clone_30min.json),
+[phase6_soak_avatar_clone_30min_gestures.json](benchmarks/phase6_soak_avatar_clone_30min_gestures.json).
 
 The first run of this test (morning, quiet desktop, before the latency work) also passed its checks
 (95/95 turns, 2.5 % late frames); it was reported as failed only because stopping a 30-minute Playwright

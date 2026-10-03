@@ -72,13 +72,15 @@ Open the printed link (it contains a random access token), click **Start voice**
 ## Make it yours
 
 ```powershell
-# your avatar from one photo (~6 min), then set avatar.avatar_id: me in the profile
+# your avatar from one photo (~15 min incl. head gestures), then set avatar.avatar_id: me in the profile
 avatar\musetalk\.venv\Scripts\python avatar\musetalk\build_avatar.py --photo me.jpg --id me
+# (an avatar built before head gestures existed: add them with --id me --gestures-only)
 # your voice: record 10-15 s of clean speech as data\voices\me.wav and set tts.clone_reference_wav;
 # for the avatar_clone profile also pick the matching base voice:
 .venv\Scripts\python scripts\pick_clone_voice.py --ref data\voices\me.wav
 # your documents (PDF, DOCX, Markdown, TXT, HTML): copy them to data\knowledge\, then
 .venv\Scripts\python scripts\ingest.py
+# web pages: add --url https://... (repeatable); the page is saved to data\knowledge\web\ and indexed
 ```
 
 Use only photos and voices of people who have agreed to it. XTTS-v2 and InsightFace (used when

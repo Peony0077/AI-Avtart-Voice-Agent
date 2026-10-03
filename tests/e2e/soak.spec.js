@@ -12,10 +12,17 @@ test.setTimeout((minutes + 15) * 60_000)
 // the whole timeout budget (first avatar soak). The JSON summary below is the useful record.
 test.use({ trace: 'off', screenshot: 'off' })
 
+// Our processes' GPU memory (PyTorch caching allocators of the backend and the avatar worker). The
+// allocator reserves a block the first time an input is larger than before (a one-off step, measured
+// +346 MiB once); a leak keeps growing. So the leak check is the growth over the second half of the run.
 function ownTorch(samples) {
   const own = (s) => (s.backend_torch_mib ?? 0) + (s.avatar_torch_mib ?? 0)
-  const warm = samples.find((s) => s.t >= 180) ?? samples[0]
-  return { at_3min: own(warm), last: own(samples.at(-1)), growth: own(samples.at(-1)) - own(warm) }
+  const at = (sec) => samples.find((s) => s.t >= sec) ?? samples.at(-1)
+  const warm = at(180)
+  const mid = at(samples.at(-1).t / 2)
+  const last = samples.at(-1)
+  return { at_3min: own(warm), at_half: own(mid), last: own(last), growth_after_3min: own(last) - own(warm),
+    growth_second_half: own(last) - own(mid) }
 }
 
 test(`voice soak for ${minutes} minutes`, async ({ page, request }) => {
@@ -34,6 +41,7 @@ test(`voice soak for ${minutes} minutes`, async ({ page, request }) => {
       ram_available_mib: gpu.ram_available_mib, backend_rss_mib: gpu.backend_rss_mib, llm_restarts: health.llm_restarts,
       backend_torch_mib: gpu.backend_torch_reserved_mib ?? null, avatar_torch_mib: gpu.avatar_torch_reserved_mib ?? null,
       avatar_restarts: health.avatar?.restarts ?? null, avatar_speech_frames: health.avatar?.stats?.frames_in ?? null,
+      avatar_gestures: health.avatar?.stats?.gestures ?? null, avatar_skipped: health.avatar?.stats?.skipped_frames ?? null,
       conn: await page.getByTestId('conn-status').innerText() })
     await page.waitForTimeout(60_000)
   }
@@ -49,12 +57,13 @@ test(`voice soak for ${minutes} minutes`, async ({ page, request }) => {
     server_errors: serverErrors.length, page_errors: errors.length,
     vram_used_mib: { first: samples[0].vram_used_mib, last: samples.at(-1).vram_used_mib, max: Math.max(...samples.map((s) => s.vram_used_mib)) },
     backend_rss_mib: { first: samples[0].backend_rss_mib, last: samples.at(-1).backend_rss_mib, max: Math.max(...samples.map((s) => s.backend_rss_mib)) },
-    llm_restarts: samples.at(-1).llm_restarts,
+    llm_restarts_during: samples.at(-1).llm_restarts - samples[0].llm_restarts,
     // our processes' GPU memory (torch caching allocators), from the 3-minute sample (warmed up) to the end
     own_torch_mib: ownTorch(samples),
     ram_available_mib: { first: samples[0].ram_available_mib, min: Math.min(...samples.map((s) => s.ram_available_mib)) },
     avatar: samples[0].avatar_restarts === null ? null : {
-      restarts: samples.at(-1).avatar_restarts,
+      restarts_during: samples.at(-1).avatar_restarts - samples[0].avatar_restarts,
+      gestures: samples.at(-1).avatar_gestures, skipped_frames: samples.at(-1).avatar_skipped,
       ...(await page.evaluate(() => {
         const s = window.__avatarStats
         const off = [...s.avOffsets].sort((a, b) => a - b)
@@ -76,14 +85,14 @@ test(`voice soak for ${minutes} minutes`, async ({ page, request }) => {
   expect(errors).toEqual([])
   expect(complete.length).toBeGreaterThan(minutes * 2)          // at least ~2 completed turns per minute
   expect(samples.every((s) => s.conn === 'open')).toBe(true)
-  expect(summary.llm_restarts).toBe(0)
+  expect(summary.llm_restarts_during).toBe(0)                  // (counters may be > 0 from earlier tests)
   // No VRAM leak in OUR processes. The whole-GPU number also moves with every other desktop app (browsers,
   // screen recorders, ... measured: +/- 1 GiB between runs), so it is only checked against the spill limit.
-  expect(summary.own_torch_mib.growth).toBeLessThan(300)
+  expect(summary.own_torch_mib.growth_second_half).toBeLessThan(150)
   expect(summary.vram_used_mib.max).toBeLessThan(12288 - 300)
   expect(summary.backend_rss_mib.last - summary.backend_rss_mib.first).toBeLessThan(800) // no big RAM leak
   if (summary.avatar) {
-    expect(summary.avatar.restarts).toBe(0)
+    expect(summary.avatar.restarts_during).toBe(0)
     expect(summary.avatar.drawn_speech).toBeGreaterThan(minutes * 100)               // lip-sync all along
     expect(summary.avatar.late / summary.avatar.drawn_speech).toBeLessThan(0.05)       // frames ready in time
     expect(summary.avatar.av_offset_p90).toBeLessThan(80)

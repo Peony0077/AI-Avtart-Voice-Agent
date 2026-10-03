@@ -44,8 +44,16 @@ test('avatar idles, lip-syncs the spoken answer in sync with audio, and returns 
   const idleAfter = await page.evaluate(() => window.__avatarStats.idle)
   expect(idleAfter).toBeGreaterThan(idleBefore)                           // back to idle stream
 
+  // Phase 6 head gestures: e.g. a small nod whenever the avatar starts listening, the LLM's gesture per reply
+  let gestures = null
+  if ((session.avatar?.gestures ?? []).length) {
+    const health = await (await page.request.get('/health')).json()
+    gestures = health.avatar.stats.gestures ?? {}
+    expect(Object.values(gestures).reduce((a, b) => a + b, 0)).toBeGreaterThan(0)
+  }
+
   const summary = { test: 'phase4_avatar', reply: done.text, ...stats, first_audio_ms: metrics.ms_from_t0.client_first_audio,
-    avatar_first_frame_ms: metrics.ms_from_t0.avatar_first_frame, avatar_render_ms: metrics.avatar_first_ms }
+    avatar_first_frame_ms: metrics.ms_from_t0.avatar_first_frame, avatar_render_ms: metrics.avatar_first_ms, gestures }
   console.log(JSON.stringify(summary))
   fs.writeFileSync('results/phase4_avatar.json', JSON.stringify(summary, null, 2))
 })

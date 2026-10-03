@@ -2,14 +2,17 @@
 
     .venv\\Scripts\\python scripts/ingest.py                      # data/knowledge → data/index (rebuild)
     .venv\\Scripts\\python scripts/ingest.py --src tests/fixtures/knowledge --index data/index
+    .venv\\Scripts\\python scripts/ingest.py --url https://example.com/page   # save into <src>/web/, then index all
 """
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
@@ -21,13 +24,39 @@ from app.rag.documents import SUPPORTED, chunk_document  # noqa: E402
 from app.rag.retriever import Embedder  # noqa: E402
 
 
+def fetch(url: str, dest_dir: Path, max_bytes: int = 5_000_000) -> Path:
+    """Save a web page as HTML under dest_dir (the file name keeps host and path, shown in citations)."""
+    import httpx
+
+    u = urlparse(url)
+    if u.scheme not in ("http", "https"):
+        raise SystemExit(f"not a web URL: {url}")
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", f"{u.netloc}{u.path}".strip("/"))[:120] or u.netloc
+    r = httpx.get(url, follow_redirects=True, timeout=30.0,
+                  headers={"User-Agent": "AI-Avatar-Voice-Agent ingest (personal, non-commercial)"})
+    r.raise_for_status()
+    ctype = r.headers.get("content-type", "")
+    if "html" not in ctype and "text" not in ctype:
+        raise SystemExit(f"{url}: not an HTML/text page ({ctype})")
+    if len(r.content) > max_bytes:
+        raise SystemExit(f"{url}: page larger than {max_bytes} bytes")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    path = dest_dir / f"{slug}.html"
+    path.write_bytes(r.content)
+    print(f"  saved {url} -> {path.name} ({len(r.content) // 1024} KB)")
+    return path
+
+
 def main() -> None:
     cfg = get_settings()
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", type=Path, default=ROOT / "data" / "knowledge")
     ap.add_argument("--index", type=Path, default=cfg.repo_path(cfg.rag.index_dir))
     ap.add_argument("--table", default=cfg.rag.table)
+    ap.add_argument("--url", action="append", default=[], help="web page to add (repeatable); saved to <src>/web/")
     args = ap.parse_args()
+    for url in args.url:
+        fetch(url, args.src / "web")
 
     import lancedb
     import pyarrow as pa
@@ -56,7 +85,7 @@ def main() -> None:
     args.index.mkdir(parents=True, exist_ok=True)
     db = lancedb.connect(str(args.index))
     db.create_table(args.table, data=rows, schema=schema, mode="overwrite")
-    print(f"indexed {len(chunks)} chunks from {len(files)} files → {args.index} "
+    print(f"indexed {len(chunks)} chunks from {len(files)} files -> {args.index} "
           f"(parse {t1 - t0:.2f}s, embed {t2 - t1:.2f}s, total {time.perf_counter() - t0:.2f}s)")
 
 
