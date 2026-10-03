@@ -33,6 +33,10 @@ function Stop-All {
   Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
     Where-Object { $_.CommandLine -match 'avatar\\musetalk\\worker\.py|voice\\xtts\\worker\.py|uvicorn app\.main' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  # our quick tunnel (scripts\tunnel.ps1): its link and token would point at the stopped backend
+  $cf = Join-Path $root 'tools\cloudflared\cloudflared.exe'
+  Get-CimInstance Win32_Process -Filter "Name='cloudflared.exe'" | Where-Object { $_.ExecutablePath -eq $cf } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 
 if ($Stop) { Stop-All; Write-Host 'stopped'; exit 0 }

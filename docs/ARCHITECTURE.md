@@ -291,8 +291,8 @@ activations add ~0.4 GiB during use.
 | `default` | Whisper large-v3-turbo | Kokoro (stock) | – | 5.2 GiB | **922 / 1,048 ms** (Phase 2: 1,109 / 1,254) |
 | `lite` | whisper-small.en, LLM context 3,072 | Kokoro | – | 4.1 GiB | **873 / 1,007 ms** |
 | `clone` | large-v3-turbo | XTTS-v2 clone | – | 6.7 GiB | **1,271 / 1,425 ms** (before the latency work: 1,526 / 1,768) |
-| `avatar` | large-v3-turbo | Kokoro | MuseTalk | 8.8 GiB | **1,357 / 1,612 ms** (Phase 4: 1,750 / 1,914) |
-| `avatar_clone` | large-v3-turbo | light clone | MuseTalk | 9.0 GiB | **1,438 / 1,600 ms** (first version: 2,854 with XTTS) |
+| `avatar` | large-v3-turbo | Kokoro | MuseTalk | 8.8 GiB | **1,160 / 1,359 ms** (Phase 4: 1,750 / 1,914) |
+| `avatar_clone` | large-v3-turbo | light clone | MuseTalk | 9.0 GiB | **1,306 / 1,369 ms** (first version: 2,854 with XTTS) |
 
 All latencies: `scripts/bench_voice.py latency --rounds 2` (16 spoken questions streamed in real time over
 the real protocol, 16/16 exact transcripts in every profile), after the latency work below. Raw data:
@@ -329,14 +329,20 @@ around the endpoint; the LLM then needed ~350 ms for the behaviour tag and the f
 | **GPU keep-warm while the user talks**: an encoder pass on silence every 400 ms, only while speech is active (never in the silence before the speculative STT, never while the assistant or another GPU job runs). The GPU drops its clocks within ~2 s of idle (P3, 570 MHz); small matmul/memcopy keep-alives, a CPU spin or a higher process priority did not prevent it, the real encoder workload does. | Whisper encoder after 2 s idle 150–300 ms → **133 ms**; speculative STT 400–500 ms → **170–190 ms**; transcript ready at p50 326 ms (was 545) |
 | **Lean Whisper decoding**: greedy loop with the same prompt and token suppression instead of `generate()` | identical transcripts on all 15 fixtures (both models); ~18 ms less per utterance |
 | **Avatar: no MuseTalk warm-up burst** at THINKING (it now competed with the prefetched LLM) | first clause p50 796 → 730 ms, render time unchanged |
-| **Avatar: A/V gate 4 frames** (was 6) for the stock voice | ~70 ms; browser test 0 late frames in 3 runs. `avatar_clone` keeps 6: with the converter on the GPU, 4 let ~5 % of frames arrive late |
+| **Avatar: A/V gate 4 frames** (was 6) | ~70 ms; browser test 0 late frames in 3 runs |
+| **Avatar: first batch = exactly the gate** (4 frames in one batch instead of a 2 + 4 ramp, which rendered 6 frames before the gate could open) | gate opens after 243 ms instead of 337 ms (engine measured alone); live, the avatar's share of the first-audio time 421 → **314 ms**; 0 late frames in 3 + 4 browser runs (both avatar profiles), so `avatar_clone` now also uses gate 4 (it needed 6 before) |
 
-Result, end of speech → first audio p50: voice only 1,109 → **922 ms** (the < 1 s stretch goal),
-avatar 1,750 → **1,357 ms**, avatar + cloned voice → **1,438 ms**. The ≤ 1.2 s target is met for voice
-only (16/16 turns under 1.2 s, 12/16 under 1 s); with the avatar 3/16 turns are under 1.2 s (cloned
-voice: 1/16), so **the target is not met with the avatar on this GPU**. What is left is mostly fixed cost: the 550 ms
-endpoint rule (a shorter one would cut people off in natural pauses), TTS, and rendering the first
-lip-synced frames while the LLM is still generating on the same GPU.
+Result, end of speech → first audio p50 (p90):
+- voice only: 1,109 → **922 ms** (1,048) — the < 1 s stretch goal; 16/16 turns under 1.2 s, 12/16 under 1 s
+- avatar: 1,750 → **1,160 ms** (1,359) — **meets the ≤ 1.2 s target at the median**; 9/16 turns under 1.2 s
+- avatar + cloned voice: 2,854 → **1,306 ms** (1,369) — 5/16 under 1.2 s; the tone-colour converter adds
+  ~70–150 ms to the voice step
+
+Measured on the same PC on different days with different desktop load: the voice step of the last avatar
+run was ~140 ms faster than in the previous one (less GPU load from other apps), so not all of the
+1,357 → 1,160 ms gain comes from the code; the avatar's own share (421 → 314 ms) does. What is left is
+mostly fixed cost: the 550 ms endpoint rule (a shorter one would cut people off in natural pauses),
+TTS, and rendering the first lip-synced frames.
 
 Checked again after these changes: barge-in 4/4 (detection p50 354 ms, 0 stale packets, follow-ups
 answered), browser barge-in (342 ms, flush 1.3 ms), RAG answer with citations through the prefetch
@@ -344,6 +350,8 @@ path, text/voice/avatar/recovery tests. Raw data: [phase6_voice_prefetch.json](b
 [phase6_avatar_prefetch.json](benchmarks/phase6_avatar_prefetch.json) (gate 6 + burst),
 [phase6_avatar_gate6_noburst.json](benchmarks/phase6_avatar_gate6_noburst.json),
 [phase6_avatar_gate4.json](benchmarks/phase6_avatar_gate4.json),
+[phase6_avatar_gate_batch.json](benchmarks/phase6_avatar_gate_batch.json),
+[phase6_avatar_clone_gate4.json](benchmarks/phase6_avatar_clone_gate4.json),
 [phase6_bargein_prefetch.json](benchmarks/phase6_bargein_prefetch.json).
 
 ### Remote access (browser on another PC)
@@ -405,10 +413,10 @@ Fixes that came out of this work (they also protect the XTTS path):
 
 | Metric | Value |
 |---|---|
-| End of speech → first audio (16 turns, `bench_voice.py`) | p50 1,438 · p90 1,600 · max 1,732 ms with the latency work above (1,786 before it; 2,854 with XTTS) |
+| End of speech → first audio (16 turns, `bench_voice.py`) | p50 1,306 · p90 1,369 · max 1,439 ms with the latency work above (1,786 before it; 2,854 with XTTS) |
 | Waits for avatar frames > 1.5 s | 0 (was 32 in 8 turns with XTTS) |
 | Live render speed | 20–23 fps |
-| Browser A/V sync (Playwright `phase4_avatar`, 5 runs, gate 6) | 6 of 807 lip-sync frames late; frame offset p50 20–32 ms, p90 37–49 ms |
+| Browser A/V sync (Playwright `phase4_avatar`) | gate 6, 5 runs: 6 of 807 frames late; gate 4 with the gate-sized first batch, 4 runs: 0 of 650 late, offset p90 37–50 ms |
 | VRAM | stack 9.0 GiB (avatar with stock voice: 8.8 GiB); XTTS instead of the converter would need ~2.2 GiB more |
 
 Raw data: [phase6_avatar_clone.json](benchmarks/phase6_avatar_clone.json),
@@ -441,6 +449,7 @@ avatar starts listening) is now rendered as real 3D head motion, not a 2D warp:
 | Rendered gestures (contact sheet, `gesture_strip.py`) | nod / small nod / tilt / shake visible, subtle, no jump at window edges |
 | LLM → avatar (worker log) | "Do you agree…" (friendly, small_nod 0.5) → played; "I failed my exam…" (empathetic, small_nod 0.7) → played; "Yes or no: is water wet?" (thinking, head_tilt 0.4) → played. Which gesture the LLM picks varies; small nods and "none" are its most common choices |
 | Found and fixed | first version dropped a reply's gesture whenever the listening nod was still scheduled (the 30-minute run B shows only small nods for that reason); now covered by `test_earliest_start_rules` |
+| Which gesture fits the reply (`scripts/bench_gestures.py`: 14 prompts × 2, e.g. "Is it safe to look at the sun?" → shake, "…, right?" → nod, "Guess what…" → tilt) | LLM tag alone: **64 %** fitting, it never chose nod or shake (it writes the tag before it "knows" whether the answer is yes or no; telling it what each gesture means made it nod at "No, …" answers: 50 %). Now the reply's **first words refine the tag** before that clause's audio reaches the avatar ("Yes / Absolutely / Exactly …" → nod, "No / Not quite / I'm afraid not …" → shake, "I'm sorry …" → small nod, an opening question → tilt; `refine_gesture` in `behavior/manager.py`): **89 %** fitting, all six gestures used, no added latency, tag compliance 100 % ([phase6_gesture_choice.json](benchmarks/phase6_gesture_choice.json)). Live: "No, it's not safe…" → shake, "Yes, absolutely…" → nod |
 | Browser A/V with gestures (Playwright `phase4_avatar`, which now also asserts gestures were played) | 0–6 late refreshes of ~160, A/V offset p90 48–75 ms |
 | Unit tests | curves start/end at rest, ≤ 6°; windows inside the loop, non-overlapping; mirrored windows; scheduling; intensity rules (`test_avatar_gestures.py`) |
 
@@ -449,6 +458,10 @@ Soaks with gestures (busy PC, profile `avatar_clone`): the 30-minute run B in "3
 turns, 0 errors and restarts, **63 gestures — 34 requested by the replies, 29 listening nods**,
 1.7 % late frames, A/V offset p90 42 ms, first audio p50 1,440 ms, our GPU memory +54 MiB in the
 second half ([phase6_soak_gestures_10min.json](benchmarks/phase6_soak_gestures_10min.json)).
+After the first-words refinement and the gate-sized first batch, profile `avatar`, 10 minutes: 32/32
+turns, 0 errors and restarts, 0.4 % late frames, no frame arrived > 100 ms late, A/V offset p90 39 ms,
+first audio p50 1,280 ms (the soak's questions are longer than the benchmark's), GPU memory +0 MiB
+([phase6_soak_avatar_final_10min.json](benchmarks/phase6_soak_avatar_final_10min.json)).
 
 Hand / upper-body gestures remain out of scope: the portrait is head-and-shoulders and no real-time
 engine that runs on this PC animates a body (see the renderer comparison in Phase 4).
@@ -510,7 +523,7 @@ Found and fixed by these tests:
 - `logs/backend.log` stopped recording as soon as Kokoro loaded, since Phase 2: Kokoro's `__init__`
   calls `logger.remove()`. Kokoro is now imported before logging is configured.
 - Unit tests for both, for the chunk merging (`backend/tests/test_recovery_units.py`), the answer
-  prefetch (`test_prefetch.py`), the VAD `resume` event, the avatar catch-up rule (`test_avatar_catchup.py`) and head gestures (`test_avatar_gestures.py`) — 69 unit tests in total.
+  prefetch (`test_prefetch.py`), the VAD `resume` event, the avatar catch-up rule (`test_avatar_catchup.py`), head gestures (`test_avatar_gestures.py`, `test_gesture_from_text.py`) — 92 unit tests in total.
 
 ### Observability
 

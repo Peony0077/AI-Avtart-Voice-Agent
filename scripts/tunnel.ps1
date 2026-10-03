@@ -5,12 +5,14 @@
   Starts the backend with a random access token and opens a free Cloudflare "quick tunnel"
   (no account needed) to it. Prints the https://....trycloudflare.com link to open on your PC.
   Traffic passes through Cloudflare. Quick tunnels are meant for testing; the link changes
-  every time. Stop with Ctrl+C (then scripts\run.ps1 -Stop).
+  every time. Stop with Ctrl+C, or with -Detach it keeps running in the background until
+  scripts\run.ps1 -Stop (which also closes the tunnel). The last link is in logs\tunnel_url.txt.
 
 .EXAMPLE
   scripts\tunnel.ps1 -Profile avatar
+  scripts\tunnel.ps1 -Profile avatar -Detach
 #>
-param([string]$Profile = 'avatar', [int]$Port = 8000)
+param([string]$Profile = 'avatar', [int]$Port = 8000, [switch]$Detach)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $exe = Join-Path $root 'tools\cloudflared\cloudflared.exe'
@@ -35,5 +37,6 @@ if (-not $url) { Stop-Process -Id $p.Id -Force; throw "tunnel did not start; see
 Write-Host ''
 Write-Host "Open on your PC:  $url/?token=$token" -ForegroundColor Green
 Write-Host '(use headphones; allow the microphone when the browser asks)'
+if ($Detach) { Write-Host "tunnel pid $($p.Id) runs in the background; stop everything with scripts\run.ps1 -Stop"; exit 0 }
 Write-Host "tunnel pid $($p.Id) - press Ctrl+C to stop"
 try { Wait-Process -Id $p.Id } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }

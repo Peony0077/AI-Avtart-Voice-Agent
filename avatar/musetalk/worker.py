@@ -292,11 +292,13 @@ class AvatarWorker:
         if n == 0:
             await self._release(turn, seq)
             return
-        # First clause of a turn: ramp the batch size (2, 4, then b) and release the audio only when
-        # gate_frames frames exist, so rendering stays ahead of playback at turn start (measured: with a
-        # single 2-frame gate followed by a batch of 8, frames arrived up to 368 ms late).
+        # First clause of a turn: release the audio only when gate_frames frames exist, and ramp the
+        # batch size (gate frames, 4, then b) so rendering stays ahead of playback at turn start
+        # (measured: a 2-frame gate followed by a batch of 8 let frames arrive up to 368 ms late).
+        # The first batch is exactly the gate: one batch of 4 opens a 4-frame gate in 243 ms; the
+        # earlier 2 + 4 ramp rendered 6 frames before the gate could open (337 ms).
         first_seg = turn.rendered == 0
-        sizes = ([2, 4] if first_seg else []) + [b] * n
+        sizes = ([self.gate_frames, 4] if first_seg else []) + [b] * n
         spans, s = [], 0
         for size in sizes:
             if s >= n:

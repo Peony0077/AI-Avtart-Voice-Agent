@@ -14,7 +14,7 @@ photo → audio + video back to the browser.
 
 | Measured on the RTX 3060 | |
 |---|---|
-| End of speech → first audio (median) | 0.92 s voice only · 1.36 s with the avatar |
+| End of speech → first audio (median) | 0.92 s voice only · 1.16 s with the avatar |
 | Barge-in detected | ~350 ms after you start talking; audio flushed in 8 ms |
 | Lip sync in the browser | median 27 ms between sound and frame |
 | Document answers | 8/8 correct with citations, retrieval ~26 ms |
@@ -64,6 +64,7 @@ scripts\run.ps1 -Stop
 
 ```powershell
 scripts\tunnel.ps1 -Profile avatar         # internet: prints https://<random>.trycloudflare.com/?token=...
+scripts\tunnel.ps1 -Profile avatar -Detach # same, keeps running in the background (link in logs\tunnel_url.txt)
 scripts\run.ps1 -Profile avatar -Https     # same network: prints https://<LAN IP>:8000/?token=...
 ```
 

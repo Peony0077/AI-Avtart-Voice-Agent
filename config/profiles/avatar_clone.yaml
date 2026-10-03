@@ -11,5 +11,5 @@ tts:
 avatar:
   enabled: true
   avatar_id: dev_girl
-  gate_frames: 6        # the converter shares the GPU at reply start: gate 4 let ~5 % of frames arrive late
-                        # (browser test, 5 runs), gate 6 ~0.7 %, at the same latency (p50 1,438 ms)
+  gate_frames: 4        # was 6 while gate 4 let ~5 % of frames arrive late; with the gate-sized first batch,
+                        # per-frame sending and catch-up: 0 late frames in 4 browser runs, p50 1,438 -> 1,306 ms

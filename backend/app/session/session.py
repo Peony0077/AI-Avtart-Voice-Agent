@@ -15,7 +15,7 @@ from fastapi import WebSocket
 from loguru import logger
 
 from app.audio.vad import StreamingVAD, VadEvent
-from app.behavior.manager import for_state, from_meta
+from app.behavior.manager import for_state, from_meta, refine_gesture
 from app.behavior.meta import MetaStreamParser
 from app.behavior.speech_text import clean_delta
 from app.core.logging import write_metrics
@@ -303,6 +303,20 @@ class Session:
             turn.speech = speech
             chunker = ClauseChunker()
         behavior_sent = False
+        behavior = None
+        first_clause = True
+
+        def say(clause: str) -> None:
+            nonlocal first_clause
+            if first_clause and behavior is not None:
+                # the first words show the reply's stance ("Yes, ..." -> nod, "No, ..." -> shake) better
+                # than the LLM's tag; refined before this clause's audio reaches the avatar
+                refined = refine_gesture(behavior, clause)
+                if refined is not None:
+                    self._send_behavior(turn, refined)
+            first_clause = False
+            speech.say(clause)
+
         async for delta in deltas:
             if turn.is_cancelled:
                 return
@@ -314,22 +328,23 @@ class Session:
             _meta, text = parser.feed(delta)
             text = clean_delta(text)
             if not behavior_sent and (parser.meta is not None or text):
-                self._send_behavior(turn, from_meta(parser.meta))
+                behavior = from_meta(parser.meta)
+                self._send_behavior(turn, behavior)
                 behavior_sent = True
             if text:
                 self._emit_text(turn, text, spoken)
                 if chunker:
                     for clause in chunker.feed(text):
-                        speech.say(clause)
+                        say(clause)
         tail = clean_delta(parser.flush())
         if tail:
             self._emit_text(turn, tail, spoken)
             if chunker:
                 for clause in chunker.feed(tail):
-                    speech.say(clause)
+                    say(clause)
         if chunker:
             for clause in chunker.flush():
-                speech.say(clause)
+                say(clause)
             speech.close()
         turn.mark("llm_done")
         if prefetch is not None:
