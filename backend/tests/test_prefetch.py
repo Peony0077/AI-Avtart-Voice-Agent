@@ -12,7 +12,7 @@ class _LLM:
         self.requests: list[list[dict]] = []
         self.closed = False
 
-    async def stream_chat(self, messages, stats=None):
+    async def stream_chat(self, messages, stats=None, pause_after=None, resume=None):
         self.requests.append(messages)
         try:
             if self.fail:

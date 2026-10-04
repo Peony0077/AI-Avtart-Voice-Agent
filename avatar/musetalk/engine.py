@@ -29,10 +29,40 @@ DECODE_FROM_ROW = 12  # latent row (x8 px) from which the face is decoded: 96 px
 PARSING_MODE = "jaw"
 
 
+LIP_SHARPEN = 0.25   # unsharp mask on the generated face: as crisp as the photo's (Laplacian var 19 -> 26, photo 24)
+
+
+def _lip_weight(lab: np.ndarray) -> np.ndarray:
+    """Soft lip mask of a lower face in LAB: the reddest pixels (skin dominates, so the median a* is
+    skin), not the dark inside of an open mouth."""
+    a, lightness = lab[..., 1], lab[..., 0]
+    w = np.clip((a - np.median(a[::4, ::4]) - 6.0) / 8.0, 0, 1) * np.clip((lightness - 70.0) / 30.0, 0, 1)
+    return cv2.GaussianBlur(w, (5, 5), 0)
+
+
+def refine_face(gen: np.ndarray, ref: np.ndarray) -> np.ndarray:
+    """MuseTalk's lower face (BGR) made to look like the avatar's own (``ref``: the same rows of the
+    loop frame). MuseTalk draws the lips pinker and matte, so they changed colour whenever the avatar
+    started or stopped speaking (owner's test); their colour is moved to the avatar's lip colour
+    (lip colour difference a*b* 5.1 -> 1.3 on 80 speech frames, stable from frame to frame), and the
+    slightly soft output is sharpened to the photo's crispness."""
+    g = cv2.cvtColor(gen, cv2.COLOR_BGR2LAB).astype(np.float32)
+    r = cv2.cvtColor(ref, cv2.COLOR_BGR2LAB).astype(np.float32)
+    wg, wr = _lip_weight(g), _lip_weight(r)
+    if wg.sum() > 50 and wr.sum() > 50:
+        mg = (g * wg[..., None]).sum((0, 1)) / wg.sum()
+        mr = (r * wr[..., None]).sum((0, 1)) / wr.sum()
+        g += wg[..., None] * ((mr - mg) * np.array([0.7, 1.0, 1.0], np.float32))   # lightness only partly
+        gen = cv2.cvtColor(np.clip(g, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
+    if LIP_SHARPEN:
+        gen = cv2.addWeighted(gen, 1 + LIP_SHARPEN, cv2.GaussianBlur(gen, (0, 0), 1.2), -LIP_SHARPEN, 0)
+    return gen
+
+
 @dataclass
 class Loop:
     name: str
-    frames_jpg: list[bytes]            # full frames (BGR JPEG), ping-pong order
+    frames_jpg: list[bytes]            # full frames (BGR JPEG), in play order (ping-pong or seamless)
     coords: list[tuple]                # face box per frame
     latents: torch.Tensor              # [N, 8, 32, 32] fp16 (cpu)
     masks_png: list[bytes]             # blend masks (grayscale PNG)
@@ -40,6 +70,7 @@ class Loop:
     size: tuple[int, int] = (512, 512)
     _decoded: dict = field(default_factory=dict, repr=False)
     latent_overrides: dict = field(default_factory=dict, repr=False)   # gesture variants: replaced rows
+    pingpong: bool = True              # first avatars: forward + backward; new ones: seamless forward loop
 
     def latent(self, i: int) -> torch.Tensor:
         row = self.latent_overrides.get(i)
@@ -59,7 +90,8 @@ class Loop:
         torch.save(self.latents, folder / "latents.pt")
         with open(folder / "loop.pkl", "wb") as fh:
             pickle.dump({"name": self.name, "frames_jpg": self.frames_jpg, "coords": self.coords,
-                         "masks_png": self.masks_png, "mask_boxes": self.mask_boxes, "size": self.size}, fh)
+                         "masks_png": self.masks_png, "mask_boxes": self.mask_boxes, "size": self.size,
+                         "pingpong": self.pingpong}, fh)
 
     @classmethod
     def load(cls, folder: Path) -> Loop:
@@ -68,19 +100,20 @@ class Loop:
         return cls(latents=torch.load(folder / "latents.pt"), **d)
 
     def with_delta(self, delta: LoopDelta) -> Loop:
-        """This loop with some forward-half frames replaced (gesture variants). Unchanged frames are
-        shared with this loop, so a variant costs only its replaced frames in RAM."""
+        """This loop with some frames replaced (gesture variants). Unchanged frames are shared with
+        this loop, so a variant costs only its replaced frames in RAM."""
         n2 = len(self)
         frames, coords = list(self.frames_jpg), list(self.coords)
         masks, mboxes = list(self.masks_png), list(self.mask_boxes)
         overrides = {}
         for j, f in enumerate(delta.frame_idx):
-            for pos in (f, n2 - 1 - f):                     # forward frame and its ping-pong mirror
+            for pos in ((f, n2 - 1 - f) if self.pingpong else (f,)):   # and its ping-pong mirror
                 frames[pos], coords[pos] = delta.frames_jpg[j], delta.coords[j]
                 masks[pos], mboxes[pos] = delta.masks_png[j], delta.mask_boxes[j]
                 overrides[pos] = delta.latents[j]
         # the latent tensor is shared with the base loop; only the replaced rows are stored
-        return Loop(delta.name, frames, coords, self.latents, masks, mboxes, size=self.size, latent_overrides=overrides)
+        return Loop(delta.name, frames, coords, self.latents, masks, mboxes, size=self.size, latent_overrides=overrides,
+                    pingpong=self.pingpong)
 
 
 @dataclass
@@ -173,15 +206,19 @@ class MuseTalkEngine:
             mask_boxes.append(tuple(int(v) for v in crop_box))
         return coords, latents, masks_png, mask_boxes
 
-    def prepare_loop(self, name: str, frames_bgr: list[np.ndarray], boxer, jpeg_quality: int = 93) -> Loop:
+    def prepare_loop(self, name: str, frames_bgr: list[np.ndarray], boxer, jpeg_quality: int = 93,
+                     pingpong: bool = True) -> Loop:
+        """pingpong: append the frames backwards so a non-periodic loop repeats without a jump (each
+        JPEG is shared by both directions); seamless loops (motion.idle_curves periodic) play forward."""
         t0 = time.perf_counter()
         h, w = frames_bgr[0].shape[:2]
         coords, latents, masks_png, mask_boxes = self._prepare_frames(frames_bgr, boxer)
-        # ping-pong so the loop can repeat without a jump
-        frames = frames_bgr + frames_bgr[::-1]
-        frames_jpg = [cv2.imencode(".jpg", f, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])[1].tobytes() for f in frames]
-        loop = Loop(name, frames_jpg, coords + coords[::-1], torch.cat(latents + latents[::-1]),
-                    masks_png + masks_png[::-1], mask_boxes + mask_boxes[::-1], size=(w, h))
+        jpgs = [cv2.imencode(".jpg", f, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])[1].tobytes() for f in frames_bgr]
+        if pingpong:
+            loop = Loop(name, jpgs + jpgs[::-1], coords + coords[::-1], torch.cat(latents + latents[::-1]),
+                        masks_png + masks_png[::-1], mask_boxes + mask_boxes[::-1], size=(w, h))
+        else:
+            loop = Loop(name, jpgs, coords, torch.cat(latents), masks_png, mask_boxes, size=(w, h), pingpong=False)
         logger.info(f"loop {name}: {len(loop)} frames prepared in {time.perf_counter() - t0:.1f}s")
         return loop
 
@@ -240,7 +277,8 @@ class MuseTalkEngine:
         frame = loop.frame(i)
         x1, y1, x2, y2 = loop.coords[i]
         crop = cv2.resize(frame[y1:y2, x1:x2], (256, 256), interpolation=cv2.INTER_AREA)
-        crop[256 - face_bottom.shape[0]:] = face_bottom        # top rows keep the original pixels
+        h = face_bottom.shape[0]
+        crop[256 - h:] = refine_face(np.ascontiguousarray(face_bottom), crop[256 - h:])   # top rows keep the original
         face = cv2.resize(crop, (x2 - x1, y2 - y1))
         xs, ys, xe, ye = loop.mask_boxes[i]
         body = frame[ys:ye, xs:xe]

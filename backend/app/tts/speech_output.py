@@ -40,6 +40,7 @@ class SpeechOutput:
         self.on_first_audio = on_first_audio
         self.avatar_sink = avatar_sink
         self.queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self.pending_chars = 0                     # text queued, not yet synthesised
         self.segments: list[Segment] = []
         self.total_ms = 0.0
         self.first_timing: dict | None = None
@@ -50,7 +51,12 @@ class SpeechOutput:
     def say(self, clause: str) -> None:
         if clause.strip():
             self.turn.mark("first_clause")
+            self.pending_chars += len(clause)
             self.queue.put_nowait(clause)
+
+    def backlog_ms(self) -> float:
+        """Speech still to come: synthesised but not yet heard, plus queued text (~65 ms a character)."""
+        return max(0.0, self.total_ms - self.turn.played_ms) + 65.0 * self.pending_chars
 
     def close(self) -> None:
         self.queue.put_nowait(None)
@@ -62,6 +68,7 @@ class SpeechOutput:
             clause = await self.queue.get()
             if clause is None or self.turn.is_cancelled:
                 break
+            self.pending_chars = max(0, self.pending_chars - len(clause))
             if seq and self.avatar_sink is not None:
                 await self._pace()
                 if self.turn.is_cancelled:

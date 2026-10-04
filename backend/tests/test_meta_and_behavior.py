@@ -1,3 +1,5 @@
+import pytest
+
 from app.behavior.manager import for_state, from_meta
 from app.behavior.meta import MetaStreamParser
 from app.llm.prompt import ConversationMemory
@@ -96,3 +98,55 @@ def test_unclosed_bracket_at_the_end_is_still_spoken():
     p = MetaStreamParser()
     out = p.feed("[friendly|none|0.4]The ratio is [3")[1] + p.flush()
     assert out == "The ratio is [3"
+
+
+# No behaviour tag (default): the avatar's behaviour is read from the words (~180 ms sooner first word).
+@pytest.mark.parametrize("user, first, emotion, expression, gesture", [
+    ("What is the capital of France?", "The capital of France is Paris.", "friendly", "soft_smile", "none"),
+    ("My grandmother passed away last week.", "I'm so sorry for your loss.", "empathetic", "soft_concern", "small_nod"),
+    ("I just got the job!", "Congratulations, that's wonderful news!", "happy", "smile", "none"),
+    ("Is the sun a star?", "Yes, the sun is a star.", "friendly", "soft_smile", "nod"),
+    ("Can fish fly?", "No, most fish can't fly.", "friendly", "soft_smile", "shake"),
+    ("I feel stressed about my exam.", "That sounds hard.", "empathetic", "soft_concern", "none"),
+])
+def test_behaviour_from_the_words(user, first, emotion, expression, gesture):
+    from app.behavior.manager import behavior_from_text
+    b = behavior_from_text(user, first)
+    assert (b.emotion, b.expression, b.gesture, b.source) == (emotion, expression, gesture, "text")
+
+
+def test_prompt_has_no_tag_rules_unless_asked():
+    from app.llm.prompt import system_prompt
+    assert "[emotion|gesture|intensity]" not in system_prompt("Ava")
+    assert "[emotion|gesture|intensity]" in system_prompt("Ava", behavior_tag=True)
+
+
+@pytest.mark.parametrize("text, detail", [
+    ("Explain in detail how a rainbow forms.", True),
+    ("Please tell me a long, detailed story about a dragon and a lighthouse keeper.", True),
+    ("Give me step by step instructions to make tea.", True),
+    ("How does a car engine work?", True),
+    ("Tell me more about Mars", True),
+    ("What's the capital of France?", False),
+    ("How are you today?", False),
+    ("How do you do?", False),
+    ("Tell me your name", False),
+])
+def test_a_request_for_detail_gets_a_hint_on_that_turn_only(text, detail):
+    from app.llm.prompt import DETAIL_HINT, wants_detail
+    assert wants_detail(text) is detail
+    mem = ConversationMemory(persona="Ava")
+    msgs = mem.build(text)
+    assert msgs[-1]["content"].endswith(DETAIL_HINT) is detail
+    mem.add(text, "Sure.")
+    assert mem.turns[0]["content"] == text                      # the history keeps the user's own words
+
+
+def test_after_a_stopped_reply_only_the_next_message_says_so():
+    from app.llm.prompt import INTERRUPTED_HINT
+    mem = ConversationMemory(persona="Ava")
+    mem.add("Tell me a long story.", "[interrupted before replying]", interrupted=True)
+    assert mem.build("Now just say OK.")[-1]["content"].endswith(INTERRUPTED_HINT)   # don't go back to the story
+    mem.add("Now just say OK.", "OK.")
+    assert INTERRUPTED_HINT not in mem.build("Thanks.")[-1]["content"]
+    assert all(INTERRUPTED_HINT not in t["content"] for t in mem.turns)               # never stored

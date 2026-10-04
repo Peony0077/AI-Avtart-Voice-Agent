@@ -36,7 +36,64 @@ class LLMClient:
         await self._http.aclose()
 
     async def stream_chat(self, messages: list[dict], stats: LLMStats | None = None,
-                          max_tokens: int | None = None) -> AsyncIterator[str]:
+                          max_tokens: int | None = None, pause_after: Callable[[str], bool] | None = None,
+                          resume: Callable[[], Awaitable[None]] | None = None) -> AsyncIterator[str]:
+        """Stream the reply. With ``pause_after``/``resume``: whenever ``pause_after(text so far)`` is true
+        (e.g. a new speakable clause exists) generation stops until ``resume()`` returns, then continues the
+        same reply from the text so far (llama-server reuses its cache: only the new tokens are processed).
+
+        Why: the LLM writes far faster than speech, but while it generates the rest of the reply it shares
+        the GPU with the first clause's synthesis and the avatar's first lip-sync frames, and those are
+        what the user waits for (measured: Kokoro 78 -> ~170 ms, avatar first frames ~170 -> ~330 ms)."""
+        if pause_after is None or resume is None:
+            async for delta in self._stream_chat(messages, stats, max_tokens):
+                yield delta
+            return
+        text = ""
+        stream = self._stream_chat(messages, stats, max_tokens)
+        while True:                                     # it may pause again (e.g. after every clause)
+            paused = False
+            try:
+                async for delta in stream:
+                    text += delta
+                    yield delta
+                    if pause_after(text):
+                        paused = True
+                        break
+            finally:
+                await stream.aclose()                   # closing the HTTP stream stops llama-server now
+            if not paused:
+                return
+            await resume()
+            stream = self._continue(messages, text, stats, max_tokens)
+
+    async def _continue(self, messages: list[dict], text: str, stats: LLMStats | None,
+                        max_tokens: int | None) -> AsyncIterator[str]:
+        """Continue an assistant reply that already starts with ``text`` (raw prompt: the chat template
+        of ``messages`` with the generation prompt, then the text)."""
+        resp = await self._http.post("/apply-template", json={"messages": messages})
+        resp.raise_for_status()
+        body = {"prompt": resp.json()["prompt"] + text, "stream": True, "cache_prompt": True,
+                "temperature": self.cfg.temperature, "top_p": self.cfg.top_p, "top_k": 20, "min_p": 0.0,
+                "n_predict": max(16, (max_tokens or self.cfg.max_tokens) - len(text) // 3)}
+        async with self._http.stream("POST", "/completion", json=body) as r:
+            r.raise_for_status()
+            async for line in r.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                chunk = json.loads(line[5:])
+                if chunk.get("content"):
+                    yield chunk["content"]
+                if chunk.get("stop"):
+                    if stats is not None:
+                        t = chunk.get("timings") or {}
+                        stats.finish_reason = chunk.get("stop_type")
+                        stats.completion_tokens = (stats.completion_tokens or 0) + (t.get("predicted_n") or 0)
+                        stats.extra["continued"] = {"prompt_n": t.get("prompt_n"), "cache_n": t.get("cache_n")}
+                    break
+
+    async def _stream_chat(self, messages: list[dict], stats: LLMStats | None = None,
+                           max_tokens: int | None = None) -> AsyncIterator[str]:
         body = {
             "model": "local",
             "messages": messages,

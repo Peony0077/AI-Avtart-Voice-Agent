@@ -150,6 +150,26 @@ def smile_for_happy_user(behavior: Behavior, user_text: str) -> Behavior:
     return behavior
 
 
+def behavior_from_text(user_text: str, first_clause: str) -> Behavior:
+    """The reply's behaviour from words alone, when the LLM writes no tag (llm.behavior_tag false):
+    concern for sad or worrying content, a smile for happy moments, otherwise the warm default; the
+    gesture from how the reply starts. Writing the tag cost ~180 ms before every reply's first word
+    (bench_voice: first token 409 ms, first word 583 ms), and the 4B model's gestures were unreliable
+    anyway (see _TEXT_GESTURES)."""
+    user = user_text.lower().replace("’", "'")
+    reply = first_clause.lower().replace("’", "'")
+    if _SAD.search(user) or _SAD.search(reply):
+        emotion = "empathetic"
+    elif is_happy_text(user_text, reply=False) or is_happy_text(first_clause):
+        emotion = "happy"
+    else:
+        emotion = "friendly"
+    gesture = gesture_from_text(first_clause) or "none"
+    behavior = from_meta({"emotion": emotion, "gesture": gesture, "intensity": 0.5 if gesture in ("nod", "shake") else 0.4})
+    behavior.source = "text"
+    return behavior
+
+
 def refine_behavior(behavior: Behavior, first_clause: str) -> Behavior | None:
     """The behaviour adjusted to the reply's first clause - the gesture its stance implies, a smile for a
     happy start ("Congratulations!", "You're welcome!") - or None if nothing changes."""

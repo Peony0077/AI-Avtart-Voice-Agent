@@ -40,6 +40,11 @@ def test_pause_depends_on_punctuation(clause, pause):
     ("Fruits, nuts, etc.", "Fruits, nuts, et cetera."),
     ("It is 11.4 km, 80 km/h.", "It is 11.4 kilometers, 80 kilometers per hour."),
     ("Call 555-1234 on 2024-05-01.", "Call 555-1234 on 2024-05-01."),     # no false ranges
+    ("He lives on Main St. near the park.", "He lives on Main Street near the park."),   # was "Maincent"
+    ("We flew to St. Louis.", "We flew to Saint Louis."),
+    ("Go to Main St. Then turn left.", "Go to Main Street. Then turn left."),
+    ("Turn onto Park Rd.", "Turn onto Park Road."),
+    ("Mt. Fuji is tall.", "Mount Fuji is tall."),
 ])
 def test_spoken_forms(text, spoken):
     assert normalize_for_speech(text) == spoken

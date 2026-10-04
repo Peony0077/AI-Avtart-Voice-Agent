@@ -37,8 +37,13 @@ class LLMCfg(BaseModel):
     top_p: float = 0.8
     max_tokens: int = 320
     request_timeout_s: float = 60.0
-    history_turns: int = 8
+    history_turns: int = 16    # messages kept verbatim after a trim (up to twice that before one); older ones
+    #                            are summarised. 8 lost the start of a 10-exchange chat ("what did we talk about first?")
     prefetch_on_pause: bool = True    # start the answer at the VAD pause, adopt it at the endpoint
+    behavior_tag: bool = False        # LLM writes [emotion|gesture|intensity] first (+~180 ms); else read from the words
+    # With speech the LLM writes just in time (llm/client.py pause/resume): the first clause, then nothing
+    # until its audio is out, then one clause at a time whenever less than this much speech is queued.
+    speech_ahead_ms: int = 3000
 
 
 class STTCfg(BaseModel):
@@ -55,7 +60,8 @@ class VADCfg(BaseModel):
     bargein_threshold: float = 0.75   # stricter while the assistant is speaking
     min_speech_ms: int = 200          # speech needed to start an utterance
     bargein_min_ms: int = 260         # speech needed to interrupt the assistant
-    endpoint_ms: int = 550            # trailing silence that ends an utterance
+    endpoint_ms: int = 450            # trailing silence that ends an utterance (550 before the unfinished-question
+    #                                   wait and the continuation merge made a shorter one safe)
     continue_ms: int = 1000           # extra wait when the transcript looks unfinished ("I would like to")
     continuation_s: float = 3.0       # user resumes this soon, before hearing much of the reply: same question
     preroll_ms: int = 500             # audio kept before speech start (300 clipped soft first words: "Can you" -> "and you")
@@ -92,7 +98,7 @@ class AvatarCfg(BaseModel):
     worker_python: str = "avatar/musetalk/.venv/Scripts/python.exe"
     avatar_id: str = "dev_girl"
     fps: int = 20
-    jpeg_quality: int = 80
+    jpeg_quality: int = 90      # speech frames; idle frames are stored at 90 too (no visible change when she stops talking)
     gate_frames: int = 4        # lip-synced frames rendered before a turn's first audio is released
                                 # (measured with the GPU kept warm: 4 -> no late frames; 2 -> lips lag at start)
     late_ms: int = 100          # skip speech frames that would reach the browser more than this late

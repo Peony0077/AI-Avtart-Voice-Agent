@@ -1,0 +1,153 @@
+{
+  "summary": {
+    "sentences": 18,
+    "ok": 15,
+    "tricky_ok": 15,
+    "tricky": 18
+  },
+  "rows": [
+    {
+      "text": "The meeting is at 3:30 pm on March 5th.",
+      "spoken": "The meeting is at 3 30 pm on March 5th.",
+      "heard": "The meeting is at 3.30 p.m. on March 5th.",
+      "missing": [
+        "pm"
+      ],
+      "ok": true
+    },
+    {
+      "text": "It costs $12.99, or about 11 euros.",
+      "spoken": "It costs $12.99, or about 11 euros.",
+      "heard": "It costs $12.99, or about 11 euros.",
+      "missing": [],
+      "ok": true
+    },
+    {
+      "text": "Around 37% of people agree with that.",
+      "spoken": "Around 37% of people agree with that.",
+      "heard": "Around 37% of people agree with that.",
+      "missing": [],
+      "ok": true
+    },
+    {
+      "text": "The population is about 14 million people.",
+      "spoken": "The population is about 14 million people.",
+      "heard": "The population is about 14 million people.",
+      "missing": [],
+      "ok": true
+    },
+    {
+      "text": "Water boils at 100\u00b0C and freezes at 0\u00b0C.",
+      "spoken": "Water boils at 100 degrees Celsius and freezes at 0 degrees Celsius.",
+      "heard": "Water boils at 100 degrees Celsius and freezes at 0 degrees Celsius.",
+      "missing": [
+        "c",
+        "c"
+      ],
+      "ok": false
+    },
+    {
+      "text": "Dr. Smith lives on Main St. near the park.",
+      "spoken": "Dr. Smith lives on Main St. near the park.",
+      "heard": "Dr. Smith lives on Maincent, near the park.",
+      "missing": [
+        "main",
+        "st"
+      ],
+      "ok": false
+    },
+    {
+      "text": "She was born in 1987 and moved to Canada in 2004.",
+      "spoken": "She was born in 1987 and moved to Canada in 2004.",
+      "heard": "She was born in 1987 and moved to Canada in 2004.",
+      "missing": [],
+      "ok": true
+    },
+    {
+      "text": "That is version 2.5 of the app.",
+      "spoken": "That is version 2.5 of the app.",
+      "heard": "That is version 2.5 of the app.",
+      "missing": [],
+      "ok": true
+    },
+    {
+      "text": "I'll be there in 10-15 minutes.",
+      "spoken": "I'll be there in 10 to 15 minutes.",
+      "heard": "I'll be there in 10 to 15 minutes.",
+      "missing": [],
+      "ok": true
+    },
+    {
+      "text": "It's about 5 km away, roughly 3 miles.",
+      "spoken": "It's about 5 kilometers away, roughly 3 miles.",
+      "heard": "It's about 5 kilometers away, roughly 3 miles.",
+      "missing": [
+        "km"
+      ],
+      "ok": true
+    },
+    {
+      "text": "The 21st century started in 2001.",
+      "spoken": "The 21st century started in 2001.",
+      "heard": "The twenty-first century started in 2001.",
+      "missing": [
+        "one"
+      ],
+      "ok": true
+    },
+    {
+      "text": "Eat some fruit, e.g. apples or pears.",
+      "spoken": "Eat some fruit, for example apples or pears.",
+      "heard": "Eat some fruit, for example apples or pears.",
+      "missing": [
+        "e",
+        "g"
+      ],
+      "ok": false
+    },
+    {
+      "text": "NASA and the FBI both said OK.",
+      "spoken": "NASA and the FBI both said OK.",
+      "heard": "NASA and the FBI both said OK.",
+      "missing": [],
+      "ok": true
+    },
+    {
+      "text": "It's 72\u00b0F and sunny today.",
+      "spoken": "It's 72 degrees Fahrenheit and sunny today.",
+      "heard": "It's 72 degrees Fahrenheit and sunny today.",
+      "missing": [
+        "f"
+      ],
+      "ok": true
+    },
+    {
+      "text": "Take 2-3 tablets every 8 hours.",
+      "spoken": "Take 2 to 3 tablets every 8 hours.",
+      "heard": "Take two to three tablets every eight hours.",
+      "missing": [],
+      "ok": true
+    },
+    {
+      "text": "The flight leaves at 9:05 and lands at 13:40.",
+      "spoken": "The flight leaves at 9 oh 5 and lands at 13 40.",
+      "heard": "The flight leaves at 9.05 and lands at 13.40.",
+      "missing": [],
+      "ok": true
+    },
+    {
+      "text": "Mount Everest is 8,849 meters tall.",
+      "spoken": "Mount Everest is 8,849 meters tall.",
+      "heard": "Mount Everest is 8,849 meters tall.",
+      "missing": [],
+      "ok": true
+    },
+    {
+      "text": "That was about ~20 years ago.",
+      "spoken": "That was about 20 years ago.",
+      "heard": "That was about 20 years ago.",
+      "missing": [],
+      "ok": true
+    }
+  ]
+}

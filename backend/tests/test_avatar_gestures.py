@@ -80,3 +80,45 @@ def test_earliest_start_rules():
     assert earliest_start(done, now, 110, state_default=True, min_gap=100) is None
     assert earliest_start(done, now, 160, state_default=True, min_gap=100) == 160
     assert earliest_start(done, now, 110, state_default=False, min_gap=0) == 110
+
+
+# Seamless loops (new builds): 30 s played forward, no ping-pong rewind (owner: "not fully realistic").
+def test_seamless_curves_join_without_a_seam():
+    c = idle_curves(600, 20, periodic=True)
+    for axis, v in c.items():
+        steps = np.abs(np.diff(v))
+        # the step from the last frame back to the first is no bigger than an ordinary step
+        assert abs(v[0] - v[-1]) <= max(steps.max(), 1e-6) + 1e-9, axis
+
+
+def test_seamless_blinks_are_irregular_and_never_cross_the_seam():
+    e = idle_curves(600, 20, periodic=True)["eye_open"]
+    starts = np.flatnonzero((e[1:] < 0.5) & (e[:-1] >= 0.5))
+    assert 6 <= len(starts) <= 14                                   # 12-28 a minute
+    assert np.diff(starts).std() > 4                                # not a metronome
+    assert e[0] == 1.0 and e[-12:].min() == 1.0                     # open across the seam
+
+
+def test_seamless_gaze_holds_and_jumps_like_real_eyes():
+    gx = idle_curves(600, 20, periodic=True)["gaze_x"]
+    steps = np.abs(np.diff(gx))
+    assert (steps < 0.1).mean() > 0.8                               # mostly fixations (small drift) ...
+    assert steps.max() > 0.5                                        # ... and quick saccades
+
+
+def test_seamless_windows_play_forward_only():
+    w = gesture_windows(600, 20, "small_nod", gap=12)
+    assert cycle_windows(w, 600, pingpong=False) == w
+    start, end = next_window(595, w, 600)                           # wraps into the next loop cycle
+    assert start >= 600 and end - start == w[0][1] - w[0][0]
+
+
+def test_talking_windows_each_move_differently_and_join_the_idle_motion():
+    a, b = gesture_delta("talk", 20, seed=4), gesture_delta("talk", 20, seed=56)
+    assert not np.allclose(a["yaw"], b["yaw"])                      # chained windows do not repeat
+    for d in (a, b):
+        for v in d.values():
+            assert abs(v[0]) < 1e-9 and abs(v[-1]) < 1e-9           # starts and ends on the idle motion
+            assert np.abs(v).max() <= 2.2 + 1e-9                    # small: talking, not gesturing
+    w = gesture_windows(600, 20, "talk")
+    assert all(b[0] - a[1] <= 4 for a, b in zip(w, w[1:], strict=False))   # nearly back to back

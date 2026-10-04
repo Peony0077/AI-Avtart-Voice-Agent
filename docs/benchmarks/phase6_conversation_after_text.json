@@ -1,0 +1,145 @@
+{
+  "summary": {
+    "turns": 12,
+    "ok": 11,
+    "content_ok": 12,
+    "length_ok": 11,
+    "format_ok": 12,
+    "first_text_ms_p50": 76.0,
+    "first_text_ms_max": 269
+  },
+  "rows": [
+    {
+      "first_ms": 269,
+      "done_ms": 803,
+      "reply": "Hi Sam! That's such a lovely city, full of life and great food. How's your time in Osaka treating you so far?",
+      "user": "Hi! My name is Sam and I live in Osaka.",
+      "sentences": 3,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 79,
+      "done_ms": 245,
+      "reply": "The capital of Japan is Tokyo.",
+      "user": "What's the capital of Japan?",
+      "sentences": 1,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 75,
+      "done_ms": 331,
+      "reply": "Tokyo has about 13.9 million people living in its metropolitan area.",
+      "user": "And roughly how many people live there?",
+      "sentences": 1,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 66,
+      "done_ms": 206,
+      "reply": "Your name is Sam.",
+      "user": "What's my name?",
+      "sentences": 1,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 68,
+      "done_ms": 195,
+      "reply": "You live in Osaka.",
+      "user": "Which city do I live in?",
+      "sentences": 1,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 70,
+      "done_ms": 1847,
+      "reply": "A rainbow forms when sunlight passes through raindrops in the air. The raindrops act like tiny prisms, bending and splitting the light into its different colors. Each color bends at a slightly different angle, which spreads them out into the familiar arc of red, orange, yellow, green, blue, indigo, and violet. This happens best when the sun is behind you and rain is in front, with your back to the sun. The rainbow only appears when the sun is low in the sky, like after a rainstorm. It's not a physical object but an optical illusion created by the way light interacts with water droplets. And because each person sees the rainbow from a different angle, it can look slightly different to each of us.",
+      "user": "Explain in detail how a rainbow forms.",
+      "sentences": 7,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 141,
+      "done_ms": 235,
+      "reply": "Blue.",
+      "user": "In one word: what colour is the sky on a clear day?",
+      "sentences": 1,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 73,
+      "done_ms": 265,
+      "reply": "Fifteen percent of eighty is 12.",
+      "user": "What is fifteen percent of eighty?",
+      "sentences": 1,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 72,
+      "done_ms": 295,
+      "reply": "People first walked on the Moon in 1969.",
+      "user": "In which year did people first walk on the moon?",
+      "sentences": 1,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 77,
+      "done_ms": 698,
+      "reply": "That's totally normal, everyone feels nervous before an interview. Just remember, you've already done the hard work, and you're prepared. Take a deep breath, stay calm, and focus on being yourself. You've got this!",
+      "user": "I'm feeling a bit nervous about a job interview tomorrow.",
+      "sentences": 4,
+      "ok_content": true,
+      "ok_length": false,
+      "ok_format": true,
+      "ok": false
+    },
+    {
+      "first_ms": 90,
+      "done_ms": 724,
+      "reply": "We started by talking about you living in Osaka, and then I asked you about the capital of Japan and how many people live there. After that, we discussed rainbows, colors, percentages, and your feelings about the job interview.",
+      "user": "Can you remind me what we talked about first?",
+      "sentences": 2,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 88,
+      "done_ms": 338,
+      "reply": "You're welcome, Sam. Have a great day in Osaka!",
+      "user": "Thanks, that's all for now.",
+      "sentences": 2,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    }
+  ]
+}

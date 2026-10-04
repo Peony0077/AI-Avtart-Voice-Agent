@@ -1,5 +1,6 @@
-# Full experience: voice pipeline + realistic neural avatar (LivePortrait loops + MuseTalk lip sync).
-# Build the avatar once first:  avatar\musetalk\.venv\Scripts\python avatar\musetalk\build_avatar.py --photo data\avatars\dev_girl\photo.png --id dev_girl
+﻿# Full experience: voice pipeline + realistic neural avatar (LivePortrait loops + MuseTalk lip sync).
+# Build the avatar once first (~45 min):  avatar\musetalk\.venv\Scripts\python avatar\musetalk\build_avatar.py --photo data\avatars\dev_girl\photo.png --id dev_girl_v2
+#   then the talking head motion (~15 min):  ...build_avatar.py --id dev_girl_v2 --gestures-only --gestures talk
 llm:
   context: 4096
   max_tokens: 320
@@ -10,5 +11,7 @@ tts:
   voice: af_heart
 avatar:
   enabled: true
-  avatar_id: dev_girl
-  jpeg_quality: 80
+  avatar_id: dev_girl_v2   # seamless 30 s loops + talking motion (dev_girl: the first, 7 s ping-pong build)
+  jpeg_quality: 90
+  gate_frames: 4        # lip-synced frames before the first audio. With the LLM writing just in time: 2 -> voice p50
+  #                        854 ms but 5.5 % late frames; 3 -> 938 ms, 5.0 % (10 min); 4 -> ~1,000 ms, 2.9 %

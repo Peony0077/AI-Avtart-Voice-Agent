@@ -3,7 +3,8 @@
 Gestures are pre-rendered into *variants* of the expression loops that differ only inside short
 windows (motion.gesture_windows). The worker plays a gesture by showing the variant's frames for the
 next window; outside windows the variant and the base loop are identical, so there is no jump.
-Loops play ping-pong (forward, then backward), so every forward window also exists mirrored.
+Ping-pong loops (forward, then backward) have every forward window also mirrored; seamless loops
+play forward only.
 """
 from __future__ import annotations
 
@@ -11,8 +12,10 @@ MIN_INTENSITY = 0.2            # quieter requests are ignored ("keep motions sub
 FULL_NOD_INTENSITY = 0.45      # below this a "nod" is played as a small nod
 
 
-def cycle_windows(forward: list[tuple[int, int]], n_forward: int) -> list[tuple[int, int]]:
-    """Windows in loop-index space over one ping-pong cycle of 2 * n_forward frames."""
+def cycle_windows(forward: list[tuple[int, int]], n_forward: int, pingpong: bool = True) -> list[tuple[int, int]]:
+    """Windows in loop-index space over one cycle: 2 * n_forward frames (ping-pong) or n_forward."""
+    if not pingpong:
+        return sorted(forward)
     n2 = 2 * n_forward
     return sorted([(s, e) for s, e in forward] + [(n2 - e, n2 - s) for s, e in forward])
 

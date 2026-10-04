@@ -1,8 +1,17 @@
-"""Procedural idle motion for the face rig: blinks, subtle head drift, micro-saccades.
+"""Procedural idle motion for the face rig: blinks, head drift, eye movements.
 
 All emotion loops of an avatar share the same seed → identical head/blink/gaze
 timing; they differ only in expression offsets. The worker can therefore switch
 between loops at the same frame index without a visible jump in head position.
+
+Two kinds of loops:
+  * ping-pong (first avatars): 7 s played forward then backward - every 7 s the head, eyes and
+    blinks visibly rewound, and the same 14 s repeated (owner: "not fully realistic").
+  * seamless (periodic=True, default for new builds): 30 s played forward and repeated. Every
+    motion repeats exactly once per loop (head drift frequencies are whole cycles per loop), so the
+    end joins the start without a seam. The eyes hold a point and jump to the next one like real
+    eyes (fixations and saccades) instead of wobbling, blinks come at irregular intervals (sometimes
+    two in a row), and a slight breathing rhythm moves the head.
 """
 from __future__ import annotations
 
@@ -51,6 +60,10 @@ GESTURES: dict[str, dict] = {
     "nod": {"seconds": 1.1, "pitch": 6.0, "cycles": 2},
     "head_tilt": {"seconds": 1.6, "roll": 5.0, "hold": 0.5},
     "shake": {"seconds": 1.0, "yaw": 5.5, "cycles": 1.5},
+    # Talking: people move their head while they speak. Windows of small, varied head movement (each
+    # window its own random pattern, 0.5-1.6 Hz like speech-related motion) that the worker chains
+    # while the avatar speaks; between them the head is back on the idle motion for a moment.
+    "talk": {"seconds": 2.4, "talk": {"pitch": 2.0, "yaw": 2.2, "roll": 1.0}, "gap": 4},
 }
 # which expression loops get which gesture (natural pairings; each variant costs build time and RAM)
 GESTURE_VARIANTS: dict[str, tuple[str, ...]] = {
@@ -58,20 +71,39 @@ GESTURE_VARIANTS: dict[str, tuple[str, ...]] = {
     "nod": ("neutral", "friendly", "happy", "concerned"),            # concerned: the empathetic nod
     "head_tilt": ("neutral", "friendly", "concerned", "thinking"),   # neutral: "serious" replies tilt too
     "shake": ("neutral", "concerned"),
+    "talk": ("neutral", "friendly", "happy", "concerned"),         # the loops replies are spoken with
 }
-GESTURE_GAP_FRAMES = 8        # frames between two windows of the same gesture
-GESTURE_MARGIN_FRAMES = 4     # keep windows away from the loop ends (ping-pong turning points)
+GESTURE_GAP_FRAMES = 8        # frames between two windows of the same gesture (ping-pong loops)
+GESTURE_GAP_FRAMES_LONG = 12  # seamless loops are 4x longer: a little sparser, to keep the RAM in check
+GESTURE_MARGIN_FRAMES = 4     # keep windows away from the loop ends (turning point / seam)
 
 
 def gesture_length(name: str, fps: float) -> int:
     return round(GESTURES[name]["seconds"] * fps)
 
 
-def gesture_delta(name: str, fps: float) -> dict[str, np.ndarray]:
+def talk_delta(n: int, fps: float, seed: int) -> dict[str, np.ndarray]:
+    """One window of talking head motion: smooth random movement on every axis inside an envelope
+    that is 0 (and flat) at both ends. ``seed`` (the window's start frame) makes every window
+    different, so chained windows do not repeat a pattern."""
+    rng = np.random.default_rng(1000 + seed)
+    t = np.arange(n) / fps
+    env = np.sin(math.pi * np.arange(n) / max(1, n - 1)) ** 2
+    out = {}
+    for axis, amp in GESTURES["talk"]["talk"].items():
+        sig = sum(rng.uniform(0.5, 1.0) * np.sin(2 * math.pi * f * t + rng.uniform(0, 2 * math.pi))
+                  for f in rng.uniform(0.5, 1.6, size=2))
+        out[axis] = amp * env * sig / (np.abs(sig).max() + 1e-6)
+    return out
+
+
+def gesture_delta(name: str, fps: float, seed: int = 0) -> dict[str, np.ndarray]:
     """Head-pose offsets over the gesture, per frame. They start and end at 0, so a gesture window
     joins the unchanged loop frames around it without a jump."""
     g = GESTURES[name]
     n = gesture_length(name, fps)
+    if "talk" in g:
+        return talk_delta(n, fps, seed)
     t = np.linspace(0.0, 1.0, n)
     out = {axis: np.zeros(n) for axis in ("pitch", "yaw", "roll")}
     if "pitch" in g:            # nod: down and back up; a second nod is smaller
@@ -87,10 +119,10 @@ def gesture_delta(name: str, fps: float) -> dict[str, np.ndarray]:
     return out
 
 
-def gesture_windows(n_frames: int, fps: float, name: str) -> list[tuple[int, int]]:
-    """[start, end) frame windows of a gesture inside a loop's forward half (n_frames frames)."""
+def gesture_windows(n_frames: int, fps: float, name: str, gap: int = GESTURE_GAP_FRAMES) -> list[tuple[int, int]]:
+    """[start, end) frame windows of a gesture inside a loop's forward part (n_frames frames)."""
     length = gesture_length(name, fps)
-    step = length + GESTURE_GAP_FRAMES
+    step = length + GESTURES[name].get("gap", gap)
     last = n_frames - GESTURE_MARGIN_FRAMES - length
     return [(s, s + length) for s in range(GESTURE_MARGIN_FRAMES, last + 1, step)]
 
@@ -104,9 +136,90 @@ def _smooth_noise(n: int, fps: float, rng: np.random.Generator, freqs=(0.07, 0.1
     return sig / (np.abs(sig).max() + 1e-6)
 
 
-def idle_curves(n: int, fps: float, seed: int = 7, head_amp=(1.8, 2.6, 1.0), blinks_per_min: float = 16) -> dict:
-    """Shared motion curves (length n)."""
+def _periodic_noise(n: int, fps: float, rng: np.random.Generator, freqs=(0.07, 0.13, 0.23)) -> np.ndarray:
+    """Smooth noise that repeats exactly every n frames: each frequency is rounded to a whole number
+    of cycles per loop, so the last frame joins the first without a seam."""
+    span = n / fps
+    t = np.arange(n) / fps
+    sig = np.zeros(n)
+    for f in freqs:
+        k = max(1, round(f * span))
+        sig += rng.uniform(0.6, 1.0) * np.sin(2 * math.pi * k * t / span + rng.uniform(0, 2 * math.pi))
+    return sig / (np.abs(sig).max() + 1e-6)
+
+
+def _circular_smooth(x: np.ndarray, frames: float) -> np.ndarray:
+    """Gaussian smoothing that wraps around the loop end (keeps a periodic curve periodic)."""
+    radius = max(1, int(3 * frames))
+    k = np.exp(-0.5 * (np.arange(-radius, radius + 1) / frames) ** 2)
+    k /= k.sum()
+    padded = np.concatenate([x[-radius:], x, x[:radius]])
+    return np.convolve(padded, k, mode="valid")
+
+
+def eye_movements(n: int, fps: float, rng: np.random.Generator, amp=(2.0, 1.2)) -> tuple[np.ndarray, np.ndarray]:
+    """Gaze as real eyes move: fixations of 0.5-2.5 s, mostly near the viewer, now and then a glance
+    a little aside, joined by quick saccades (~80 ms), plus a tiny drift. Periodic over n frames
+    (the last fixation returns to the first one's point)."""
+    gx, gy = np.zeros(n), np.zeros(n)
+    t, points = 0, []
+    while t < n:
+        dur = int(rng.uniform(0.5, 2.5) * fps)
+        if rng.random() < 0.7:          # near the centre: looking at the viewer
+            x, y = rng.normal(0, 0.3 * amp[0]), rng.normal(0, 0.3 * amp[1])
+        else:                           # a glance aside, more often sideways than up/down
+            x, y = rng.uniform(-amp[0], amp[0]), rng.uniform(-0.6 * amp[1], 0.6 * amp[1])
+        points.append((t, min(n, t + dur), x, y))
+        t += dur
+    for k, (s, e, x, y) in enumerate(points):
+        if k == len(points) - 1 and len(points) > 1:
+            x, y = points[0][2], points[0][3]      # the seam: back to where the loop starts
+        gx[s:e], gy[s:e] = x, y
+    drift_x = 0.15 * amp[0] * _periodic_noise(n, fps, rng, freqs=(0.3, 0.55))
+    drift_y = 0.15 * amp[1] * _periodic_noise(n, fps, rng, freqs=(0.25, 0.5))
+    sacc = 0.03 * fps                               # ~80 ms transitions at any frame rate
+    return _circular_smooth(gx, sacc) + drift_x, _circular_smooth(gy, sacc) + drift_y
+
+
+def blink_curve(n: int, fps: float, rng: np.random.Generator, blinks_per_min: float = 15) -> np.ndarray:
+    """Eye openness with blinks at irregular intervals (1.6-5.6 s at 15/min), each a little different
+    in speed, and now and then two in a row; none across the loop seam."""
+    eye = np.ones(n)
+    scale = 15.0 / blinks_per_min
+    t = rng.uniform(0.4, 1.5)
+    while True:
+        length = rng.uniform(0.85, 1.25)            # slower or quicker blink
+        blink = np.interp(np.linspace(0, len(_BLINK) - 1, max(4, round(len(_BLINK) * length * fps / 25))),
+                          np.arange(len(_BLINK)), _BLINK)
+        start = int(t * fps)
+        if start + len(blink) >= n - int(0.6 * fps):
+            break
+        eye[start:start + len(blink)] = np.minimum(eye[start:start + len(blink)], blink)
+        if rng.random() < 0.12:                     # a double blink
+            second = start + len(blink) + int(rng.uniform(0.12, 0.25) * fps)
+            if second + len(blink) < n - int(0.6 * fps):
+                eye[second:second + len(blink)] = np.minimum(eye[second:second + len(blink)], blink)
+                t = second / fps
+        t += rng.uniform(1.6, 5.6) * scale
+    return eye
+
+
+def idle_curves(n: int, fps: float, seed: int = 7, head_amp=(1.8, 2.6, 1.0), blinks_per_min: float = 16,
+                periodic: bool = False) -> dict:
+    """Shared motion curves (length n). periodic: a seamless loop (see the module docstring)."""
     rng = np.random.default_rng(seed)
+    if periodic:
+        span = n / fps
+        breath = 0.25 * np.sin(2 * math.pi * max(1, round(0.24 * span)) * np.arange(n) / n)   # ~0.24 Hz
+        gaze_x, gaze_y = eye_movements(n, fps, rng)
+        return {
+            "pitch": head_amp[0] * _periodic_noise(n, fps, rng) + breath,
+            "yaw": head_amp[1] * _periodic_noise(n, fps, rng),
+            "roll": head_amp[2] * _periodic_noise(n, fps, rng),
+            "eye_open": blink_curve(n, fps, rng),
+            "gaze_x": gaze_x,
+            "gaze_y": gaze_y,
+        }
     curves = {
         "pitch": head_amp[0] * _smooth_noise(n, fps, rng),
         "yaw": head_amp[1] * _smooth_noise(n, fps, rng),
@@ -125,12 +238,13 @@ def idle_curves(n: int, fps: float, seed: int = 7, head_amp=(1.8, 2.6, 1.0), bli
     return curves
 
 
-def gesture_params(curves: dict, expression: str, gesture: str, fps: float) -> dict[int, RigParams]:
+def gesture_params(curves: dict, expression: str, gesture: str, fps: float,
+                   gap: int = GESTURE_GAP_FRAMES) -> dict[int, RigParams]:
     """Rig parameters of the frames inside the gesture windows (the rest equals the expression loop)."""
     base = loop_params(curves, expression)
-    delta = gesture_delta(gesture, fps)
     out: dict[int, RigParams] = {}
-    for start, end in gesture_windows(len(base), fps, gesture):
+    for start, end in gesture_windows(len(base), fps, gesture, gap):
+        delta = gesture_delta(gesture, fps, seed=start)
         for k, f in enumerate(range(start, end)):
             p = base[f]
             out[f] = RigParams(pitch=p.pitch + float(delta["pitch"][k]), yaw=p.yaw + float(delta["yaw"][k]),

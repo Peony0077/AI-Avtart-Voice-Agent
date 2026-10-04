@@ -36,6 +36,19 @@ def collapse_spaces(text: str) -> str:
 _UNITS = {"km": "kilometers", "kg": "kilograms", "cm": "centimeters", "mm": "millimeters", "ml": "milliliters",
           "mph": "miles per hour", "km/h": "kilometers per hour", "kph": "kilometers per hour", "lbs": "pounds",
           "lb": "pounds", "hrs": "hours", "mins": "minutes", "sec": "seconds", "secs": "seconds"}
+_STREET = {"St": "Street", "Ave": "Avenue", "Rd": "Road", "Blvd": "Boulevard", "Ln": "Lane"}
+
+
+def _street(m: re.Match) -> str:
+    """"Main St." -> "Main Street", "St. Louis" -> "Saint Louis"; keeps the full stop when the
+    abbreviation also ended the sentence ("... on Park Rd. Then ..." / at the end)."""
+    name, abbr, before_capital = m[1] or "", m[2], m[3]
+    if abbr == "St" and not name and before_capital:
+        return "Saint"
+    ends = before_capital is not None or m.end() == len(m.string.rstrip())
+    return f"{name}{_STREET[abbr]}{'.' if ends else ''}"
+
+
 _SPEECH_RULES: list[tuple[re.Pattern, object]] = [
     (re.compile(r"(\d)\s?°\s?C\b"), r"\1 degrees Celsius"),
     (re.compile(r"(\d)\s?°\s?F\b"), r"\1 degrees Fahrenheit"),
@@ -46,6 +59,9 @@ _SPEECH_RULES: list[tuple[re.Pattern, object]] = [
     (re.compile(r"\betc\.(?=\s*$)", re.I), "et cetera."),
     (re.compile(r"\betc\.", re.I), "et cetera"),
     (re.compile(r"\bapprox\.", re.I), "approximately"),
+    # street and place abbreviations (scripts/bench_tts.py: "Main St." was spoken "Maincent")
+    (re.compile(r"(\b[A-Z][a-z]+ )?\b(St|Ave|Rd|Blvd|Ln)\.(?=(\s+[A-Z])|\s*$)?"), _street),
+    (re.compile(r"\bMt\.(?=\s+[A-Z])"), "Mount"),
     # numeric range "2-3", "10-15" (short numbers only: not phone numbers or dates)
     (re.compile(r"(?<![\d/.-])\b(\d{1,3})\s?-\s?(\d{1,3})\b(?![-/:.]\d)"), r"\1 to \2"),
     # clock times: "9:00" -> "9 o'clock", "13:00" -> "13 hundred", "9:05" -> "9 oh 5", "9:30" -> "9 30"

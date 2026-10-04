@@ -603,6 +603,141 @@ Measured with the real LLM (`scripts/bench_warmth.py`, 15 messages × 2, [phase6
 Browser test (`phase6_typed_speech.spec.js`): good news → smile while answering; "My grandmother passed
 away" → concerned face, no smile; lip sync unchanged (0 late frames in 2 runs, A/V offset p90 42–44 ms).
 
+### A natural, continuous avatar (owner's test, 2026-10-04)
+
+The owner: "whenever she finishes her words, her face moves back to the original face"; "not fully
+realistic, needs to be smoother"; "the training is too short". Measured in the browser on the drawn
+canvas (`tests/e2e/phase6_speech_end.spec.js`: share of pixels that change visibly from one drawn
+frame to the next, 128x128 grayscale; with `SHOTS=1` it saves the frames around jumps and a filmstrip).
+
+**The end of a reply** — three causes, all fixed:
+
+| Cause | Fix |
+|---|---|
+| During speech the worker sends no idle frames; when the audio ended the browser fell back to the last idle frame received *before* the reply — seconds old, another head pose — until fresh ones arrived | idle frames are numbered like speech frames; the browser never shows idle frames older than the reply's last frame and continues the idle video on the next frame (`continueIdleAfter`) |
+| The lip-synced lower face switched to the photo's in one frame (different lip shape and colour) | after the last word the worker renders a **closing tail** (`_render_tail`): 200 ms of lip sync on silence (the mouth closes from its last sound), then 400 ms in which the lip-synced face fades into the loop's own face on the same frames; the idle video continues on the next frame |
+| Speech frames JPEG quality 80, idle frames 93 | both 90 (the picture no longer sharpens when she stops talking) |
+
+| End of a reply | before | after |
+|---|---|---|
+| Biggest change between two drawn frames at the hand-over | **9.8 % / 8.7 %** of the pixels (stale frame, then fresh frame), 7x the frame-to-frame change of speech | **0.5–0.9 %** (ordinary motion) |
+| Longest time without a new frame after the audio ended | – | 68–83 ms |
+
+The browser also plays the idle video at its frame rate from a small buffer (2–4 frames) instead of
+showing each frame when it arrives (uneven over a network, especially through the tunnel), and
+cross-fades briefly whenever it switches between speech and idle frames (120 / 200 ms; e.g. after an
+interruption).
+
+**Lips while speaking**: MuseTalk draws the lips pinker, matte and a little soft, so they changed
+colour whenever she started or stopped talking. The generated lower face now gets the avatar's own lip
+colour (lip pixels found by redness; colour difference a\*b\* 5.1 → 1.3 on 80 speech frames, stable
+from frame to frame) and a light sharpening to the photo's crispness (Laplacian variance 19 → 26,
+photo 24); +4.8 ms CPU per frame (`engine.refine_face`).
+
+**Longer, natural motion ("training")** — nothing is trained per person in this pipeline (LivePortrait
+and MuseTalk are pre-trained models); the avatar is *built*: its idle motion is rendered once from the
+photo. The first build made 7 s loops played forward and backward, so every 7 s the head, the eyes and
+the blinks visibly rewound, and the same 14 s repeated. Rebuilt (`dev_girl_v2`, `build_avatar.py`
+defaults now):
+- **seamless 30 s loops** played forward: every motion repeats exactly once per loop, so the last frame
+  joins the first like any two frames (measured: no visible change at the seam; per-frame change p95
+  0.52 %, the same as inside the loop);
+- **eyes like real eyes**: fixations of 0.5–2.5 s, mostly on the viewer, now and then a glance aside,
+  joined by quick saccades — instead of a slow wobble;
+- **blinks** at irregular intervals (1.6–5.6 s), each a little different in speed, sometimes two in a
+  row; a slight breathing rhythm in the head;
+- **talking head motion**: people move their head while they speak. "talk" windows of 2.4 s with small,
+  varied movement (each window its own pattern) are chained while she speaks
+  (`worker._keep_talking`); they start and end on the idle motion, a gesture the reply asks for
+  (nod, tilt, shake) is never replaced, and none outlasts the reply.
+- Build: 5 loops x 600 frames + nod/tilt/shake variants (~45 min) + talking motion
+  (`--gestures-only --gestures talk`, ~15 min); 680 MB on disk (192 MB before); the worker uses
+  ~1.1 GB RAM, the whole GPU 9.7 of 12 GB. `--gestures-only` now merges into `avatar.json` (it replaced
+  the list, which would have dropped the other gestures).
+- **In-between frames** (browser): the video has 20 frames per second, the screen ~60. Instead of holding
+  each frame for three refreshes, the next frame is blended in as its time approaches (idle and speech;
+  `?nosmooth` turns it off), so head and lip motion move smoothly instead of in 50 ms steps.
+
+**The closing tail on time**: rendering all 12 tail frames took ~800 ms and could only start after the
+last clause, so after a short reply the tail came too late and the browser had already switched to
+idle (the mouth snapped back again). Now only every 2nd tail frame is rendered with lip sync (the
+browser blends the ones in between) and the last one is the loop's own frame (no GPU): 375–425 ms.
+Tail frames carry a flag in the packet header (byte 1, `FLAG_TAIL`); a tail that arrives after the audio
+ended plays from its start while the last spoken frame is held (at most 800 ms). Result on the new
+avatar: both replies of the test play the whole tail (hand-over 650 ms after the audio), biggest change
+between two drawn frames 0–0.18 %, longest hold 66 ms.
+
+### Faster replies and better conversation (2026-10-04)
+
+Owner: "please improve the response speed"; "speech to text, text to speech and conversation are not
+working correctly and efficiently". Where the time went (voice, p50 ms after the end of the user's
+speech, `bench_voice.py`): STT 326 → LLM first token 409 → first *word* 583 → first clause 646 → TTS 824
+→ avatar's first frames and audio 1,163.
+
+| Change | Why | Voice: end of speech → first audio (p50 / p90) |
+|---|---|---|
+| before | | 1,170 / 1,305 ms |
+| **no behaviour tag** (`llm.behavior_tag: false`): the avatar's emotion and gesture come from the words (`behavior_from_text`) | the tag cost ~180 ms before every reply's first word; typed replies: first text 466 → **76 ms** | 1,158 / 1,363 (voice: the answer was already prefetched during the pause) |
+| **silence before the reply 550 → 450 ms**; **avatar gate 4 → 2 frames** | the unfinished-question wait and the continuation merge make a shorter endpoint safe (both pause tests pass) | 1,019 / 1,212 |
+| the LLM pauses after the first clause until the first audio is out, then writes the rest (`LLMClient.stream_chat`, llama-server `/apply-template` + `/completion` from the text so far; its cache keeps the cost to the new tokens) | generating the rest of the reply shared the GPU with the first clause's synthesis (Kokoro 78 → ~170 ms) and the avatar's first frames (~170 → ~330 ms) | 848 / 967 ms — but the rest of the reply was now written during the first sentences' lip sync: 3-min soak late frames 4.6–6.6 %, A/V offset p90 92–104 ms (fails) |
+| (pause after two clauses instead) | | 1,019 / 1,191 ms, lip sync fine (late 0.9 %, p90 45 ms) |
+| **just in time**: the first clause, nothing until its audio is out, then one clause at a time whenever less than 3 s of speech is still to come (`llm.speech_ahead_ms`) | short bursts leave the lip-sync renderer its headroom in between | 854 / 960 ms; 10-min soak: 13 % of the avatar's frames not rendered, 5.5 % of the drawn frames > 120 ms behind (fails) — the LLM's first burst came when the renderer was only 2 frames ahead |
+| + avatar gate 3 frames | the renderer starts 150 ms ahead of the audio | 938 / 1,071 ms; 3-min soak late 3.8 %, but 10 min: 5.0 % (at the limit) |
+| **+ avatar gate 4 frames** (`avatar.gate_frames`, as before today) | 200 ms ahead | **1,001 / 1,098 ms**; 3-min soak late 2.9 %, A/V offset p50 0 ms |
+
+The renderer itself has little headroom (MuseTalk 40–50 ms per frame for 50 ms at 20 fps; cuDNN autotuning
+and channels-last memory layout gave nothing measurable), so every bit of other GPU work during
+playback costs lip-sync frames; that is the trade-off behind the gate. A ~10x faster image decoder for
+MuseTalk (TAESD) would give it real headroom but blurs lip and teeth detail and needs a download.
+
+The "late" figure counts what is on screen: with in-between frames that is the picture between two
+frames, not the older one (the first version of this count overstated lateness, e.g. 7.8 % instead of
+~5.5 %). The test browser does not cost the renderer anything measurable (frames not rendered 11.9 %
+with in-between frames, 12.2 % without), and on the owner's PC the browser runs on another GPU anyway.
+
+Typed messages: first audio ~0.8 s (server) / 0.9 s in the browser (gate 4: 941 ms in the A/V test). No new gaps in the speech
+(longest pause 380–420 ms, player never dry), 16/16 transcripts exact, barge-in 2/2 (detected in
+~0.4 s, 0 stale packets). The chat text now appears clause by clause, in step with the voice. Raw data:
+[no tag](benchmarks/phase6_latency_no_tag.json), [gate 2 + 450 ms](benchmarks/phase6_latency_gate2_endpoint450.json),
+[pause after one clause](benchmarks/phase6_latency_fast_start.json), [just in time](benchmarks/phase6_latency_jit.json), [+ gate 3](benchmarks/phase6_latency_jit_gate3.json), [+ gate 4](benchmarks/phase6_latency_jit_gate4.json),
+[barge-in](benchmarks/phase6_bargein_fast_start.json).
+
+**Conversation** (`scripts/bench_conversation.py`: 12 typed turns in one session — name and city,
+follow-ups, facts, arithmetic, a request for detail, feelings, "what did we talk about first?"):
+
+| | before | after |
+|---|---|---|
+| Turns correct (content, length, no markdown/emoji/tags) | 10 / 12 | **12 / 12** (also with spoken replies and the LLM pause) |
+| "Explain in detail how a rainbow forms." | *"I'm sorry, but I can't explain that in detail right now."* | a 7-sentence explanation |
+| "Can you remind me what we talked about first?" | "rainbows" (wrong: the start was out of the 4-exchange window) | "you living in Osaka, then the capital of Japan …" |
+
+- **Refusals of long answers**: the 1–3 sentence rule made the 4B model refuse detail and stories (3 of
+  40 samples; also seen in user tests). Allowing detail in the system prompt made *every* answer longer
+  (simple questions 2 → 3 sentences, up to 5). Now a request for detail ("explain", "in detail", "a
+  story", "step by step", "how does … work") gets a hint on that turn only: 0 of 40 refused, detailed
+  answers 7–8 sentences, simple ones still 2. The hint is not stored in the history (cached prompt prefix).
+- **Memory**: 16 messages are kept verbatim (8 before; up to twice that before a trim), older ones are
+  summarised with the topics in order.
+- A dash split over two stream pieces left a double space in the chat ("normal,  a little").
+- **After Stop, she went back to the stopped answer**: Stop on a story, then "Now just say OK." →
+  "OK. There once was a lighthouse keeper …" (found by the Stop browser test; 3 of 16 samples). A rule
+  in the system prompt made it worse (4 of 12); a hint on the next message only ("the user stopped your
+  previous answer, reply only to this message") fixed it: 0 of 16, and the test passes 3/3.
+
+**Text to speech** (`scripts/bench_tts.py`: the app's speech text + Kokoro, clause by clause, then
+Whisper): of 18 tricky sentences (times, money, percentages, dates, units, abbreviations) one was really
+mis-spoken — "Main St." came out as "Maincent"; street abbreviations are now spoken ("Main Street",
+"St. Louis" → "Saint Louis", "Park Rd." → "Park Road"). Now **30 of 30** pass: the 18 tricky sentences
+and the 12 replies of a conversation run
+([phase6_tts_roundtrip.json](benchmarks/phase6_tts_roundtrip.json)). Kokoro needs 60–100 ms per first
+clause on an idle GPU; text-to-phoneme is ~2 ms.
+
+**10-minute voice soak, final settings** (gate 4, just-in-time LLM, new avatar): 31/32 turns completed (one
+reply talked over by the looping test microphone), first audio p50 1,031 ms / p90 1,200 ms in the browser,
+0 errors, 0 restarts, late lip-sync frames 1.5 %, A/V offset p50 0 ms, frames not rendered 6.3 %, GPU
+memory +96 MiB in the second half (one allocator block), RAM free ≥ 1.8 GB
+([phase6_soak_avatar_v2_10min.json](benchmarks/phase6_soak_avatar_v2_10min.json)).
+
 ### Lip sync when the PC is busy
 
 The first 30-minute avatar soak (morning, quiet desktop) passed with 2.5 % late frames. Later the same
@@ -675,7 +810,7 @@ Found and fixed by these tests:
 - `logs/backend.log` stopped recording as soon as Kokoro loaded, since Phase 2: Kokoro's `__init__`
   calls `logger.remove()`. Kokoro is now imported before logging is configured.
 - Unit tests for both, for the chunk merging (`backend/tests/test_recovery_units.py`), the answer
-  prefetch (`test_prefetch.py`), the VAD `resume` event, the avatar catch-up and frame-stride rules (`test_avatar_catchup.py`), head gestures (`test_avatar_gestures.py`, `test_gesture_from_text.py`), warmth (`test_warmth.py`), speech output (`test_speech_output_text.py`) and endpointing (`test_endpointing.py`) — 178 unit tests in total.
+  prefetch (`test_prefetch.py`), the VAD `resume` event, the avatar catch-up and frame-stride rules (`test_avatar_catchup.py`), head gestures (`test_avatar_gestures.py`, `test_gesture_from_text.py`), warmth (`test_warmth.py`), speech output (`test_speech_output_text.py`), endpointing (`test_endpointing.py`), the LLM pause (`test_llm_pause.py`) and seamless loops and talking motion (`test_avatar_gestures.py`) — 209 unit tests in total.
 
 ### Observability
 

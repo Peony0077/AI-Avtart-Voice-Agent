@@ -1,0 +1,145 @@
+{
+  "summary": {
+    "turns": 12,
+    "ok": 12,
+    "content_ok": 12,
+    "length_ok": 12,
+    "format_ok": 12,
+    "first_text_ms_p50": 123.0,
+    "first_text_ms_max": 409
+  },
+  "rows": [
+    {
+      "first_ms": 409,
+      "done_ms": 5054,
+      "reply": "Hi Sam! That's awesome, Osaka's such a vibrant city with so much to explore. How's your time there going?",
+      "user": "Hi! My name is Sam and I live in Osaka.",
+      "sentences": 3,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 123,
+      "done_ms": 2137,
+      "reply": "The capital of Japan is Tokyo.",
+      "user": "What's the capital of Japan?",
+      "sentences": 1,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 112,
+      "done_ms": 2393,
+      "reply": "Tokyo has about 13.9 million people in its metropolitan area.",
+      "user": "And roughly how many people live there?",
+      "sentences": 1,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 115,
+      "done_ms": 1988,
+      "reply": "Your name is Sam.",
+      "user": "What's my name?",
+      "sentences": 1,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 119,
+      "done_ms": 2021,
+      "reply": "You live in Osaka.",
+      "user": "Which city do I live in?",
+      "sentences": 1,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 124,
+      "done_ms": 83909,
+      "reply": "A rainbow forms when sunlight passes through raindrops in the air. The light bends and splits into different colors because each color bends at a slightly different angle. This separation creates the familiar colors: red, orange, yellow, green, blue, indigo, and violet. The raindrops act like tiny prisms, reflecting and refracting the light. Rainbows usually appear when the sun is behind you and rain is in front. They're most common after a rain shower when the sun comes out. You see the rainbow because your eyes detect the different wavelengths of light bending in the droplets.",
+      "user": "Explain in detail how a rainbow forms.",
+      "sentences": 7,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 227,
+      "done_ms": 1998,
+      "reply": "Blue.",
+      "user": "In one word: what colour is the sky on a clear day?",
+      "sentences": 1,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 92,
+      "done_ms": 2271,
+      "reply": "15% of 80 is 12.",
+      "user": "What is fifteen percent of eighty?",
+      "sentences": 1,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 123,
+      "done_ms": 2393,
+      "reply": "People first walked on the moon in 1969.",
+      "user": "In which year did people first walk on the moon?",
+      "sentences": 1,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 84,
+      "done_ms": 21405,
+      "reply": "That's totally normal, many people feel that way. Take a deep breath, remember you've prepared, and just focus on being yourself. You've got this!",
+      "user": "I'm feeling a bit nervous about a job interview tomorrow.",
+      "sentences": 3,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 150,
+      "done_ms": 8969,
+      "reply": "We started by talking about you living in Osaka, and then I shared some fun facts about Tokyo and rainbows. You also asked about your name and where you live, both of which I confirmed.",
+      "user": "Can you remind me what we talked about first?",
+      "sentences": 2,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    },
+    {
+      "first_ms": 128,
+      "done_ms": 2613,
+      "reply": "You're welcome, Sam. Have a great day in Osaka!",
+      "user": "Thanks, that's all for now.",
+      "sentences": 2,
+      "ok_content": true,
+      "ok_length": true,
+      "ok_format": true,
+      "ok": true
+    }
+  ]
+}

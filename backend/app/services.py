@@ -136,7 +136,7 @@ class Services:
     async def _warm_llm(self) -> None:
         """Run one tiny request with the real system prompt so its KV prefix is cached."""
         t0 = time.perf_counter()
-        prompt = system_prompt(self.settings.persona_name)
+        prompt = system_prompt(self.settings.persona_name, behavior_tag=self.settings.llm.behavior_tag)   # same prefix as turns (cache)
         try:
             await self.llm.complete([{"role": "system", "content": prompt}, {"role": "user", "content": "Hi"}], max_tokens=4)
         except Exception as exc:  # noqa: BLE001
@@ -175,6 +175,11 @@ class Services:
             self.avatar.send_json({"type": "behavior", "expression": behavior.get("expression"),
                                    "emotion": behavior.get("emotion"), "gesture": behavior.get("gesture"),
                                    "intensity": behavior.get("intensity"), "source": behavior.get("source")})
+
+    def avatar_speech_end(self, turn_id: int, total_ms: float) -> None:
+        """All of the reply's audio has gone to the worker: it renders the closing tail after it."""
+        if self.avatar_ready:
+            self.avatar.send_json({"type": "speech_end", "turn_id": turn_id, "total_ms": round(total_ms)})
 
     def avatar_playback(self, turn_id: int, event: str, played_ms: float = 0.0) -> None:
         if self.avatar_ready:

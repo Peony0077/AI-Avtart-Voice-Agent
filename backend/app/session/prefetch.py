@@ -23,7 +23,7 @@ Retrieve = Callable[[str], Awaitable[tuple[str | None, list[dict], dict | None]]
 class AnswerPrefetch:
     def __init__(self, speech_end_t: float, stt: asyncio.Task, prepare: Callable[[str], str | None],
                  retrieve: Retrieve, build_messages: Callable[[str, str | None], list[dict]],
-                 llm: LLMClient) -> None:
+                 llm: LLMClient, pause_after: Callable[[str], bool] | None = None) -> None:
         self.speech_end_t = speech_end_t
         self.text: str | None = None          # the user text being answered (None until STT is done)
         self.knowledge: str | None = None
@@ -36,6 +36,11 @@ class AnswerPrefetch:
         self.failed = False
         self.decided = asyncio.Event()        # set once it is known what (or whether) it answers
         self._queue: asyncio.Queue = asyncio.Queue()
+        # generation pauses after each clause (LLMClient.stream_chat); the turn that adopts the answer
+        # decides when it continues (resume_fn), before that it waits for the adoption (bounded)
+        self.pause_after = pause_after
+        self.adopted = asyncio.Event()
+        self.resume_fn: Callable[[], Awaitable[None]] | None = None
         self.task = asyncio.create_task(self._run(stt, prepare, retrieve, build_messages, llm), name="answer-prefetch")
 
     async def _run(self, stt, prepare, retrieve, build_messages, llm) -> None:
@@ -51,7 +56,7 @@ class AnswerPrefetch:
             self.t_rag = time.time()
             messages = build_messages(text, self.knowledge)
             self.t_request = time.time()
-            async for delta in llm.stream_chat(messages, self.stats):
+            async for delta in llm.stream_chat(messages, self.stats, pause_after=self.pause_after, resume=self._resume):
                 if self.t_first_token is None:
                     self.t_first_token = time.time()
                 self._queue.put_nowait(delta)
@@ -64,6 +69,14 @@ class AnswerPrefetch:
             self._queue.put_nowait(exc)
         finally:
             self.decided.set()
+
+    async def _resume(self) -> None:
+        try:
+            await asyncio.wait_for(self.adopted.wait(), 10.0)
+        except TimeoutError:
+            return
+        if self.resume_fn is not None:
+            await self.resume_fn()
 
     async def matches(self, speech_end_t: float | None, text: str) -> bool:
         """Usable for this endpoint: no speech after the pause, same text, still healthy."""

@@ -17,7 +17,14 @@ from fastapi import WebSocket
 from loguru import logger
 
 from app.audio.vad import StreamingVAD, VadEvent
-from app.behavior.manager import for_state, from_meta, refine_behavior, smile_for_happy_user, smile_for_user_text
+from app.behavior.manager import (
+    behavior_from_text,
+    for_state,
+    from_meta,
+    refine_behavior,
+    smile_for_happy_user,
+    smile_for_user_text,
+)
 from app.behavior.meta import MetaStreamParser
 from app.behavior.speech_text import clean_delta
 from app.core.logging import write_metrics
@@ -54,7 +61,7 @@ class Session:
         self.sm = StateMachine()
         self.turns = TurnRegistry()
         self.memory = ConversationMemory(persona=self.cfg.persona_name, max_turns=self.cfg.llm.history_turns,
-                                         knowledge_enabled=self.cfg.rag.enabled)
+                                         knowledge_enabled=self.cfg.rag.enabled, behavior_tag=self.cfg.llm.behavior_tag)
         self.outbox = Outbox(ws, self.turns.is_current)
         self.voice_out = False            # replies are spoken (client plays assistant audio)
         self.speaker_on = False           # client asked for spoken replies (also for typed messages)
@@ -195,7 +202,7 @@ class Session:
         self._spec = (ev.speech_end_t, stt)
         if self.cfg.llm.prefetch_on_pause:
             self._prefetch = AnswerPrefetch(ev.speech_end_t, stt, self._prefetch_text, self._retrieve_text,
-                                            self.memory.build, self.svc.llm)
+                                            self.memory.build, self.svc.llm, pause_after=self._pause_after())
 
     def _prefetch_text(self, stt_text: str) -> str | None:
         """The user text the answer would be for (same rules as at the endpoint), or None."""
@@ -314,6 +321,8 @@ class Session:
         if prefetch is not None:
             turn.prefetched = True
             turn.tasks.append(prefetch.task)   # a barge-in cancels it like any other turn task
+            prefetch.resume_fn = (lambda: self._resume_llm(turn)) if self.voice_out else None
+            prefetch.adopted.set()
         self.sm.fire(Event.TEXT_INPUT if source == "text" else Event.TRANSCRIPT_READY)
         self.outbox.json({"type": "user_message", "turn_id": turn.turn_id, "text": text, "source": source},
                          turn.turn_id, force=True)
@@ -344,7 +353,9 @@ class Session:
             knowledge, citations = await self._retrieve(turn)
             stats = LLMStats()
             turn.mark("llm_request")
-            deltas = self.svc.llm.stream_chat(self.memory.build(turn.user_text, knowledge), stats)
+            deltas = self.svc.llm.stream_chat(self.memory.build(turn.user_text, knowledge), stats,
+                                              pause_after=self._pause_after() if self.voice_out else None,
+                                              resume=lambda: self._resume_llm(turn))
         parser, spoken = MetaStreamParser(), []
         speech = chunker = None
         if self.voice_out:
@@ -356,10 +367,17 @@ class Session:
         behavior_sent = False
         behavior = None
         first_clause = True
+        tagged = self.cfg.llm.behavior_tag
 
         def say(clause: str) -> None:
-            nonlocal first_clause
-            if first_clause and behavior is not None:
+            nonlocal first_clause, behavior, behavior_sent
+            if first_clause and not tagged:
+                # no tag: the behaviour comes from the user's words and the reply's first clause, and
+                # reaches the avatar before this clause's audio does
+                behavior = smile_for_happy_user(behavior_from_text(turn.user_text, clause), turn.user_text)
+                self._send_behavior(turn, behavior)
+                behavior_sent = True
+            elif first_clause and behavior is not None:
                 # the first words show the reply's stance ("Yes, ..." -> nod, "No, ..." -> shake) better
                 # than the LLM's tag; refined before this clause's audio reaches the avatar
                 refined = refine_behavior(behavior, clause)
@@ -378,8 +396,14 @@ class Session:
             turn.mark("llm_first_token", prefetch.t_first_token if prefetch else None)
             _meta, text = parser.feed(delta)
             text = clean_delta(text)
-            if not behavior_sent and (parser.meta is not None or text):
+            if text.startswith(" ") and spoken and spoken[-1].endswith(" "):
+                text = text.lstrip(" ")        # "normal —" + " a" -> "normal, " + "a" (not "normal,  a")
+            if not behavior_sent and (parser.meta is not None or text) and (tagged or parser.meta is not None):
                 behavior = smile_for_happy_user(from_meta(parser.meta), turn.user_text)
+                self._send_behavior(turn, behavior)
+                behavior_sent = True
+            elif not behavior_sent and text and chunker is None:      # no speech (muted): from the first words
+                behavior = smile_for_happy_user(behavior_from_text(turn.user_text, text), turn.user_text)
                 self._send_behavior(turn, behavior)
                 behavior_sent = True
             if text:
@@ -409,6 +433,8 @@ class Session:
             await speech.finished.wait()
             if turn.is_cancelled:
                 return
+            if speech.avatar_sink is not None and speech.total_ms > 0:
+                self.svc.avatar_speech_end(tid, speech.total_ms)     # the avatar closes its mouth after the last word
             if speech.total_ms > 0:
                 # wait for the browser to finish playing (bounded)
                 timeout = speech.total_ms / 1000 + 8.0
@@ -446,7 +472,41 @@ class Session:
         if not self.voice_out:
             self._first_output(turn)
 
+    def _pause_after(self):
+        """LLM pause points for spoken replies: after every new speakable clause (as the speech chunker
+        cuts them). Just-in-time writing: generating the rest of a reply at once shared the GPU with the
+        first clause's synthesis and the avatar's first frames (slower start), or - resumed when the first
+        audio was out - with the lip sync of the first sentences (12 % of the avatar's frames skipped).
+        None with the behaviour tag (its header is not speech)."""
+        if self.cfg.llm.behavior_tag:
+            return None
+        seen = 0
+
+        def pause_after(text: str) -> bool:
+            nonlocal seen
+            n = len(ClauseChunker().feed(clean_delta(text)))
+            if n > seen:
+                seen = n
+                return True
+            return False
+        return pause_after
+
+    async def _resume_llm(self, turn: TurnContext) -> None:
+        """When the paused LLM continues: the first time once the first audio is out, later when less
+        than llm.speech_ahead_ms of speech is still to come. Bounded, so a reply never stalls."""
+        try:
+            if not turn.first_audio_sent.is_set():
+                await asyncio.wait_for(turn.first_audio_sent.wait(), 8.0)
+                return
+            deadline = time.perf_counter() + 15.0
+            while (not turn.is_cancelled and turn.speech is not None and time.perf_counter() < deadline
+                   and turn.speech.backlog_ms() > self.cfg.llm.speech_ahead_ms):
+                await asyncio.sleep(0.05)
+        except TimeoutError:
+            pass
+
     def _first_output(self, turn: TurnContext) -> None:
+        turn.first_audio_sent.set()                     # the paused LLM continues (_resume_llm)
         if self.turns.is_current(turn.turn_id) and self.sm.state is State.THINKING:
             turn.mark("first_output")
             self.sm.fire(Event.FIRST_OUTPUT)
@@ -511,7 +571,7 @@ class Session:
             self._carry_text = turn.user_text
         else:
             body = f"{heard} [interrupted by the user]" if heard else "[interrupted before replying]"
-            self.memory.add(turn.user_text, (turn.header or "") + body)
+            self.memory.add(turn.user_text, (turn.header or "") + body, interrupted=True)
         self.sm.fire(Event.CANCEL_DONE)
         cancel_ms = (time.perf_counter() - t_start) * 1000
         self.outbox.json({"type": "assistant_done", "turn_id": turn.turn_id, "text": heard, "interrupted": True,

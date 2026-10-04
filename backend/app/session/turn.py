@@ -37,6 +37,7 @@ class TurnContext:
     avatar_first_ms: float | None = None
     playback_gap_ms: float = 0.0      # browser player ran dry mid-reply (audible gaps)
     prefetched: bool = False          # answer was started at the VAD pause (session/prefetch.py)
+    first_audio_sent: asyncio.Event = field(default_factory=asyncio.Event)   # the LLM resumes (llm/client.py)
 
     def mark(self, name: str, at: float | None = None) -> float:
         """Record a timestamp once (first occurrence wins)."""

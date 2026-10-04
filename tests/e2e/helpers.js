@@ -2,7 +2,11 @@ import { expect } from '@playwright/test'
 import fs from 'node:fs'
 
 // Page path incl. the access token when testing remote access (AVATAR_TOKEN=...)
-export const appPath = (token = process.env.AVATAR_TOKEN) => (token ? `/?token=${encodeURIComponent(token)}` : '/')
+// NOSMOOTH=1: no in-between frames (compares the GPU load of the test browser, which shares this GPU)
+export const appPath = (token = process.env.AVATAR_TOKEN) => {
+  const params = [token ? `token=${encodeURIComponent(token)}` : '', process.env.NOSMOOTH ? 'nosmooth' : ''].filter(Boolean)
+  return params.length ? `/?${params.join('&')}` : '/'
+}
 
 export const manifest = JSON.parse(fs.readFileSync(new URL('./fixtures/manifest.json', import.meta.url)))
 

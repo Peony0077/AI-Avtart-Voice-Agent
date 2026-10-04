@@ -1,6 +1,6 @@
 """Build a talking avatar from ONE photo (offline, once per photo).
 
-    photo ──LivePortrait face rig──► 5 short loops (neutral, friendly, happy, concerned, thinking)
+    photo ──LivePortrait face rig──► 5 seamless 30 s loops (neutral, friendly, happy, concerned, thinking)
           ──LivePortrait face rig──► head-gesture windows (nods, tilt, shake) as small loop deltas
           ──MuseTalk preparation──► face boxes, VAE latents, blend masks (cached)
 
@@ -25,7 +25,16 @@ import torch
 from loguru import logger
 
 from common import AVATARS
-from motion import EXPRESSIONS, GESTURE_VARIANTS, gesture_params, gesture_windows, idle_curves, loop_params
+from motion import (
+    EXPRESSIONS,
+    GESTURE_GAP_FRAMES,
+    GESTURE_GAP_FRAMES_LONG,
+    GESTURE_VARIANTS,
+    gesture_params,
+    gesture_windows,
+    idle_curves,
+    loop_params,
+)
 
 
 def variant_name(expression: str, gesture: str) -> str:
@@ -33,7 +42,7 @@ def variant_name(expression: str, gesture: str) -> str:
 
 
 def render_frames(photo: Path, fps: int, seconds: float, names: list[str], size: int,
-                  gestures: dict[str, tuple[str, ...]]) -> tuple[dict, dict, dict]:
+                  gestures: dict[str, tuple[str, ...]], pingpong: bool = False) -> tuple[dict, dict, dict]:
     """Base loops (all frames) and gesture variants (only the frames inside gesture windows)."""
     from face_rig import FaceRig, load_photo
 
@@ -43,7 +52,7 @@ def render_frames(photo: Path, fps: int, seconds: float, names: list[str], size:
     t0 = time.perf_counter()
     rig = FaceRig()
     src = rig.load_source(load_photo(photo, size))
-    curves = idle_curves(int(seconds * fps), fps)      # same seed as the loops: variants match them exactly
+    curves = idle_curves(int(seconds * fps), fps, periodic=not pingpong)   # same seed: variants match the loops
     loops, variants, timings = {}, {}, {"rig_load_s": round(time.perf_counter() - t0, 2)}
     rendered = 0
     for name in names:
@@ -55,7 +64,7 @@ def render_frames(photo: Path, fps: int, seconds: float, names: list[str], size:
     for gesture, expressions in gestures.items():
         for expression in expressions:
             t1 = time.perf_counter()
-            params = gesture_params(curves, expression, gesture, fps)
+            params = gesture_params(curves, expression, gesture, fps, gap(pingpong))
             variants[(expression, gesture)] = {f: bgr(rig.render(src, p)) for f, p in params.items()}
             rendered += len(params)
             logger.info(f"rendered {variant_name(expression, gesture)}: {len(params)} frames "
@@ -69,8 +78,13 @@ def render_frames(photo: Path, fps: int, seconds: float, names: list[str], size:
     return loops, variants, timings
 
 
-def gesture_meta(gestures: dict[str, tuple[str, ...]], n_forward: int, fps: int) -> dict:
-    return {g: {"expressions": list(ex), "windows": gesture_windows(n_forward, fps, g)} for g, ex in gestures.items()}
+def gap(pingpong: bool) -> int:
+    return GESTURE_GAP_FRAMES if pingpong else GESTURE_GAP_FRAMES_LONG
+
+
+def gesture_meta(gestures: dict[str, tuple[str, ...]], n_forward: int, fps: int, pingpong: bool) -> dict:
+    return {g: {"expressions": list(ex), "windows": gesture_windows(n_forward, fps, g, gap(pingpong))}
+            for g, ex in gestures.items()}
 
 
 def main() -> None:
@@ -78,8 +92,11 @@ def main() -> None:
     ap.add_argument("--photo", type=Path)
     ap.add_argument("--id", required=True)
     ap.add_argument("--fps", type=int, default=20)
-    ap.add_argument("--seconds", type=float, default=7.0, help="length of each loop before ping-pong")
+    ap.add_argument("--seconds", type=float, default=30.0, help="length of each (seamless) loop")
+    ap.add_argument("--pingpong", action="store_true", help="old style: short loops played forward and backward")
     ap.add_argument("--size", type=int, default=512)
+    ap.add_argument("--jpeg", type=int, default=90, help="JPEG quality of the stored loop frames (= the idle video); "
+                    "the same as the speech frames (avatar.jpeg_quality), so the picture does not change when she stops talking")
     ap.add_argument("--loops", default=",".join(EXPRESSIONS))
     ap.add_argument("--gestures", default=",".join(GESTURE_VARIANTS), help="head gestures to render ('' = none)")
     ap.add_argument("--gestures-only", action="store_true",
@@ -95,7 +112,8 @@ def main() -> None:
         meta = json.loads((out / "avatar.json").read_text(encoding="utf-8"))
         args.photo = Path(meta["photo"])
         args.fps, args.size = meta["fps"], meta["size"]
-        args.seconds = meta["frames_per_loop"] / 2 / meta["fps"]
+        args.pingpong = meta.get("pingpong", True)
+        args.seconds = meta["frames_per_loop"] / (2 if args.pingpong else 1) / meta["fps"]
         names: list[str] = [n for n in update if n in meta["loops"]]
         if update and not names:
             ap.error(f"--update: none of {update} is a loop of {args.id} ({meta['loops']})")
@@ -114,7 +132,8 @@ def main() -> None:
                      for g, ex in gestures.items()}
 
     (out / "preview").mkdir(parents=True, exist_ok=True)
-    loops, variants, timings = render_frames(args.photo, args.fps, args.seconds, names, args.size, to_render)
+    loops, variants, timings = render_frames(args.photo, args.fps, args.seconds, names, args.size, to_render,
+                                             args.pingpong)
     for name, frames in loops.items():  # preview: a mid-loop frame
         cv2.imwrite(str(out / "preview" / f"{name}.jpg"), frames[len(frames) // 3])
 
@@ -128,24 +147,29 @@ def main() -> None:
     prepared: dict[str, Loop] = {}
     for name, frames in loops.items():
         t1 = time.perf_counter()
-        prepared[name] = engine.prepare_loop(name, frames, boxer)
+        prepared[name] = engine.prepare_loop(name, frames, boxer, jpeg_quality=args.jpeg, pingpong=args.pingpong)
         prepared[name].save(out / "loops" / name)
         timings[f"prepare_{name}_s"] = round(time.perf_counter() - t1, 2)
     t1 = time.perf_counter()
     for (expression, gesture), frames in variants.items():
         base = prepared.get(expression) or Loop.load(out / "loops" / expression)
         name = variant_name(expression, gesture)
-        engine.prepare_delta(base, name, frames, boxer).save(out / "loops" / name)
+        engine.prepare_delta(base, name, frames, boxer, jpeg_quality=args.jpeg).save(out / "loops" / name)
     timings["prepare_gestures_s"] = round(time.perf_counter() - t1, 1)
 
     n_forward = int(args.seconds * args.fps)
     if not (args.gestures_only or update):
         meta = {"id": args.id, "photo": str(args.photo), "fps": args.fps, "size": args.size, "loops": names,
-                "frames_per_loop": 2 * n_forward, "timings": timings}
+                "frames_per_loop": 2 * n_forward if args.pingpong else n_forward, "pingpong": args.pingpong,
+                "timings": timings}
     else:
         prefix = "update" if update else "gestures"
         meta.setdefault("timings", {}).update({f"{prefix}_{k}": v for k, v in timings.items()})
-    meta["gestures"] = gesture_meta(gestures, n_forward, args.fps)
+    if args.gestures_only or update:
+        # merge: adding one gesture must not drop the others from avatar.json
+        meta.setdefault("gestures", {}).update(gesture_meta(gestures, n_forward, args.fps, args.pingpong))
+    else:
+        meta["gestures"] = gesture_meta(gestures, n_forward, args.fps, args.pingpong)
     meta["built"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     (out / "avatar.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     logger.info(f"avatar {args.id} built: {json.dumps(timings)}")
