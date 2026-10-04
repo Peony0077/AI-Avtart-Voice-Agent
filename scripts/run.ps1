@@ -29,14 +29,22 @@ function Stop-All {
     Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
     Remove-Item $pidFile -ErrorAction SilentlyContinue
   }
-  Get-Process llama-server -ErrorAction SilentlyContinue | Stop-Process -Force
+  # (llama-server may exit on its own once the backend is gone: no error for that)
+  Get-Process llama-server -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
     Where-Object { $_.CommandLine -match 'avatar\\musetalk\\worker\.py|voice\\xtts\\worker\.py|uvicorn app\.main' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-  # our quick tunnel (scripts\tunnel.ps1): its link and token would point at the stopped backend
+  # our quick tunnel (scripts\tunnel.ps1): its link and token would point at the stopped backend. Matched by
+  # its path or its command line (once it was left running), and checked again afterwards.
   $cf = Join-Path $root 'tools\cloudflared\cloudflared.exe'
-  Get-CimInstance Win32_Process -Filter "Name='cloudflared.exe'" | Where-Object { $_.ExecutablePath -eq $cf } |
-    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  $ours = { param($p) ($p.ExecutablePath -and $p.ExecutablePath -ieq $cf) -or
+            ($p.CommandLine -and $p.CommandLine -like '*tunnel*--url http://127.0.0.1:*') }
+  foreach ($try in 1..3) {
+    $left = @(Get-CimInstance Win32_Process -Filter "Name='cloudflared.exe'" | Where-Object { & $ours $_ })
+    if (-not $left) { break }
+    $left | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 300
+  }
 }
 
 if ($Stop) { Stop-All; Write-Host 'stopped'; exit 0 }
