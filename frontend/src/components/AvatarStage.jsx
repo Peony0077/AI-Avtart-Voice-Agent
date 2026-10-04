@@ -207,12 +207,29 @@ export default function AvatarStage({ conv, voice }) {
   }, [voice])
 
   const available = conv.session?.avatar_available
+  const canTalk = conv.status === 'open' && conv.session?.voice_available !== false
   return (
     <section className="stage" aria-label="Avatar">
       {available ? (
         <canvas ref={canvasRef} data-testid="avatar-canvas" width={size?.[0] ?? 512} height={size?.[1] ?? 512} />
       ) : (
         <div className="stage-placeholder">Avatar disabled (start with profile “avatar”)</div>
+      )}
+      {canTalk && (
+        <div className="stage-voice">
+          {voice.error && <p className="stage-error" role="alert" data-testid="stage-error">{voice.error}</p>}
+          {voice.active ? (
+            <span className={`listening ${voice.speechDetected ? 'hot' : ''}`} data-testid="listening">
+              <span className="dot" />
+              {voice.speechDetected ? 'Hearing you…' : 'Listening – just speak'}
+            </span>
+          ) : (
+            // the microphone only starts on a tap (browsers require it): make that impossible to miss
+            <button type="button" className="talk" data-testid="talk" onClick={voice.start} disabled={voice.starting}>
+              {voice.starting ? 'Allow the microphone…' : voice.error ? 'Try again' : `🎤 Tap to talk to ${conv.session?.persona ?? 'her'}`}
+            </button>
+          )}
+        </div>
       )}
     </section>
   )

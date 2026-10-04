@@ -28,7 +28,7 @@ test('a typed message is spoken and lip-synced without the microphone; Mute make
   // Mute: the next reply is text only
   await page.getByTestId('speaker-toggle').click()
   await expect(page.getByTestId('speaker-toggle')).toHaveText('Unmute')
-  await expect(page.getByTestId('state')).toHaveText('Listening', { timeout: 30_000 })
+  await expect(page.getByTestId('state')).toHaveAttribute('data-state', 'LISTENING', { timeout: 30_000 })
   await page.getByTestId('input').fill('And the capital of Italy? One short sentence.')
   await page.getByTestId('send').click()
   const q2 = await waitFor(messages, (m) => m.type === 'user_message' && m.turn_id > q.turn_id, 10_000)
@@ -71,7 +71,7 @@ test('the avatar smiles at good news and not at sad news', async ({ page }) => {
   test.skip(!session.avatar_available, 'backend not started with an avatar profile')
 
   const ask = async (text) => {
-    await expect(page.getByTestId('state')).toHaveText('Listening', { timeout: 60_000 })
+    await expect(page.getByTestId('state')).toHaveAttribute('data-state', 'LISTENING', { timeout: 60_000 })
     await page.getByTestId('input').fill(text)
     await page.getByTestId('send').click()
     const q = await waitFor(messages, (m) => m.type === 'user_message' && m.text === text, 10_000)

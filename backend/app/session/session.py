@@ -16,6 +16,7 @@ import soundfile as sf
 from fastapi import WebSocket
 from loguru import logger
 
+from app.audio.mic_stats import MicStats
 from app.audio.vad import StreamingVAD, VadEvent
 from app.behavior.manager import (
     behavior_from_text,
@@ -81,6 +82,7 @@ class Session:
         self.speaker_on = False           # client asked for spoken replies (also for typed messages)
         self.mic_on = False               # client streams the microphone
         self.vad: StreamingVAD | None = None
+        self.mic_stats = MicStats()
         self._stt_task: asyncio.Task | None = None
         self._carry_text = ""             # transcript of an utterance the user continued
         self._spec: tuple[float, asyncio.Task] | None = None  # (speech_end_t, speculative STT task)
@@ -116,6 +118,8 @@ class Session:
         await self.outbox.stop()
         if self.svc.persona.memory and (said := self.memory.user_said()):
             self.svc.remember(said, self._memory_gen)       # what she remembers next time (persona.py)
+        if (mic := self.mic_stats.summary()) is not None:
+            logger.info(f"session {self.id} microphone audio: {mic}")
         logger.info(f"session {self.id} closed ({reason})")
 
     # ------------------------------------------------------------------ inbound
@@ -161,17 +165,24 @@ class Session:
             self._memory_gen = self.svc.memory_store.generation
             logger.info("memory of the user erased (Forget me)")
             self._send_persona()
+        elif kind == "client_error":
+            # a problem the page showed the user (the microphone did not start, ...)
+            logger.warning(f"session {self.id} browser problem ({str(msg.get('where'))[:40]}): "
+                           f"{str(msg.get('name'))[:60]}: {str(msg.get('message'))[:300]} | {str(msg.get('userAgent'))[:300]}")
         elif kind == "ping":
             self.outbox.json({"type": "pong", "t": msg.get("t"), "server_time": time.time()}, force=True)
         else:
             logger.debug(f"unknown message type {kind!r}")
 
     async def on_binary(self, data: bytes) -> None:
+        if (warning := self.mic_stats.add(data, voice_on=self.vad is not None)) is not None:
+            logger.warning(f"session {self.id} {warning}")
         if self.vad is None:
             return
         active = self.sm.state in ACTIVE
         for ev in self.vad.process(data, assistant_active=active):
             if ev.kind == "start":
+                self.mic_stats.speech += 1
                 await self._on_speech_start(ev)
             elif ev.kind == "pause":
                 self._on_speech_pause(ev)

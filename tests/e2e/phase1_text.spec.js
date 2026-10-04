@@ -26,7 +26,7 @@ test('streams a reply and returns to LISTENING', async ({ page }) => {
   // bubble did not exist yet
   await expect(assistant).toHaveText(/\w/, { timeout: 15_000 })
   const firstTextMs = Date.now() - t0
-  await expect(page.getByTestId('state')).toHaveText('Listening', { timeout: 30_000 })
+  await expect(page.getByTestId('state')).toHaveAttribute('data-state', 'LISTENING', { timeout: 30_000 })
   const reply = await assistant.innerText()
 
   expect(reply.length).toBeGreaterThan(3)
@@ -48,7 +48,7 @@ test('Stop cancels a long reply and the next turn still works', async ({ page })
   await expect(assistant).toHaveText(/\w/, { timeout: 15_000 })
   await page.getByTestId('stop').click()
   await expect(assistant.locator('.tag')).toHaveText('interrupted', { timeout: 5_000 })
-  await expect(page.getByTestId('state')).toHaveText('Listening')
+  await expect(page.getByTestId('state')).toHaveAttribute('data-state', 'LISTENING')
 
   // Text of the cancelled turn must not keep growing (stale deltas are dropped).
   const frozen = await assistant.innerText()
@@ -62,7 +62,7 @@ test('Stop cancels a long reply and the next turn still works', async ({ page })
   await expect(replies).toHaveCount(before + 1, { timeout: 15_000 })   // a new reply, not the cancelled one
   const next = replies.last()
   await expect(next).toHaveText(/\w/, { timeout: 15_000 })
-  await expect(page.getByTestId('state')).toHaveText('Listening', { timeout: 30_000 })
+  await expect(page.getByTestId('state')).toHaveAttribute('data-state', 'LISTENING', { timeout: 30_000 })
   expect((await next.innerText()).length).toBeGreaterThan(0)
 })
 

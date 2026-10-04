@@ -26,7 +26,7 @@ test('the end of a spoken reply flows into the idle video without a jump', async
 
   const rounds = []
   for (const question of ['Tell me one short fact about the moon.', 'Name two colours of the rainbow.']) {
-    await expect(page.getByTestId('state')).toHaveText('Listening', { timeout: 60_000 })
+    await expect(page.getByTestId('state')).toHaveAttribute('data-state', 'LISTENING', { timeout: 60_000 })
     await page.getByTestId('input').fill(question)
     await page.getByTestId('send').click()
     const q = await waitFor(messages, (m) => m.type === 'user_message' && m.text === question, 10_000)

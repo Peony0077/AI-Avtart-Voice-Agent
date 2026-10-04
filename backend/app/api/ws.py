@@ -55,7 +55,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     session = Session(ws, services)
     await manager.attach(session)
     await session.start()
-    logger.info(f"session {session.id} connected from {ws.client}")
+    logger.info(f"session {session.id} connected from {ws.client} ({ws.headers.get('user-agent', '?')[:300]})")
     try:
         while True:
             message = await ws.receive()

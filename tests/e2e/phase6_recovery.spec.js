@@ -30,7 +30,7 @@ async function until(page, predicate, timeoutMs) {
 }
 
 async function ask(page, messages, text, timeoutMs = 90_000) {
-  await expect(page.getByTestId('state')).toHaveText('Listening', { timeout: 60_000 })
+  await expect(page.getByTestId('state')).toHaveAttribute('data-state', 'LISTENING', { timeout: 60_000 })
   await page.getByTestId('input').fill(text)
   await page.getByTestId('send').click()
   const q = await waitFor(messages, (m) => m.type === 'user_message' && m.text === text, 10_000)

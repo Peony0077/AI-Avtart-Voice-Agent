@@ -22,6 +22,11 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const listRef = useRef(null)
   const busy = conv.state === 'THINKING' || conv.state === 'SPEAKING'
+  // "Listening" only while the microphone is really on: the badge said Listening with the microphone
+  // off, so the owner talked to her and nothing was heard
+  const badge = conv.state !== 'LISTENING' ? { cls: conv.state, label: STATE_LABEL[conv.state] ?? conv.state }
+    : !voice.active ? { cls: 'READY', label: 'Ready · mic off' }
+      : { cls: 'LISTENING', label: voice.speechDetected ? 'Hearing you…' : 'Listening' }
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight })
@@ -40,14 +45,15 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <strong>{conv.session?.persona ?? 'AI Avatar'}</strong>
-        <span className={`badge state-${conv.state}`} data-testid="state">{STATE_LABEL[conv.state] ?? conv.state}</span>
+        <span className={`badge state-${badge.cls}`} data-testid="state" data-state={conv.state}>{badge.label}</span>
         <span className="muted" data-testid="conn-status">{conv.status}</span>
         <span className="voice-controls">
           {voice.active ? (
             <button type="button" className="danger" data-testid="voice-stop" onClick={voice.stop}>Stop voice</button>
           ) : (
             <button type="button" data-testid="voice-start" onClick={voice.start}
-              disabled={conv.status !== 'open' || conv.session?.voice_available === false}>Start voice</button>
+              disabled={conv.status !== 'open' || conv.session?.voice_available === false || voice.starting}>
+              {voice.starting ? 'Starting…' : 'Start voice'}</button>
           )}
           {voice.active && (
             <span className={`mic ${voice.speechDetected ? 'hot' : ''}`} data-testid="mic" title="microphone level">
@@ -60,7 +66,6 @@ export default function App() {
               {voice.muted ? 'Unmute' : 'Mute'}
             </button>
           )}
-          {voice.error && <span className="error" data-testid="voice-error">{voice.error}</span>}
           {conv.notice && <span className="muted" data-testid="notice">{conv.notice}</span>}
         </span>
         <span className="tools">

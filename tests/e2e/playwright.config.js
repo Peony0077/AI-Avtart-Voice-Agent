@@ -21,8 +21,20 @@ export default defineConfig({
   projects: [
     { name: 'text', testMatch: /phase1_.*\.spec\.js/ },
     {
+      // starting the microphone as in a normal browser: no autoplay exemption (the voice project has one,
+      // so it never saw what a real browser requires of a tap)
+      name: 'mic',
+      testMatch: /phase6_mic_start\.spec\.js/,
+      use: {
+        launchOptions: {
+          args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',
+            `--use-file-for-fake-audio-capture=${fixture('mic_question.wav')}%noloop`],
+        },
+      },
+    },
+    {
       name: 'voice',
-      testMatch: /(phase[2-6]_.*|soak)\.spec\.js/,
+      testMatch: /(phase[2-5]_.*|phase6_(?!mic_start).*|soak)\.spec\.js/,
       use: {
         launchOptions: {
           args: [

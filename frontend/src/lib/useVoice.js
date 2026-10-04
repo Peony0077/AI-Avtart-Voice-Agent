@@ -17,6 +17,8 @@ export function useVoice(conv) {
   const [level, setLevel] = useState(0)
   const [speechDetected, setSpeechDetected] = useState(false)
   const [error, setError] = useState(null)
+  const [starting, setStarting] = useState(false)   // waiting for the microphone (permission prompt)
+  const silentTimerRef = useRef(null)
   const statsRef = useRef({ interrupts: [], blockedStale: 0, pushes: {}, gaps: {} })
 
   const send = (msg) => conv.connRef.current?.sendJson(msg)
@@ -99,7 +101,7 @@ export function useVoice(conv) {
     const e = engine()
     send({ type: 'speaker', enabled: true })     // before the text message: the server speaks this turn
     setSpeaker(true)
-    e.startPlayback().catch((err) => setError(err.message ?? String(err)))
+    e.startPlayback().catch((err) => { setError(err.message ?? String(err)); report('speaker_start', err) })
   }, [conv])
 
   const toggleMute = useCallback(() => {
@@ -110,20 +112,44 @@ export function useVoice(conv) {
     send({ type: 'speaker', enabled: !next })
   }, [conv])
 
+  // Problems the user sees are reported to the server log too: the owner's microphone never reached
+  // the server, and the page kept the reason to itself.
+  const report = (where, err) => send({ type: 'client_error', where, name: err?.name ?? 'Error',
+    message: err?.detail || err?.message || String(err), userAgent: navigator.userAgent })
+
   const start = useCallback(async () => {
     setError(null)
+    setStarting(true)
     try {
       const e = engine()
-      const playback = e.startPlayback()               // AudioContext created inside the click
-      await playback
-      await e.startMic((pcm) => conv.connRef.current?.sendBinary(pcm))
+      // both AudioContexts and the permission prompt start inside the click, before any await
+      const playback = e.startPlayback()
+      const mic = e.startMic((pcm) => conv.connRef.current?.sendBinary(pcm))
+      const [p, m] = await Promise.allSettled([playback, mic])
+      if (m.status === 'rejected') throw m.reason
+      if (p.status === 'rejected') {
+        await e.stopMic()
+        throw p.reason
+      }
       send({ type: 'voice', enabled: true, mic: e.micInfo })
       if (!mutedRef.current) send({ type: 'speaker', enabled: true })
       send({ type: 'greet' })     // she says hello (once a session, only before anything else was said)
       setSpeaker(true)
       setActive(true)
+      // a muted or disabled microphone sends exact zeros: say so instead of "listening" to nothing
+      clearTimeout(silentTimerRef.current)
+      silentTimerRef.current = setTimeout(() => {
+        if (e.micOn && e.micPeak === 0) {
+          const err = { name: 'SilentMicrophone', message: 'only silence for 5 s' }
+          setError('Your microphone sends no sound: it may be muted (mute key or switch, or the system’s input device). Unmute it or pick another microphone, then speak again.')
+          report('voice_start', err)
+        }
+      }, 5000)
     } catch (err) {
       setError(err.message ?? String(err))
+      report('voice_start', err)
+    } finally {
+      setStarting(false)
     }
   }, [conv])
 
@@ -133,7 +159,8 @@ export function useVoice(conv) {
     await engineRef.current?.stopMic()
     setActive(false)
     setSpeechDetected(false)
+    clearTimeout(silentTimerRef.current)
   }, [conv])
 
-  return { active, speaker, muted, level, speechDetected, error, start, stop, ensureSpeaker, toggleMute, engineRef }
+  return { active, starting, speaker, muted, level, speechDetected, error, start, stop, ensureSpeaker, toggleMute, engineRef }
 }

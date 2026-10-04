@@ -35,6 +35,7 @@ body { margin: 0; background: var(--bg); color: var(--fg); }
 .state-THINKING, .state-END_OF_TURN { background: #fef0c7; color: #93370d; }
 .state-SPEAKING { background: #d1e0ff; color: #1d3f9c; }
 .state-INTERRUPTED, .state-ERROR { background: #fee4e2; color: #912018; }
+.state-READY { background: var(--border); color: var(--muted); }
 
 .layout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; }
 @media (max-width: 820px) { .layout { grid-template-columns: 1fr; } }
@@ -43,6 +44,18 @@ body { margin: 0; background: var(--bg); color: var(--fg); }
   display: grid; place-items: center; overflow: hidden; position: relative; }
 .stage canvas { width: 100%; height: 100%; object-fit: contain; }
 .stage-placeholder { color: var(--muted); }
+/* voice on the avatar: a big "tap to talk" while the microphone is off, "listening" while it is on */
+.stage-voice { position: absolute; left: 12px; right: 12px; bottom: 14px; display: flex; flex-direction: column;
+  align-items: center; gap: 8px; pointer-events: none; }
+.stage-voice > * { pointer-events: auto; }
+.talk { font-size: 1.05rem; padding: 12px 22px; border-radius: 999px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); }
+.listening { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px;
+  background: rgba(16, 24, 40, 0.62); color: #fff; font-size: 0.9rem; font-weight: 600; }
+.listening .dot { width: 10px; height: 10px; border-radius: 50%; background: #12b76a; }
+.listening.hot .dot { animation: pulse 0.8s ease-in-out infinite; }
+@keyframes pulse { 50% { transform: scale(1.5); opacity: 0.6; } }
+.stage-error { margin: 0; max-width: 100%; padding: 8px 12px; border-radius: 8px; background: #fee4e2; color: #912018;
+  font-size: 0.85rem; line-height: 1.35; }
 
 .chat { display: flex; flex-direction: column; min-height: 420px; max-height: 72vh; background: var(--card);
   border: 1px solid var(--border); border-radius: 12px; }

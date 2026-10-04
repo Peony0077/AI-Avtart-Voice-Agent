@@ -52,5 +52,5 @@ test('Stop button interrupts a spoken answer', async ({ page }) => {
   await page.getByTestId('stop').click()
   const intr = await waitFor(messages, (m) => m.type === 'interrupt' && m.turn_id === q.turn_id, 5_000)
   expect(intr.reason).toBe('manual')
-  await expect(page.getByTestId('state')).toHaveText('Listening')
+  await expect(page.getByTestId('state')).toHaveAttribute('data-state', 'LISTENING')
 })

@@ -43,37 +43,59 @@ export class AudioEngine extends EventTarget {
     return Boolean(this.stream)
   }
 
+  // Call from the click, before any await (like startPlayback): the microphone's AudioContext is created
+  // and resumed inside the user gesture, then the permission prompt opens. Created after the prompt (as
+  // before), Safari leaves the context suspended - the mic never sends a sound - and an unanswered
+  // prompt or a blocked microphone left "Start voice" doing nothing visible. Errors are MicError with a
+  // message for the user (micErrorMessage).
   async startMic(onMicFrame) {
     if (this.stream) return
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
-    })
-    // 16 kHz where the browser allows it; otherwise its own rate and the worklet resamples to 16 kHz
-    // (Firefox throws for a 16 kHz context with a 48 kHz microphone; some Safari versions ignore the rate).
-    let source
+    if (!navigator.mediaDevices?.getUserMedia) throw new MicError(window.isSecureContext ? 'NoMediaDevices' : 'NotSecure')
+    let ctx = newMicContext()
+    ctx.resume().catch(() => {})                    // inside the click
     try {
-      this.micCtx = new AudioContext({ sampleRate: MIC_SAMPLE_RATE, latencyHint: 'interactive' })
-      source = this.micCtx.createMediaStreamSource(this.stream)
-    } catch {
-      await this.micCtx?.close()
-      this.micCtx = new AudioContext({ latencyHint: 'interactive' })
-      source = this.micCtx.createMediaStreamSource(this.stream)
+      try {
+        this.stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+        })
+      } catch (err) {
+        throw new MicError(err?.name || 'Error', err?.message)
+      }
+      // 16 kHz where the browser allows it; otherwise its own rate and the worklet resamples to 16 kHz
+      // (Firefox throws for a 16 kHz context with a 48 kHz microphone; some Safari versions ignore the rate).
+      let source
+      try {
+        source = ctx.createMediaStreamSource(this.stream)
+      } catch {
+        await ctx.close().catch(() => {})
+        ctx = new AudioContext({ latencyHint: 'interactive' })
+        source = ctx.createMediaStreamSource(this.stream)
+      }
+      this.micCtx = ctx
+      await ctx.audioWorklet.addModule(micWorkletUrl)
+      const capture = new AudioWorkletNode(ctx, 'mic-capture')
+      const track = this.stream.getAudioTracks()[0]
+      const s = track?.getSettings?.() ?? {}
+      // reported to the server log: what the browser really does with the microphone
+      this.micInfo = { contextRate: ctx.sampleRate, deviceRate: s.sampleRate ?? null, channels: s.channelCount ?? null,
+        echoCancellation: s.echoCancellation ?? null, noiseSuppression: s.noiseSuppression ?? null,
+        autoGainControl: s.autoGainControl ?? null, device: track?.label ?? '', playbackRate: this.playCtx?.sampleRate ?? null,
+        userAgent: navigator.userAgent }
+      this.micPeak = 0
+      capture.port.onmessage = (e) => {
+        this.level = e.data.level
+        this.micPeak = Math.max(this.micPeak, e.data.level)
+        onMicFrame(e.data.pcm)
+      }
+      source.connect(capture)
+      await Promise.race([ctx.resume(), new Promise((r) => setTimeout(r, 3000))])
+      if (ctx.state !== 'running') throw new MicError('Suspended', `audio context ${ctx.state}`)
+    } catch (err) {
+      this.stream?.getTracks().forEach((t) => t.stop())
+      await ctx.close().catch(() => {})
+      this.micCtx = this.stream = null
+      throw err instanceof MicError ? err : new MicError(err?.name || 'Error', err?.message)
     }
-    await this.micCtx.audioWorklet.addModule(micWorkletUrl)
-    const capture = new AudioWorkletNode(this.micCtx, 'mic-capture')
-    const track = this.stream.getAudioTracks()[0]
-    const s = track?.getSettings?.() ?? {}
-    // reported to the server log: what the browser really does with the microphone
-    this.micInfo = { contextRate: this.micCtx.sampleRate, deviceRate: s.sampleRate ?? null, channels: s.channelCount ?? null,
-      echoCancellation: s.echoCancellation ?? null, noiseSuppression: s.noiseSuppression ?? null,
-      autoGainControl: s.autoGainControl ?? null, device: track?.label ?? '', playbackRate: this.playCtx?.sampleRate ?? null,
-      userAgent: navigator.userAgent }
-    capture.port.onmessage = (e) => {
-      this.level = e.data.level
-      onMicFrame(e.data.pcm)
-    }
-    source.connect(capture)
-    await this.micCtx.resume()
   }
 
   async stopMic() {
@@ -149,5 +171,53 @@ export class AudioEngine extends EventTarget {
     if (msg.type === 'ended' || msg.type === 'flushed') this.endedTurns.add(msg.turnId ?? this.playingTurn)
     if (msg.playedMs !== undefined) this.playedMs = msg.playedMs
     this.dispatchEvent(new CustomEvent('player', { detail: msg }))
+  }
+}
+
+// 16 kHz where the browser takes the option (old Safari throws for it): the browser's own rate otherwise.
+function newMicContext() {
+  try {
+    return new AudioContext({ sampleRate: MIC_SAMPLE_RATE, latencyHint: 'interactive' })
+  } catch {
+    return new AudioContext({ latencyHint: 'interactive' })
+  }
+}
+
+// A microphone that could not start: `name` is the browser's error (NotAllowedError, ...) or ours.
+export class MicError extends Error {
+  constructor(name, detail = '') {
+    super(micErrorMessage(name))
+    this.name = name
+    this.detail = detail
+  }
+}
+
+const APPLE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent)
+
+// What the user sees, and what to do about it.
+export function micErrorMessage(name) {
+  switch (name) {
+    case 'NotAllowedError':
+    case 'PermissionDeniedError':
+    case 'SecurityError':
+      return APPLE
+        ? 'The microphone is blocked for this page. Tap "aA" in the address bar → Website Settings → Microphone → Allow (or Settings → Safari → Microphone), then press Start voice again.'
+        : 'The microphone is blocked for this page. Click the icon left of the address (🔒 or ⓘ) → Microphone → Allow, then press Start voice again.'
+    case 'NotFoundError':
+    case 'DevicesNotFoundError':
+    case 'OverconstrainedError':
+      return 'No microphone was found. Connect one, or check that it is turned on in the system settings (Windows: Settings → Privacy → Microphone), then press Start voice again.'
+    case 'NotReadableError':
+    case 'TrackStartError':
+    case 'AbortError':
+      return 'The microphone could not be opened: another app may be using it, or the system blocks it. Close other apps that use the microphone and press Start voice again.'
+    case 'NoMediaDevices':
+      return 'This browser cannot use the microphone here. Open the link in Chrome, Edge or Safari directly (not inside another app such as a chat app).'
+    case 'NotSecure':
+      return 'The microphone needs a secure (https) link. Open the https:// link you were given.'
+    case 'Suspended':
+      return 'The browser did not start the audio. Press Start voice again.'
+    default:
+      return `The microphone could not start (${name}). Press Start voice again, or try another browser.`
   }
 }

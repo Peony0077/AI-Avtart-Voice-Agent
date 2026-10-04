@@ -895,6 +895,31 @@ the windows 50 ms later than training (tried first, after the biased measure) ma
 `AudioContext.getOutputTimestamp()`, which includes the output latency the browser knows about (42 ms
 in the test browser); Bluetooth headphones can add more than the browser reports.
 
+### "It doesn't hear my words": the owner's microphone never reached the server (2026-10-04)
+
+The server log (since 2026-09-29) has no word from the owner's microphone: every recognised phrase came
+from the tests' fake microphone, and in all the owner's sessions (another device on the same network,
+through the tunnel) the page never reported a started microphone; the owner typed instead. Speech
+recognition itself was fine (the voice tests pass through the same tunnel). What the page did wrong:
+- **The badge said "Listening" with the microphone off** (it showed the conversation state). Now
+  "Ready · mic off" until the microphone is on, then "Listening" / "Hearing you…".
+- **Starting the microphone was easy to miss**: one "Start voice" button in the header. Now also a big
+  "🎤 Tap to talk to Ava" on the avatar, and a "Listening – just speak" pill while it is on.
+- **The microphone's AudioContext was created after the permission prompt**, outside the tap. Safari
+  then keeps it suspended (no sound reaches the server); Chrome tolerates it, and the voice tests
+  could not see it because their browser runs with an autoplay exemption. Both AudioContexts and the
+  prompt now start inside the tap; a context that does not run within 3 s is an error. The new `mic`
+  test project has no autoplay exemption.
+- **Failures were silent**: a blocked, missing or busy microphone, a browser without microphone access
+  (in-app browsers) or a muted microphone (only zeros for 5 s) are explained on the avatar with what to
+  do, with a "Try again" button, and reported to the server log (`browser problem (voice_start): …`).
+- **The server could not tell**: each connection now logs the browser (user agent), and each session
+  ends with `microphone audio: 12.3 s received, peak -18 dBFS, speech detected 3x`; 10 s of silence
+  from a microphone is logged as a warning while it happens.
+
+Browser test `phase6_mic_start.spec.js` (project `mic`): badge and tap-to-talk, a question heard through
+the fake microphone, and the blocked / unavailable / muted microphone messages and their log lines.
+
 ### Robustness
 
 Playwright `tests/e2e/phase6_recovery.spec.js` kills processes in the middle of a live session
@@ -1020,6 +1045,7 @@ npx playwright test --project=voice phase2                    # voice (default p
 $env:FAKE_MIC='mic_story_bargein.wav'; npx playwright test --project=voice phase3   # barge-in
 $env:FAKE_MIC='mic_rag.wav'; npx playwright test --project=voice phase5            # documents
 npx playwright test --project=voice phase4 phase6             # avatar, crash recovery (avatar profiles)
+npx playwright test --project=mic                            # starting the microphone as in a normal browser
 $env:FAKE_MIC='mic_soak.wav'; $env:FAKE_MIC_LOOP='1'; npx playwright test --project=voice soak
 # lip-sync timing on rendered frames (stack stopped: needs the GPU; any speech .wav, --compare = MuseTalk's windows)
 cd ..\..\avatar\musetalk; .venv\Scripts\python lipsync_check.py speech.wav --compare

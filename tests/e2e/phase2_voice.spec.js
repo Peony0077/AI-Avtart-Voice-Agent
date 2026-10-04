@@ -30,7 +30,7 @@ test('spoken question is transcribed, answered and played back', async ({ page }
   // State sequence seen by the browser.
   const states = messages.filter((m) => m.type === 'state').map((m) => m.state)
   expect(states).toEqual(expect.arrayContaining(['END_OF_TURN', 'THINKING', 'SPEAKING', 'LISTENING']))
-  await expect(page.getByTestId('state')).toHaveText('Listening')
+  await expect(page.getByTestId('state')).toHaveAttribute('data-state', 'LISTENING')
 
   const summary = { test: 'phase2_voice', expected, transcript: userMsg.text, reply: done.text, ms_from_speech_end: ms, speech_ms: metrics.speech_ms }
   console.log(JSON.stringify(summary))
