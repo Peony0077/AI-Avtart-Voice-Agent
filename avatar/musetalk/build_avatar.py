@@ -1,6 +1,7 @@
 """Build a talking avatar from ONE photo (offline, once per photo).
 
     photo ──LivePortrait face rig──► 5 seamless 30 s loops (neutral, friendly, happy, concerned, thinking)
+          ──body_motion──► breathing and a slight sway below the chin
           ──LivePortrait face rig──► head-gesture windows (nods, tilt, shake) as small loop deltas
           ──MuseTalk preparation──► face boxes, VAE latents, blend masks (cached)
 
@@ -30,6 +31,8 @@ from motion import (
     GESTURE_GAP_FRAMES,
     GESTURE_GAP_FRAMES_LONG,
     GESTURE_VARIANTS,
+    RigParams,
+    gesture_delta,
     gesture_params,
     gesture_windows,
     idle_curves,
@@ -78,6 +81,77 @@ def render_frames(photo: Path, fps: int, seconds: float, names: list[str], size:
     return loops, variants, timings
 
 
+def video_params(expression: str) -> RigParams:
+    """Rig parameters for a video frame: relative to the frame itself (its own pose, gaze and blinks
+    stay), only the expression's offsets are added."""
+    e = EXPRESSIONS[expression]
+    gx, gy = e.get("gaze", (0.0, 0.0))
+    return RigParams(pitch=e.get("pitch", 0.0), yaw=e.get("yaw", 0.0), eye_open=e.get("eye", 1.0),
+                     gaze_x=gx, gaze_y=gy, smile=e["smile"], eyebrow=e["eyebrow"])
+
+
+def render_video_frames(video: Path, fps: int, seconds: float, start_s: float, names: list[str], size: int,
+                        gestures: dict[str, tuple[str, ...]]) -> tuple[dict, dict, dict, dict, int]:
+    """Loops and gesture variants from a video (video_source.py): each frame through the face rig relative
+    to itself, the loop seam cross-faded. Returns (loops, variants, timings, video info, frames in which
+    gesture windows may lie - clear of the seam)."""
+    from video_source import SEAM_FRAMES, close_loop, read_segment
+
+    from face_bbox import FaceBoxer
+    from face_rig import FaceRig
+
+    def bgr(img):
+        return cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+
+    t0 = time.perf_counter()
+    boxer = FaceBoxer()
+    body, lead_in, info = read_segment(video, fps, start_s, seconds, size, boxer)
+    del boxer
+    n = len(body)
+    n_win = n - SEAM_FRAMES
+    windows = {g: gesture_windows(n_win, fps, g, GESTURE_GAP_FRAMES_LONG) for g in gestures}
+    deltas = {(g, s): gesture_delta(g, fps, seed=s) for g in gestures for s, _ in windows[g]}
+    rig = FaceRig()
+    timings = {"rig_load_s": round(time.perf_counter() - t0, 2)}
+    loops = {name: [] for name in names}
+    lead = {name: [] for name in names}
+    variants = {(e, g): {} for g, ex in gestures.items() for e in ex}
+    src, missed = None, 0
+    for i, frame in enumerate(lead_in + body):
+        try:
+            src = rig.load_source(frame)
+        except ValueError:                       # no face found (blur): the previous frame's rig, this image
+            if src is None:
+                raise
+            src = {**src, "img": frame}
+            missed += 1
+        k = i - len(lead_in)
+        for name in names:
+            (lead if k < 0 else loops)[name].append(bgr(rig.render(src, video_params(name))))
+        if k < 0:
+            continue
+        for g, expressions in gestures.items():
+            for s, e in windows[g]:
+                if s <= k < e:
+                    d = deltas[(g, s)]
+                    for expression in expressions:
+                        p = video_params(expression)
+                        p.pitch += float(d["pitch"][k - s])
+                        p.yaw += float(d["yaw"][k - s])
+                        p.roll += float(d["roll"][k - s])
+                        variants[(expression, g)][k] = bgr(rig.render(src, p))
+        if k % 100 == 0:
+            logger.info(f"video frame {k}/{n} rendered ({time.perf_counter() - t0:.0f} s)")
+    for name in names:
+        loops[name] = close_loop(loops[name], lead[name])
+    timings.update({"render_s": round(time.perf_counter() - t0, 1), "video_frames": n, "frames_without_face": missed,
+                    "rendered_frames": n * len(names) + sum(len(v) for v in variants.values())})
+    del rig, src
+    gc.collect()
+    torch.cuda.empty_cache()
+    return loops, variants, timings, info, n_win
+
+
 def gap(pingpong: bool) -> int:
     return GESTURE_GAP_FRAMES if pingpong else GESTURE_GAP_FRAMES_LONG
 
@@ -90,6 +164,8 @@ def gesture_meta(gestures: dict[str, tuple[str, ...]], n_forward: int, fps: int,
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--photo", type=Path)
+    ap.add_argument("--video", type=Path, help="build from a video of a real person (video_source.py) instead of a photo")
+    ap.add_argument("--start-s", type=float, default=1.0, help="with --video: where the loop segment starts")
     ap.add_argument("--id", required=True)
     ap.add_argument("--fps", type=int, default=20)
     ap.add_argument("--seconds", type=float, default=30.0, help="length of each (seamless) loop")
@@ -103,6 +179,7 @@ def main() -> None:
                     help="add gesture variants to an existing avatar (keeps its loops and existing variants)")
     ap.add_argument("--force", action="store_true", help="with --gestures-only: re-render existing variants too")
     ap.add_argument("--update", default="", help="re-render these loops of an existing avatar (and their gestures)")
+    ap.add_argument("--no-body-motion", action="store_true", help="keep the shoulders still (body_motion.py)")
     args = ap.parse_args()
 
     out = AVATARS / args.id
@@ -110,6 +187,8 @@ def main() -> None:
     update = [n.strip() for n in args.update.split(",") if n.strip()]
     if update or args.gestures_only:
         meta = json.loads((out / "avatar.json").read_text(encoding="utf-8"))
+        if meta.get("video"):
+            ap.error(f"{args.id} was built from a video: build it again with --video")
         args.photo = Path(meta["photo"])
         args.fps, args.size = meta["fps"], meta["size"]
         args.pingpong = meta.get("pingpong", True)
@@ -118,8 +197,10 @@ def main() -> None:
         if update and not names:
             ap.error(f"--update: none of {update} is a loop of {args.id} ({meta['loops']})")
     else:
-        if args.photo is None:
-            ap.error("--photo is required")
+        if args.photo is None and args.video is None:
+            ap.error("--photo or --video is required")
+        if args.video is not None and args.pingpong:
+            ap.error("--video makes seamless loops (no --pingpong)")
         names = [n.strip() for n in args.loops.split(",") if n.strip()]
     available = set(meta.get("loops", [])) | set(names)
     wanted = [g.strip() for g in args.gestures.split(",") if g.strip()]
@@ -132,8 +213,13 @@ def main() -> None:
                      for g, ex in gestures.items()}
 
     (out / "preview").mkdir(parents=True, exist_ok=True)
-    loops, variants, timings = render_frames(args.photo, args.fps, args.seconds, names, args.size, to_render,
-                                             args.pingpong)
+    video_info, n_win = None, None
+    if args.video is not None:
+        loops, variants, timings, video_info, n_win = render_video_frames(
+            args.video, args.fps, args.seconds, args.start_s, names, args.size, to_render)
+    else:
+        loops, variants, timings = render_frames(args.photo, args.fps, args.seconds, names, args.size, to_render,
+                                                 args.pingpong)
     for name, frames in loops.items():  # preview: a mid-loop frame
         cv2.imwrite(str(out / "preview" / f"{name}.jpg"), frames[len(frames) // 3])
 
@@ -157,21 +243,27 @@ def main() -> None:
         engine.prepare_delta(base, name, frames, boxer, jpeg_quality=args.jpeg).save(out / "loops" / name)
     timings["prepare_gestures_s"] = round(time.perf_counter() - t1, 1)
 
-    n_forward = int(args.seconds * args.fps)
+    n_forward = int(args.seconds * args.fps) if video_info is None else len(next(iter(loops.values())))
     if not (args.gestures_only or update):
-        meta = {"id": args.id, "photo": str(args.photo), "fps": args.fps, "size": args.size, "loops": names,
-                "frames_per_loop": 2 * n_forward if args.pingpong else n_forward, "pingpong": args.pingpong,
-                "timings": timings}
+        meta = {"id": args.id, "photo": str(args.photo) if args.photo else None, "fps": args.fps, "size": args.size,
+                "loops": names, "frames_per_loop": 2 * n_forward if args.pingpong else n_forward,
+                "pingpong": args.pingpong, "timings": timings}
+        if video_info is not None:
+            meta["video"] = video_info
     else:
         prefix = "update" if update else "gestures"
         meta.setdefault("timings", {}).update({f"{prefix}_{k}": v for k, v in timings.items()})
     if args.gestures_only or update:
         # merge: adding one gesture must not drop the others from avatar.json
         meta.setdefault("gestures", {}).update(gesture_meta(gestures, n_forward, args.fps, args.pingpong))
-    else:
-        meta["gestures"] = gesture_meta(gestures, n_forward, args.fps, args.pingpong)
+    else:   # video: windows stay clear of the cross-faded seam
+        meta["gestures"] = gesture_meta(gestures, n_win or n_forward, args.fps, args.pingpong)
     meta["built"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     (out / "avatar.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    if not args.pingpong and not args.no_body_motion and video_info is None:   # breathing and sway below the chin
+        # (a video already has the person's own body motion)
+        from body_motion import apply_to_avatar
+        apply_to_avatar(out, args.jpeg)
     logger.info(f"avatar {args.id} built: {json.dumps(timings)}")
 
 

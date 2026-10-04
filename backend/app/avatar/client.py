@@ -55,7 +55,7 @@ class AvatarClient:
         script = self.settings.repo_path("avatar/musetalk/worker.py")
         port = self.cfg.worker_url.rsplit(":", 1)[1].split("/")[0]
         cmd = [str(py), str(script), "--avatar", self.cfg.avatar_id, "--port", port,
-               "--quality", str(self.cfg.jpeg_quality), "--gate-frames", str(self.cfg.gate_frames),
+               "--quality", str(self.cfg.jpeg_quality), "--gate-frames", str(self.cfg.gate_frames), "--decoder", self.cfg.decoder,
                "--warm-burst-ms", str(self.cfg.warm_burst_ms), "--late-ms", str(self.cfg.late_ms)]
         free_port(int(port), "worker.py")
         log = (self.settings.log_dir / "avatar-worker.log").open("ab")

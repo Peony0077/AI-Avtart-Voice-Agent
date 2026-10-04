@@ -119,6 +119,7 @@ export function useVoice(conv) {
       await e.startMic((pcm) => conv.connRef.current?.sendBinary(pcm))
       send({ type: 'voice', enabled: true, mic: e.micInfo })
       if (!mutedRef.current) send({ type: 'speaker', enabled: true })
+      send({ type: 'greet' })     // she says hello (once a session, only before anything else was said)
       setSpeaker(true)
       setActive(true)
     } catch (err) {

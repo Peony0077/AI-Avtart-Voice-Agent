@@ -40,22 +40,58 @@ def _lip_weight(lab: np.ndarray) -> np.ndarray:
     return cv2.GaussianBlur(w, (5, 5), 0)
 
 
-def refine_face(gen: np.ndarray, ref: np.ndarray) -> np.ndarray:
+def _lip_halves(lab: np.ndarray, w: np.ndarray) -> tuple[float, np.ndarray, np.ndarray]:
+    """Centre row of the lips and the mean colour of the upper and of the lower lip."""
+    rows = np.arange(lab.shape[0], dtype=np.float32)[:, None]
+    cy = float((w * rows).sum() / w.sum())
+    up, lo = w * (rows < cy), w * (rows >= cy)
+    return (cy, (lab * up[..., None]).sum((0, 1)) / max(float(up.sum()), 1e-6),
+            (lab * lo[..., None]).sum((0, 1)) / max(float(lo.sum()), 1e-6))
+
+
+def _lip_shift(g: np.ndarray, r: np.ndarray, wg: np.ndarray, wr: np.ndarray) -> np.ndarray:
+    """Per-row LAB shift towards the avatar's own lips: upper and lower lip matched separately (MuseTalk
+    draws the lower lip pinker than the upper one; one shift for both left it pink), blended across the
+    lip centre line; lightness only partly."""
+    cy, gu, gl = _lip_halves(g, wg)
+    _, ru, rl = _lip_halves(r, wr)
+    gain = np.array([0.7, 1.0, 1.0], np.float32)
+    t = np.clip((np.arange(g.shape[0], dtype=np.float32) - (cy - 4)) / 8, 0, 1)
+    t = (t * t * (3 - 2 * t))[:, None, None]
+    return (1 - t) * ((ru - gu) * gain) + t * ((rl - gl) * gain)
+
+
+def _teeth(g: np.ndarray, wg: np.ndarray) -> None:
+    """Teeth (bright, nearly colourless pixels next to the lips) a little whiter and crisper; MuseTalk
+    draws them as a soft grey strip. In place, LAB."""
+    lightness, a, b = g[..., 0], g[..., 1], g[..., 2]
+    near_lips = cv2.dilate((wg > 0.3).astype(np.uint8), np.ones((15, 15), np.uint8)).astype(np.float32)
+    chroma = np.abs(a - 128) + np.abs(b - 128)
+    wt = np.clip((lightness - 120) / 40, 0, 1) * np.clip(1 - (chroma - 14) / 14, 0, 1) * near_lips
+    wt = cv2.GaussianBlur(wt.astype(np.float32), (5, 5), 0)
+    if wt.sum() > 5:
+        detail = lightness - cv2.GaussianBlur(lightness, (0, 0), 1.5)
+        g[..., 0] = lightness + wt * (10 + 0.6 * detail)
+        g[..., 1] = 128 + (a - 128) * (1 - 0.4 * wt)
+        g[..., 2] = 128 + (b - 128) * (1 - 0.4 * wt)
+
+
+def refine_face(gen: np.ndarray, ref: np.ndarray, sharpen: float = LIP_SHARPEN) -> np.ndarray:
     """MuseTalk's lower face (BGR) made to look like the avatar's own (``ref``: the same rows of the
     loop frame). MuseTalk draws the lips pinker and matte, so they changed colour whenever the avatar
-    started or stopped speaking (owner's test); their colour is moved to the avatar's lip colour
-    (lip colour difference a*b* 5.1 -> 1.3 on 80 speech frames, stable from frame to frame), and the
-    slightly soft output is sharpened to the photo's crispness."""
+    started or stopped speaking (owner's test); their colour is moved to the avatar's lip colour, the
+    upper and the lower lip separately (a*b* difference upper 5.7 -> 2.7, lower 6.8 -> 1.4 on 96 speech
+    frames; one shift for both left the lower lip at 2.6), the teeth are made a little whiter and
+    crisper, and a soft decoder output (SD VAE) is sharpened to the photo's crispness. ~7 ms CPU."""
     g = cv2.cvtColor(gen, cv2.COLOR_BGR2LAB).astype(np.float32)
     r = cv2.cvtColor(ref, cv2.COLOR_BGR2LAB).astype(np.float32)
     wg, wr = _lip_weight(g), _lip_weight(r)
     if wg.sum() > 50 and wr.sum() > 50:
-        mg = (g * wg[..., None]).sum((0, 1)) / wg.sum()
-        mr = (r * wr[..., None]).sum((0, 1)) / wr.sum()
-        g += wg[..., None] * ((mr - mg) * np.array([0.7, 1.0, 1.0], np.float32))   # lightness only partly
+        g += wg[..., None] * _lip_shift(g, r, wg, wr)
+        _teeth(g, wg)
         gen = cv2.cvtColor(np.clip(g, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
-    if LIP_SHARPEN:
-        gen = cv2.addWeighted(gen, 1 + LIP_SHARPEN, cv2.GaussianBlur(gen, (0, 0), 1.2), -LIP_SHARPEN, 0)
+    if sharpen:
+        gen = cv2.addWeighted(gen, 1 + sharpen, cv2.GaussianBlur(gen, (0, 0), 1.2), -sharpen, 0)
     return gen
 
 
@@ -88,6 +124,7 @@ class Loop:
     def save(self, folder: Path) -> None:
         folder.mkdir(parents=True, exist_ok=True)
         torch.save(self.latents, folder / "latents.pt")
+        (folder / "loop.pkl.orig").unlink(missing_ok=True)   # body_motion's copy of the previous build
         with open(folder / "loop.pkl", "wb") as fh:
             pickle.dump({"name": self.name, "frames_jpg": self.frames_jpg, "coords": self.coords,
                          "masks_png": self.masks_png, "mask_boxes": self.mask_boxes, "size": self.size,
@@ -131,6 +168,7 @@ class LoopDelta:
     def save(self, folder: Path) -> None:
         folder.mkdir(parents=True, exist_ok=True)
         torch.save(self.latents, folder / "latents.pt")
+        (folder / "delta.pkl.orig").unlink(missing_ok=True)  # body_motion's copy of the previous build
         with open(folder / "delta.pkl", "wb") as fh:
             pickle.dump({"name": self.name, "base": self.base, "frame_idx": self.frame_idx,
                          "frames_jpg": self.frames_jpg, "coords": self.coords, "masks_png": self.masks_png,
@@ -144,7 +182,7 @@ class LoopDelta:
 
 
 class MuseTalkEngine:
-    def __init__(self, fps: int = 20, batch_size: int = 4, device: str = "cuda") -> None:
+    def __init__(self, fps: int = 20, batch_size: int = 4, device: str = "cuda", decoder: str = "vae") -> None:
         from diffusers import UNet2DConditionModel
         from transformers import WhisperModel
 
@@ -173,8 +211,23 @@ class MuseTalkEngine:
             self.whisper = WhisperModel.from_pretrained("models/whisper", torch_dtype=self.dtype).to(self.device).eval()
             self.fp = FaceParsing(left_cheek_width=90, right_cheek_width=90)
         self.timesteps = torch.tensor([0], device=self.device)
+        # decoder "taesd": the tiny SD autoencoder (madebyollin/taesd, MIT) decodes MuseTalk's latents in
+        # 2.2 ms instead of 26.4 ms per frame (UNet 13.8 ms), so lip sync renders ~2.5x faster and keeps
+        # up while the LLM shares the GPU. Same look (PSNR 30.9 dB against the SD VAE, lips a little
+        # crisper: Laplacian variance 33 vs 21, photo 25), so its output is not sharpened.
+        self.tiny = None
+        self.sharpen = LIP_SHARPEN
+        if decoder == "taesd":
+            path = WEIGHTS / "models" / "taesd"
+            if (path / "config.json").exists():
+                from diffusers import AutoencoderTiny
+                self.tiny = AutoencoderTiny.from_pretrained(str(path), torch_dtype=self.dtype).to(self.device).eval()
+                self.sharpen = 0.0
+            else:
+                logger.warning(f"TAESD not found in {path}: using the SD VAE decoder")
+        self.decoder = "taesd" if self.tiny is not None else "vae"
         self.load_s = round(time.perf_counter() - t0, 2)
-        logger.info(f"MuseTalk engine ready in {self.load_s}s (fps={fps}, batch={batch_size})")
+        logger.info(f"MuseTalk engine ready in {self.load_s}s (fps={fps}, batch={batch_size}, decoder={self.decoder})")
 
     # ------------------------------------------------------------------ preparation
     @torch.no_grad()
@@ -267,8 +320,11 @@ class MuseTalkEngine:
             latent = torch.stack([src.latent(i) for src, i in zip(sources, idx, strict=True)]).to(self.device, self.dtype)
         cond = self.pe(chunks.to(self.device, self.dtype))
         pred = self.unet(latent, self.timesteps, encoder_hidden_states=cond).sample
-        lat = pred[:, :, DECODE_FROM_ROW:, :] / self.vae.scaling_factor
-        img = self.vae.vae.decode(lat.to(self.vae.vae.dtype)).sample
+        if self.tiny is not None:                     # TAESD decodes the UNet's (scaled) latents directly
+            img = self.tiny.decode(pred[:, :, DECODE_FROM_ROW:, :]).sample
+        else:
+            lat = pred[:, :, DECODE_FROM_ROW:, :] / self.vae.scaling_factor
+            img = self.vae.vae.decode(lat.to(self.vae.vae.dtype)).sample
         img = (img / 2 + 0.5).clamp(0, 1).mul(255).round().to(torch.uint8)
         return idx, img.permute(0, 2, 3, 1).cpu().numpy()[..., ::-1]   # RGB → BGR
 
@@ -278,7 +334,7 @@ class MuseTalkEngine:
         x1, y1, x2, y2 = loop.coords[i]
         crop = cv2.resize(frame[y1:y2, x1:x2], (256, 256), interpolation=cv2.INTER_AREA)
         h = face_bottom.shape[0]
-        crop[256 - h:] = refine_face(np.ascontiguousarray(face_bottom), crop[256 - h:])   # top rows keep the original
+        crop[256 - h:] = refine_face(np.ascontiguousarray(face_bottom), crop[256 - h:], self.sharpen)  # top rows: original
         face = cv2.resize(crop, (x2 - x1, y2 - y1))
         xs, ys, xe, ye = loop.mask_boxes[i]
         body = frame[ys:ye, xs:xe]

@@ -16,6 +16,7 @@ from app.core.gpu import gpu_snapshot, vram_free_gib
 from app.llm.client import LLMClient
 from app.llm.prompt import system_prompt
 from app.llm.server import LlamaServerSupervisor
+from app.persona import MemoryStore, Persona, PersonaStore, memory_request
 
 # Measured on the RTX 3060 (docs/ARCHITECTURE.md); used to refuse loads that would make Windows
 # spill VRAM into system RAM (which silently makes everything ~10x slower).
@@ -40,6 +41,40 @@ class Services:
         self.load_report: dict[str, float] = {}
         self.warnings: list[str] = []
         self.gpu_lock = asyncio.Lock()  # serialises our own GPU bursts (STT / TTS)
+        # persona and memory of the user (persona.py), set from the page; stored under data/
+        self.persona_store = PersonaStore(settings.repo_path("data/persona.json"),
+                                          Persona(name=settings.persona_name, voice=settings.tts.voice))
+        self.memory_store = MemoryStore(settings.repo_path("data/memory.json"))
+        self.persona = self.persona_store.load()
+        self._background: set[asyncio.Task] = set()
+
+    def voices(self) -> list[str]:
+        return self.tts.voices() if self.tts is not None and hasattr(self.tts, "voices") else []
+
+    def set_persona(self, data: dict) -> Persona:
+        """Apply and store the persona settings from the page (valid fields only)."""
+        persona = PersonaStore.merge(self.persona, data, self.voices())
+        if persona.voice != self.persona.voice and hasattr(self.tts, "set_voice"):
+            self.tts.set_voice(persona.voice)
+        self.persona = persona
+        self.persona_store.save(persona)
+        logger.info(f"persona updated: {persona.name}, voice {persona.voice}, memory {'on' if persona.memory else 'off'}")
+        return persona
+
+    def remember(self, transcript: str) -> None:
+        """After a session: merge what the user said into the memory of earlier sessions (background)."""
+        async def run() -> None:
+            try:
+                text = await self.llm.complete(memory_request(self.memory_store.load(), transcript), max_tokens=160)
+                if text.strip():
+                    self.memory_store.save(text)
+                    logger.info(f"memory of the user updated ({len(text.split())} words)")
+            except Exception as exc:  # noqa: BLE001 - the next session simply starts without it
+                logger.warning(f"memory update failed: {exc!r}")
+
+        task = asyncio.get_running_loop().create_task(run(), name="remember")
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
 
     @property
     def voice_ready(self) -> bool:
@@ -115,6 +150,9 @@ class Services:
             self.settings.tts.engine = "kokoro"
             self.tts = create_tts(self.settings)
         self.load_report["tts_load_s"] = round(time.perf_counter() - t0, 2)
+        if hasattr(self.tts, "set_voice") and self.persona.voice not in ("", self.tts.voice):
+            if self.persona.voice in self.voices():       # the voice chosen in the page (persona)
+                self.tts.set_voice(self.persona.voice)
         self.load_report["tts_warmup_s"] = self.tts.warmup()
 
     def _load_rag(self) -> None:

@@ -1,0 +1,34 @@
+{
+  "summary": {
+    "rounds": 2,
+    "interrupted": 2,
+    "detect_ms_p50": 413.5,
+    "detect_ms_max": 417,
+    "stale_audio_packets_total": 0,
+    "follow_up_ok": 2
+  },
+  "rows": [
+    {
+      "round": 0,
+      "interrupt_received": true,
+      "detect_ms_after_speech_onset": 410,
+      "server_cancel_ms": 0.14,
+      "stale_audio_packets_after_interrupt": 0,
+      "assistant_played_ms_at_onset": 2795,
+      "heard_text_recorded": "Once, in a quiet forest by the edge of the sea, there lived a",
+      "follow_up_transcript": "Wait, stop. What is 2 plus 2?",
+      "follow_up_reply": "2 plus 2 is 4. Simple, right?"
+    },
+    {
+      "round": 1,
+      "interrupt_received": true,
+      "detect_ms_after_speech_onset": 417,
+      "server_cancel_ms": 0.14,
+      "stale_audio_packets_after_interrupt": 0,
+      "assistant_played_ms_at_onset": 2809,
+      "heard_text_recorded": "Once upon a time, in a quiet coastal village where the",
+      "follow_up_transcript": "Wait, stop. What is 2 plus 2?",
+      "follow_up_reply": "2 plus 2 is 4. Simple, right?"
+    }
+  ]
+}

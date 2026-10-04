@@ -13,5 +13,5 @@ avatar:
   enabled: true
   avatar_id: dev_girl_v2   # seamless 30 s loops + talking motion (dev_girl: the first, 7 s ping-pong build)
   jpeg_quality: 90
-  gate_frames: 4        # lip-synced frames before the first audio. With the LLM writing just in time: 2 -> voice p50
-  #                        854 ms but 5.5 % late frames; 3 -> 938 ms, 5.0 % (10 min); 4 -> ~1,000 ms, 2.9 %
+  gate_frames: 2        # lip-synced frames before the first audio. With the TAESD decoder (avatar.decoder) the renderer
+  #                        keeps up: voice p50 758 ms, 0 % late frames (3-min soak). With the SD VAE use 4.

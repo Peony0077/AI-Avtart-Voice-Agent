@@ -100,6 +100,7 @@ class AvatarCfg(BaseModel):
     fps: int = 20
     jpeg_quality: int = 90      # speech frames; idle frames are stored at 90 too (no visible change when she stops talking)
     gate_frames: int = 4        # lip-synced frames rendered before a turn's first audio is released
+    decoder: str = "taesd"      # MuseTalk latent decoder: taesd (fast, E:/AI-models/avatar/models/taesd) | vae
                                 # (measured with the GPU kept warm: 4 -> no late frames; 2 -> lips lag at start)
     late_ms: int = 100          # skip speech frames that would reach the browser more than this late
                                 # (keeps lips in sync when the GPU is busy; 0 = render every frame)

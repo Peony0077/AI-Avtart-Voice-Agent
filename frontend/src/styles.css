@@ -76,3 +76,18 @@ button.danger { background: #d92d20; color: #fff; }
 .error { color: #d92d20; font-size: 0.85rem; }
 .sources { list-style: none; margin: 6px 0 0; padding: 6px 0 0; border-top: 1px dashed var(--border); font-size: 0.78rem; color: var(--muted); }
 .sources li { white-space: normal; }
+
+/* transcript / settings buttons and the settings dialog */
+.tools { display: inline-flex; gap: 8px; }
+dialog.settings { width: min(560px, calc(100vw - 32px)); border: 1px solid var(--border); border-radius: 12px;
+  background: var(--card); color: var(--fg); padding: 20px; }
+dialog.settings::backdrop { background: rgba(0, 0, 0, 0.45); }
+dialog.settings h2 { margin: 0 0 12px; font-size: 1.15rem; }
+dialog.settings form { display: grid; gap: 12px; }
+dialog.settings label { display: grid; gap: 4px; font-size: 0.92rem; }
+dialog.settings label.check { display: flex; align-items: center; gap: 8px; }
+dialog.settings input:not([type=checkbox]), dialog.settings textarea, dialog.settings select {
+  font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); }
+dialog.settings textarea { resize: vertical; }
+dialog.settings .memory { font-size: 0.88rem; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+dialog.settings .actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; }

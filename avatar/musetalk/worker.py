@@ -84,7 +84,7 @@ class Turn:
 
 class AvatarWorker:
     def __init__(self, avatar_id: str, batch: int, quality: int, lead_ms: int, gate_frames: int = 4,
-                 warm_burst_ms: int = 0, late_ms: int = 100) -> None:
+                 warm_burst_ms: int = 0, late_ms: int = 100, decoder: str = "vae") -> None:
         folder = AVATARS / avatar_id
         meta = json.loads((folder / "avatar.json").read_text(encoding="utf-8"))
         self.fps = meta["fps"]
@@ -104,7 +104,7 @@ class AvatarWorker:
             self.gesture_windows[gesture] = cycle_windows([tuple(w) for w in gm["windows"]], n_forward, pingpong)
         self._gesture: tuple[str, int, int] | None = None      # (gesture, first frame, end frame), absolute
         self._reply_gesture: tuple[str, float] | None = None   # requested by the LLM for the next reply
-        self.engine = MuseTalkEngine(fps=self.fps, batch_size=batch)
+        self.engine = MuseTalkEngine(fps=self.fps, batch_size=batch, decoder=decoder)
         self.warmup_s = self.engine.warmup(next(iter(self.loops.values())))
         self.quality = quality
         self.gate_frames = gate_frames
@@ -544,9 +544,10 @@ async def main() -> None:
     ap.add_argument("--gate-frames", type=int, default=4, help="frames rendered before a turn's first audio is released")
     ap.add_argument("--warm-burst-ms", type=int, default=0, help="GPU warm-up when the turn enters THINKING (0 = off)")
     ap.add_argument("--late-ms", type=int, default=100, help="skip frames that would arrive this late (0 = never skip)")
+    ap.add_argument("--decoder", choices=("vae", "taesd"), default="vae", help="latent decoder (taesd: ~2.5x faster lip sync)")
     args = ap.parse_args()
     worker = AvatarWorker(args.avatar, args.batch, args.quality, args.lead_ms, args.gate_frames, args.warm_burst_ms,
-                          args.late_ms)
+                          args.late_ms, args.decoder)
     async with websockets.serve(worker.handle, args.host, args.port, max_size=None, ping_interval=20):
         logger.info(f"avatar worker listening on ws://{args.host}:{args.port}")
         await asyncio.Future()

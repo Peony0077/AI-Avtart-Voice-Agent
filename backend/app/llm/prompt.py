@@ -6,6 +6,7 @@ Layout keeps the long, stable prefix first so llama-server's prompt cache can re
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 
 SYSTEM_TEMPLATE = """You are {name}, a warm, natural-sounding AI avatar having a real-time spoken conversation with the user.
@@ -58,9 +59,30 @@ def wants_detail(user_text: str) -> bool:
     return bool(_WANTS_DETAIL.search(user_text))
 
 
+# Questions about the time or date get the current local time on that message only (the LLM does not
+# know it; in the system prompt it would change the cached prefix every minute).
+_ABOUT_TIME = re.compile(r"\b(time|date|day|today|tonight|tomorrow|yesterday|week|weekend|month|year|clock|"
+                         r"hour|o'clock|morning|afternoon|evening|monday|tuesday|wednesday|thursday|friday|"
+                         r"saturday|sunday|january|february|march|april|may|june|july|august|september|"
+                         r"october|november|december)\b", re.I)
+
+
+def time_hint(user_text: str, now: float | None = None) -> str:
+    """The current local date and time, for a message that is about time or dates ('' otherwise)."""
+    if not _ABOUT_TIME.search(user_text):
+        return ""
+    t = time.localtime(now)
+    return f"\n\n(It is now {time.strftime('%A', t)}, {t.tm_mday} {time.strftime('%B %Y, %H:%M', t)} local time.)"
+
+
 def system_prompt(name: str, summary: str | None = None, knowledge_enabled: bool = False,
-                  behavior_tag: bool = False) -> str:
+                  behavior_tag: bool = False, personality: str = "", long_term: str | None = None) -> str:
     extra = ""
+    if personality:
+        extra += f"\n\nYour personality, as your owner describes it: {personality}"
+    if long_term:
+        extra += ("\n\nWhat you remember about the user from earlier conversations (use it naturally when it "
+                  f"fits, do not recite it): {long_term}")
     if summary:
         extra += f"\n\nSummary of the earlier conversation:\n{summary}"
     return SYSTEM_TEMPLATE.format(name=name, extra=extra, tag=TAG_RULES if behavior_tag else "")
@@ -74,6 +96,8 @@ class ConversationMemory:
     max_turns: int = 8
     knowledge_enabled: bool = False
     behavior_tag: bool = False
+    personality: str = ""              # persona (persona.py), set by the owner in the page
+    long_term: str | None = None       # memory of the user from earlier sessions (persona.MemoryStore)
     after_interruption: bool = False   # the last reply was stopped: the next message gets INTERRUPTED_HINT
     turns: list[dict] = field(default_factory=list)  # {"role": ..., "content": ...}
     summary: str | None = None
@@ -91,17 +115,33 @@ class ConversationMemory:
             del self.turns[:cut]
 
     def build(self, user_text: str, knowledge: str | None = None) -> list[dict]:
-        content = user_text + (DETAIL_HINT if wants_detail(user_text) else "")
+        content = user_text + (DETAIL_HINT if wants_detail(user_text) else "") + time_hint(user_text)
         if self.after_interruption:
             content += INTERRUPTED_HINT
         if knowledge:
             content = f"{content}\n\nKNOWLEDGE (retrieved from the user's documents):\n{knowledge}"
         return [
             {"role": "system", "content": system_prompt(self.persona, self.summary, self.knowledge_enabled,
-                                                        self.behavior_tag)},
+                                                        self.behavior_tag, self.personality, self.long_term)},
             *self.turns,
             {"role": "user", "content": content},
         ]
+
+    def transcript(self) -> str:
+        """This session's conversation as text (rolling summary of older turns + recent turns)."""
+        lines = [f"(Earlier: {self.summary})"] if self.summary else []
+        lines += [f"{t['role']}: {_strip_meta(t['content'])}" for t in self.archived + self.turns]
+        return "\n".join(lines)
+
+    def user_said(self) -> str:
+        """What the user said in this session, one message per line (for the memory across sessions;
+        placeholders such as the greeting's are left out)."""
+        return "\n".join(f"- {t['content']}" for t in self.archived + self.turns
+                         if t["role"] == "user" and not t["content"].startswith("("))
+
+    @property
+    def user_turns(self) -> int:
+        return sum(1 for t in self.archived + self.turns if t["role"] == "user")
 
     def needs_summary(self) -> bool:
         return len(self.archived) >= 4

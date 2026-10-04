@@ -738,6 +738,89 @@ reply talked over by the looping test microphone), first audio p50 1,031 ms / p9
 memory +96 MiB in the second half (one allocator block), RAM free ≥ 1.8 GB
 ([phase6_soak_avatar_v2_10min.json](benchmarks/phase6_soak_avatar_v2_10min.json)).
 
+### Closer to Anam and HeyGen (2026-10-04)
+
+The owner asked to close the remaining gaps one by one and to add what Anam and HeyGen LiveAvatar
+offer. What they offer (from their own pages, October 2026): Anam — personas (face, voice, LLM,
+system prompt), a one-shot avatar from a single photo, a greeting, knowledge base, tools, transcripts,
+session recordings, an embeddable widget, meeting bots, 70+ languages, ~180 ms avatar latency and
+under 900 ms turn-taking, 25 fps at up to 1152x768 ([anam.ai](https://anam.ai/),
+[persona docs](https://anam.ai/docs/personas/overview), [docs index](https://anam.ai/docs/llms.txt));
+HeyGen LiveAvatar — avatars from one image or 2 minutes of video (with a consent recording), a knowledge
+base, a memory that keeps one accumulated summary of earlier sessions, 177+ languages, a FULL mode
+(ASR + LLM + TTS + avatar) and a LITE mode ([LiveAvatar](https://www.heygen.com/blog/liveavatar-by-heygen)).
+Both run their own large models on data-centre GPUs; this runs on one RTX 3060.
+
+| | Anam | HeyGen LiveAvatar | here, now |
+|---|---|---|---|
+| Avatar from one photo | yes | yes | yes |
+| Avatar from a video of a real person | custom avatars | 2 min of footage | **yes** (`build_avatar.py --video`) |
+| Voice reply after the user stops talking | < 900 ms | "sub-second" | **~780 ms p50** |
+| Natural motion, micro-expressions | yes (generated) | yes | head drift, eye saccades, blinks, breathing, talking head motion, gestures |
+| Persona: name, personality, greeting, voice | yes | yes | **yes** (Settings in the page) |
+| Greeting when the conversation starts | yes | — | **yes** |
+| Memory across sessions | — | yes (one summary) | **yes** (one summary, "Forget me") |
+| Transcript download | yes | — | **yes** |
+| Knowledge base | yes | yes | yes (RAG) |
+| Languages | 70+ | 177+ | English (owner's choice) |
+| Resolution / frame rate | 1152x768, 25 fps | — | 512x512, 20 fps (+ in-between frames in the browser) |
+| Tools, meeting bots, embed widget, recordings | yes | partly | not done (not asked for; local single user) |
+
+**1. Frame drops → the fast decoder (TAESD).** MuseTalk's image decoder (SD VAE) took 26.4 ms of the
+~40 ms per frame, so lip sync only just kept up and dropped frames whenever the LLM used the GPU.
+TAESD (madebyollin/taesd, MIT, 9.8 MB, downloaded with the owner's OK to `E:\AI-models\avatar\models\taesd`)
+decodes the same latents in 2.2 ms: ~16 ms per frame in total, 2.5x faster. Same look (PSNR 30.9 dB
+against the SD VAE; lips a little crisper, so no sharpening). It is the default (`avatar.decoder: taesd`;
+`vae` is one setting away), not only a fallback under load, because switching decoders mid-sentence
+would make the lips flicker between two looks. With the headroom the avatar gate is back to 2 frames:
+voice p50 758–782 ms (from ~1,000), 3-min soak 0 % late frames and 0 % of frames dropped (was 1.5–5 %).
+10-minute voice soak with all of today's changes: first audio p50 840 ms / p90 1,161 ms in the browser,
+late lip-sync frames 4 of 22,203 (0.02 %, was 1.5 %), frames not rendered 0.2 % (was 6.3 %), none arrived
+late, 0 errors, 0 restarts, GPU 9.2 GB (was 10.3), +36 MiB
+([phase6_soak_taesd_10min.json](benchmarks/phase6_soak_taesd_10min.json)).
+
+**2. Mouth and teeth.** The lip colour is now matched for the upper and the lower lip separately
+(MuseTalk draws the lower lip pinker; error a\*b\* lower lip 2.6 → 1.4, upper 2.7, uncorrected 6.8/5.7 on
+96 speech frames), and the teeth (bright, colourless pixels next to the lips) are made a little whiter
+and crisper. ~7 ms CPU per frame (`engine.refine_face`).
+
+**3. Shoulders and body.** The face rig moves the head only. `body_motion.py` moves the image below the
+face box: the shoulders rise ~2.5 px with each breath (7 breaths per 30 s loop) and the body sways
+~1.4 px; it eases in below the chin, so the face and the lip-sync area are untouched (0 pixels changed
+above the face box). Applied once to the stored frames of `dev_girl_v2` (10,192 frames, 85 s; originals
+kept as `*.orig`), so it costs nothing at run time; new photo builds apply it automatically.
+
+**4. An avatar from a video** (`video_source.py`, `build_avatar.py --video clip.mp4 --id name`): a 30 s
+segment of the video becomes the loops. Every frame goes through the face rig relative to itself (its own
+head motion, gaze and blinks stay; the expressions' smile/eyebrows and the gestures are added; the lips
+are closed, so the person may talk in the recording), the segment ends where it looks like its start and
+the frames before it are cross-faded into its end. Tested with a 10 s clip of the photo avatar *talking*
+at 25 fps and 768x576: lips closed in all loops, smile added, the seam invisible (0 changed pixels), and
+the live agent ran with it (A/V test: 0 late frames, end-of-speech test passed). A recording needs the
+person's consent; front-facing, head and shoulders, even light, 1–3 minutes talking with pauses.
+
+**5. Features** (WebSocket messages, so they need the access token like the conversation itself):
+- **Settings** in the page: name, personality, greeting, voice (the English Kokoro voices on this PC),
+  memory on/off — stored in `data/persona.json` (not in git), applied from her next reply.
+- **Greeting** when the user presses Start voice (once per session, before anything else was said): the
+  configured greeting, or a short welcome back by name from the LLM when she remembers the user.
+- **Memory across sessions** (`data/memory.json`, this PC only): after a session the LLM merges what the
+  *user* said into one short summary. Given the whole conversation the 4B model also "remembered" what
+  the avatar had said ("likes trail-side meals" from a cooking persona's replies) and guessed the user's
+  gender from the name ("He"); now it gets only the user's own words and is told not to guess gender:
+  "The user's name is Sam. They love hiking in the mountains." The Settings show what she remembers;
+  "Forget me" erases it.
+- **Transcript** button: the conversation as a text file, made in the page.
+- **Date and time**: a message about time or dates carries the current local time (not the system
+  prompt, whose cached prefix would change every minute): "It's Sunday, October 4th."
+- **After Stop** (found again by the Stop test, with the persona): "Now just say OK." → "OK. Let me tell
+  you a story about a dragon …". A request stopped before a word of it was heard is now dropped from her
+  history (the next message still gets the hint); 3/3 and 4/4 test runs "OK." only.
+
+Browser test `phase6_persona.spec.js`: settings, greeting without a "You" bubble, name and personality,
+the weekday, a transcript download, the memory in a new session ("Hey Sam! It's great to see you
+back …"), and "Forget me"; it restores the persona it found and erases what it told her.
+
 ### Lip sync when the PC is busy
 
 The first 30-minute avatar soak (morning, quiet desktop) passed with 2.5 % late frames. Later the same
@@ -810,7 +893,7 @@ Found and fixed by these tests:
 - `logs/backend.log` stopped recording as soon as Kokoro loaded, since Phase 2: Kokoro's `__init__`
   calls `logger.remove()`. Kokoro is now imported before logging is configured.
 - Unit tests for both, for the chunk merging (`backend/tests/test_recovery_units.py`), the answer
-  prefetch (`test_prefetch.py`), the VAD `resume` event, the avatar catch-up and frame-stride rules (`test_avatar_catchup.py`), head gestures (`test_avatar_gestures.py`, `test_gesture_from_text.py`), warmth (`test_warmth.py`), speech output (`test_speech_output_text.py`), endpointing (`test_endpointing.py`), the LLM pause (`test_llm_pause.py`) and seamless loops and talking motion (`test_avatar_gestures.py`) — 209 unit tests in total.
+  prefetch (`test_prefetch.py`), the VAD `resume` event, the avatar catch-up and frame-stride rules (`test_avatar_catchup.py`), head gestures (`test_avatar_gestures.py`, `test_gesture_from_text.py`), warmth (`test_warmth.py`), speech output (`test_speech_output_text.py`), endpointing (`test_endpointing.py`), the LLM pause (`test_llm_pause.py`), seamless loops, talking and body motion (`test_avatar_gestures.py`), video avatars (`test_video_source.py`) and persona and memory (`test_persona.py`) — 217 unit tests in total.
 
 ### Observability
 

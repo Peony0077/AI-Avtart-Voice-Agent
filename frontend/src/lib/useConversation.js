@@ -12,12 +12,13 @@ export function useConversation() {
   const [notice, setNotice] = useState(null)
   const noticeTimer = useRef(0)
   const [session, setSession] = useState(null)
+  const [persona, setPersona] = useState(null)   // name, personality, greeting, voice, memory, voices, remembered
   const handlersRef = useRef({ binary: [], json: [] })
 
   const upsertAssistant = useCallback((turnId, fn) => {
     setMessages((prev) => {
       const idx = prev.findLastIndex((m) => m.role === 'assistant' && m.turnId === turnId)
-      if (idx === -1) return [...prev, fn({ turnId, role: 'assistant', text: '', interrupted: false })]
+      if (idx === -1) return [...prev, fn({ turnId, role: 'assistant', text: '', interrupted: false, at: Date.now() })]
       const next = prev.slice()
       next[idx] = fn(next[idx])
       return next
@@ -38,11 +39,18 @@ export function useConversation() {
         case 'session':
           setSession(msg)
           break
+        case 'persona':
+          setPersona(msg)
+          setSession((s) => (s ? { ...s, persona: msg.name } : s))
+          break
         case 'state':
           setState(msg.state)
           break
         case 'user_message':
-          setMessages((prev) => [...prev, { turnId: msg.turn_id, role: 'user', text: msg.text, source: msg.source }])
+          // the greeting answers no message of the user: no "You" bubble
+          if (msg.source !== 'greeting') {
+            setMessages((prev) => [...prev, { turnId: msg.turn_id, role: 'user', text: msg.text, source: msg.source, at: Date.now() }])
+          }
           break
         case 'llm_delta':
           upsertAssistant(msg.turn_id, (m) => ({ ...m, text: m.text + msg.text }))
@@ -82,6 +90,9 @@ export function useConversation() {
 
   const sendText = useCallback((text) => connRef.current?.sendJson({ type: 'user_text', text }), [])
   const interrupt = useCallback(() => connRef.current?.sendJson({ type: 'interrupt', reason: 'manual' }), [])
+  const loadPersona = useCallback(() => connRef.current?.sendJson({ type: 'get_persona' }), [])
+  const savePersona = useCallback((p) => connRef.current?.sendJson({ type: 'set_persona', persona: p }), [])
+  const forgetMemory = useCallback(() => connRef.current?.sendJson({ type: 'forget_memory' }), [])
   const onJson = useCallback((h) => {
     handlersRef.current.json.push(h)
     return () => { handlersRef.current.json = handlersRef.current.json.filter((x) => x !== h) }
@@ -91,5 +102,6 @@ export function useConversation() {
     return () => { handlersRef.current.binary = handlersRef.current.binary.filter((x) => x !== h) }
   }, [])
 
-  return { connRef, status, state, messages, behavior, metrics, session, notice, sendText, interrupt, onJson, onBinary }
+  return { connRef, status, state, messages, behavior, metrics, session, notice, sendText, interrupt, onJson, onBinary,
+    persona, loadPersona, savePersona, forgetMemory }
 }

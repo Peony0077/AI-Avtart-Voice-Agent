@@ -24,8 +24,9 @@ class KokoroTTS:
         self.cfg = cfg
         self.model = KModel(repo_id=REPO).to(cfg.device).eval()
         # voice prefix a*/b* = American/British English; the G2P must match (accent is in the phonemes)
-        lang = cfg.voice[0] if cfg.voice[:1] in ("a", "b") else "a"
-        self.pipeline = KPipeline(lang_code=lang, repo_id=REPO, model=self.model)
+        self.voice = cfg.voice
+        self.lang = cfg.voice[0] if cfg.voice[:1] in ("a", "b") else "a"
+        self.pipeline = KPipeline(lang_code=self.lang, repo_id=REPO, model=self.model)
         self.pipeline.load_voice(cfg.voice)
         self.load_s = round(time.perf_counter() - t0, 2)
         logger.info(f"Kokoro loaded in {self.load_s}s (voice {cfg.voice}, {cfg.device})")
@@ -36,7 +37,7 @@ class KokoroTTS:
         pieces: list[np.ndarray] = []
         words: list[tuple[str, float, float]] = []
         offset = 0.0
-        for result in self.pipeline(text, voice=self.cfg.voice, speed=self.cfg.speed):
+        for result in self.pipeline(text, voice=self.voice, speed=self.cfg.speed):
             if result.audio is None:
                 continue
             audio = result.audio.detach().float().cpu().numpy()
@@ -48,6 +49,28 @@ class KokoroTTS:
         audio = np.concatenate(pieces) if pieces else np.zeros(0, np.float32)
         return TTSResult(audio=audio, sample_rate=self.sample_rate, words=words,
                          synth_ms=round((time.perf_counter() - t0) * 1000, 1))
+
+    def set_voice(self, voice: str) -> None:
+        """Another stock voice (persona setting). British voices (b*) need the British phonemizer."""
+        from kokoro import KPipeline
+
+        lang = voice[0] if voice[:1] in ("a", "b") else "a"
+        if lang != self.lang:
+            self.pipeline = KPipeline(lang_code=lang, repo_id=REPO, model=self.model)
+            self.lang = lang
+        self.pipeline.load_voice(voice)
+        self.voice = voice
+        logger.info(f"Kokoro voice {voice}")
+
+    @staticmethod
+    def voices() -> list[str]:
+        """English voices available offline (in the Hugging Face cache)."""
+        import os
+        from pathlib import Path
+
+        hub = Path(os.environ.get("HF_HOME", "")) / "hub" / "models--hexgrad--Kokoro-82M" / "snapshots"
+        names = {p.stem for p in hub.glob("*/voices/*.pt")}
+        return sorted(n for n in names if n[:1] in ("a", "b"))
 
     def warmup(self) -> float:
         t0 = time.perf_counter()

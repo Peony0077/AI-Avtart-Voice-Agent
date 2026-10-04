@@ -52,6 +52,15 @@ def _lateness_stats(values: list[float], backlog: int) -> dict | None:
             "p90_ms": round(v[int(len(v) * 0.9)]), "max_ms": round(v[-1]), "max_outbox_backlog": backlog}
 
 
+GREETING_TEXT = "(The user started the conversation.)"
+
+
+async def _scripted(text: str):
+    """A fixed reply as LLM-like deltas (word by word), so it goes through the same speech path."""
+    for piece in re.findall(r"\S+\s*", text):
+        yield piece
+
+
 class Session:
     def __init__(self, ws: WebSocket, services: Services) -> None:
         self.id = uuid.uuid4().hex[:8]
@@ -60,8 +69,12 @@ class Session:
         self.cfg = services.settings
         self.sm = StateMachine()
         self.turns = TurnRegistry()
-        self.memory = ConversationMemory(persona=self.cfg.persona_name, max_turns=self.cfg.llm.history_turns,
-                                         knowledge_enabled=self.cfg.rag.enabled, behavior_tag=self.cfg.llm.behavior_tag)
+        persona = services.persona
+        self.memory = ConversationMemory(persona=persona.name, max_turns=self.cfg.llm.history_turns,
+                                         knowledge_enabled=self.cfg.rag.enabled, behavior_tag=self.cfg.llm.behavior_tag,
+                                         personality=persona.personality,
+                                         long_term=services.memory_store.load() if persona.memory else None)
+        self._greeted = False
         self.outbox = Outbox(ws, self.turns.is_current)
         self.voice_out = False            # replies are spoken (client plays assistant audio)
         self.speaker_on = False           # client asked for spoken replies (also for typed messages)
@@ -80,7 +93,7 @@ class Session:
     # ------------------------------------------------------------------ lifecycle
     async def start(self) -> None:
         self.outbox.start()
-        self.outbox.json({"type": "session", "session_id": self.id, "persona": self.cfg.persona_name,
+        self.outbox.json({"type": "session", "session_id": self.id, "persona": self.memory.persona,
                           "profile": self.cfg.profile, "voice_available": self.svc.voice_ready,
                           "avatar_available": self.svc.avatar_ready,
                           "avatar": self.svc.avatar.hello if self.svc.avatar_ready else None,
@@ -100,6 +113,8 @@ class Session:
                 task.cancel()
         self.sm.try_fire(Event.STOP)
         await self.outbox.stop()
+        if self.svc.persona.memory and self.memory.user_turns - int(self._greeted) > 0:
+            self.svc.remember(self.memory.user_said())     # what she remembers next time (persona.py)
         logger.info(f"session {self.id} closed ({reason})")
 
     # ------------------------------------------------------------------ inbound
@@ -129,6 +144,20 @@ class Session:
             await self.interrupt(msg.get("reason", "manual"))
         elif kind == "playback":
             self._on_playback(msg)
+        elif kind == "greet":
+            await self.greet()
+        elif kind == "get_persona":
+            self._send_persona()
+        elif kind == "set_persona":
+            persona = self.svc.set_persona(msg.get("persona") or {})
+            self.memory.persona, self.memory.personality = persona.name, persona.personality
+            self.memory.long_term = self.svc.memory_store.load() if persona.memory else None
+            self._send_persona()
+        elif kind == "forget_memory":
+            self.svc.memory_store.clear()
+            self.memory.long_term = None
+            logger.info("memory of the user erased (Forget me)")
+            self._send_persona()
         elif kind == "ping":
             self.outbox.json({"type": "pong", "t": msg.get("t"), "server_time": time.time()}, force=True)
         else:
@@ -164,6 +193,27 @@ class Session:
         # Typed messages are spoken too when the client has a speaker on: the avatar's lip sync is
         # driven by the speech audio, so a text-only reply would leave the avatar silent.
         self.voice_out = (self.speaker_on or self.mic_on) and self.svc.voice_ready
+
+    def _send_persona(self) -> None:
+        p = self.svc.persona
+        self.outbox.json({"type": "persona", **p.to_dict(), "voices": self.svc.voices(),
+                          "remembered": self.svc.memory_store.load() if p.memory else None}, force=True)
+
+    async def greet(self) -> None:
+        """Say hello when the user starts talking to her (the page's Start voice), once per session and
+        only before anything else was said: the configured greeting, or - when she remembers the user
+        from earlier sessions - a short welcome back from the LLM."""
+        if self._greeted or self.turns.current is not None or not self.voice_out:
+            return
+        self._greeted = True
+        if self.memory.long_term:
+            messages = [{"role": "system", "content": self.memory.build("")[0]["content"]},
+                        {"role": "user", "content": "(The user has just come back and opened the conversation. "
+                                                    "Greet them warmly in one short sentence, by name if you know "
+                                                    "it, and ask how you can help.)"}]
+            await self.start_turn("greeting", GREETING_TEXT, messages=messages)
+        else:
+            await self.start_turn("greeting", GREETING_TEXT, script=self.svc.persona.greeting_text())
 
     # ------------------------------------------------------------------ voice input
     async def _on_speech_start(self, ev: VadEvent) -> None:
@@ -312,7 +362,10 @@ class Session:
 
     # ------------------------------------------------------------------ turns
     async def start_turn(self, source: str, text: str, t0: float | None = None,
-                         prefetch: AnswerPrefetch | None = None) -> TurnContext:
+                         prefetch: AnswerPrefetch | None = None, messages: list[dict] | None = None,
+                         script: str | None = None) -> TurnContext:
+        """A turn answering ``text``: from the prefetched answer, the LLM (with ``messages`` instead of
+        the conversation, e.g. the greeting) or a fixed ``script`` (no LLM)."""
         if self.sm.state in ACTIVE:
             await self.interrupt("new_input")
         self._drop_prefetch()                  # e.g. typed text while a spoken answer was being prefetched
@@ -323,16 +376,17 @@ class Session:
             turn.tasks.append(prefetch.task)   # a barge-in cancels it like any other turn task
             prefetch.resume_fn = (lambda: self._resume_llm(turn)) if self.voice_out else None
             prefetch.adopted.set()
-        self.sm.fire(Event.TEXT_INPUT if source == "text" else Event.TRANSCRIPT_READY)
+        self.sm.fire(Event.TEXT_INPUT if source in ("text", "greeting") else Event.TRANSCRIPT_READY)
         self.outbox.json({"type": "user_message", "turn_id": turn.turn_id, "text": text, "source": source},
                          turn.turn_id, force=True)
-        task = asyncio.create_task(self._run_turn(turn, prefetch), name=f"turn-{turn.turn_id}")
+        task = asyncio.create_task(self._run_turn(turn, prefetch, messages, script), name=f"turn-{turn.turn_id}")
         turn.tasks.append(task)
         return turn
 
-    async def _run_turn(self, turn: TurnContext, prefetch: AnswerPrefetch | None = None) -> None:
+    async def _run_turn(self, turn: TurnContext, prefetch: AnswerPrefetch | None = None,
+                        messages: list[dict] | None = None, script: str | None = None) -> None:
         try:
-            await self._respond(turn, prefetch)
+            await self._respond(turn, prefetch, messages, script)
         except asyncio.CancelledError:
             pass
         except Exception as exc:  # noqa: BLE001
@@ -343,17 +397,22 @@ class Session:
                 self.sm.fire(Event.FAILURE)
                 self.sm.fire(Event.RECOVER)
 
-    async def _respond(self, turn: TurnContext, prefetch: AnswerPrefetch | None = None) -> None:
+    async def _respond(self, turn: TurnContext, prefetch: AnswerPrefetch | None = None,
+                       messages: list[dict] | None = None, script: str | None = None) -> None:
         tid = turn.turn_id
         citations: list[dict] = []
         if prefetch is not None:               # answer already streaming since the VAD pause
             stats = prefetch.stats
             deltas = prefetch.deltas()
-        else:
-            knowledge, citations = await self._retrieve(turn)
+        elif script is not None:               # a fixed reply (the greeting): no LLM
             stats = LLMStats()
             turn.mark("llm_request")
-            deltas = self.svc.llm.stream_chat(self.memory.build(turn.user_text, knowledge), stats,
+            deltas = _scripted(script)
+        else:
+            knowledge, citations = await self._retrieve(turn) if messages is None else (None, [])
+            stats = LLMStats()
+            turn.mark("llm_request")
+            deltas = self.svc.llm.stream_chat(messages or self.memory.build(turn.user_text, knowledge), stats,
                                               pause_after=self._pause_after() if self.voice_out else None,
                                               resume=lambda: self._resume_llm(turn))
         parser, spoken = MetaStreamParser(), []
@@ -569,9 +628,13 @@ class Session:
                      and time.time() - endpoint < self.cfg.vad.continuation_s)
         if continued:
             self._carry_text = turn.user_text
+        elif heard:
+            self.memory.add(turn.user_text, f"{turn.header or ''}{heard} [interrupted by the user]", interrupted=True)
         else:
-            body = f"{heard} [interrupted by the user]" if heard else "[interrupted before replying]"
-            self.memory.add(turn.user_text, (turn.header or "") + body, interrupted=True)
+            # stopped before a word of it was heard: the request is dropped from her history - kept, the
+            # 4B model often answered the next message and then the stopped one ("OK. Let me tell you a
+            # story about a dragon ..." after Stop on a story) - and the next message still gets the hint
+            self.memory.after_interruption = True
         self.sm.fire(Event.CANCEL_DONE)
         cancel_ms = (time.perf_counter() - t_start) * 1000
         self.outbox.json({"type": "assistant_done", "turn_id": turn.turn_id, "text": heard, "interrupted": True,

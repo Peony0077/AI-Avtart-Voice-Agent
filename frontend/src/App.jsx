@@ -3,6 +3,7 @@ import { useConversation } from './lib/useConversation.js'
 import { useVoice } from './lib/useVoice.js'
 import AvatarStage from './components/AvatarStage.jsx'
 import MetricsPanel from './components/MetricsPanel.jsx'
+import SettingsDialog from './components/SettingsDialog.jsx'
 
 const STATE_LABEL = {
   IDLE: 'Idle',
@@ -18,6 +19,7 @@ export default function App() {
   const conv = useConversation()
   const voice = useVoice(conv)
   const [draft, setDraft] = useState('')
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const listRef = useRef(null)
   const busy = conv.state === 'THINKING' || conv.state === 'SPEAKING'
 
@@ -60,6 +62,12 @@ export default function App() {
           )}
           {voice.error && <span className="error" data-testid="voice-error">{voice.error}</span>}
           {conv.notice && <span className="muted" data-testid="notice">{conv.notice}</span>}
+        </span>
+        <span className="tools">
+          <button type="button" className="secondary" onClick={() => downloadTranscript(conv)}
+            disabled={!conv.messages.length} data-testid="transcript">Transcript</button>
+          <button type="button" className="secondary" onClick={() => setSettingsOpen(true)}
+            disabled={conv.status !== 'open'} data-testid="settings-open">Settings</button>
         </span>
         {conv.behavior && (
           <span className="muted" data-testid="behavior">
@@ -107,6 +115,25 @@ export default function App() {
       </main>
 
       <MetricsPanel metrics={conv.metrics} />
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} conv={conv} />
     </div>
   )
+}
+
+// The conversation as a text file (like Anam's session transcripts), made in the page: nothing is sent.
+function downloadTranscript(conv) {
+  const name = conv.session?.persona ?? 'Avatar'
+  const time = (at) => (at ? new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')
+  const lines = conv.messages
+    .filter((m) => m.text)
+    .map((m) => `[${time(m.at)}] ${m.role === 'user' ? 'You' : name}: ${m.text}${m.interrupted ? ' (interrupted)' : ''}`)
+  const text = `Conversation with ${name} - ${new Date().toLocaleString()}\n\n${lines.join('\n')}\n`
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `conversation-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.txt`
+  document.body.append(a)              // some browsers ignore a click on a link outside the page
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

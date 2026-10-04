@@ -122,3 +122,13 @@ def test_talking_windows_each_move_differently_and_join_the_idle_motion():
             assert np.abs(v).max() <= 2.2 + 1e-9                    # small: talking, not gesturing
     w = gesture_windows(600, 20, "talk")
     assert all(b[0] - a[1] <= 4 for a, b in zip(w, w[1:], strict=False))   # nearly back to back
+
+
+def test_body_breathes_and_sways_seamlessly_and_subtly():
+    from body_motion import BREATH_PX, SWAY_PX, offsets
+    n = 600
+    xs, ys = zip(*(offsets(i, n) for i in range(n + 1)), strict=True)
+    assert abs(xs[0] - xs[n]) < 1e-9 and abs(ys[0] - ys[n]) < 1e-9        # the loop seam is invisible
+    assert max(abs(v) for v in xs) <= SWAY_PX + 1e-9 and min(ys) >= -BREATH_PX - 1e-9 and max(ys) <= 1e-9
+    assert max(abs(a - b) for a, b in zip(ys, ys[1:], strict=False)) < 0.2   # smooth: < 0.2 px per frame
+    assert len([k for k in range(1, n) if ys[k] < ys[k - 1] and ys[k] < ys[k + 1]]) == 7  # 7 breaths a loop
