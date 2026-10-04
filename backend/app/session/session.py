@@ -74,6 +74,7 @@ class Session:
                                          knowledge_enabled=self.cfg.rag.enabled, behavior_tag=self.cfg.llm.behavior_tag,
                                          personality=persona.personality,
                                          long_term=services.memory_store.load() if persona.memory else None)
+        self._memory_gen = services.memory_store.generation   # erased later (any tab): nothing from before is kept
         self._greeted = False
         self.outbox = Outbox(ws, self.turns.is_current)
         self.voice_out = False            # replies are spoken (client plays assistant audio)
@@ -113,8 +114,8 @@ class Session:
                 task.cancel()
         self.sm.try_fire(Event.STOP)
         await self.outbox.stop()
-        if self.svc.persona.memory and self.memory.user_turns - int(self._greeted) > 0:
-            self.svc.remember(self.memory.user_said())     # what she remembers next time (persona.py)
+        if self.svc.persona.memory and (said := self.memory.user_said()):
+            self.svc.remember(said, self._memory_gen)       # what she remembers next time (persona.py)
         logger.info(f"session {self.id} closed ({reason})")
 
     # ------------------------------------------------------------------ inbound
@@ -156,6 +157,8 @@ class Session:
         elif kind == "forget_memory":
             self.svc.memory_store.clear()
             self.memory.long_term = None
+            self.memory.forget_user()
+            self._memory_gen = self.svc.memory_store.generation
             logger.info("memory of the user erased (Forget me)")
             self._send_persona()
         elif kind == "ping":

@@ -33,7 +33,13 @@ const greet = async (page, messages) => {
   return (await waitFor(messages, (m) => m.type === 'assistant_done' && m.turn_id === g.turn_id, 60_000)).text
 }
 
+// What she remembers about the owner (read by the server on every use; erased by this test, which then
+// teaches her about "Sam"): put back afterwards when the server runs on this PC.
+const MEMORY = new URL('../../data/memory.json', import.meta.url)
+const LOCAL = !process.env.AVATAR_URL || /\/\/(127\.0\.0\.1|localhost)[:/]/.test(process.env.AVATAR_URL)
+
 test('persona, greeting, memory across sessions, date and transcript', async ({ browser }) => {
+  const savedMemory = LOCAL && fs.existsSync(MEMORY) ? fs.readFileSync(MEMORY) : null
   const page = await browser.newPage()
   let messages = await open(page)
 
@@ -52,6 +58,8 @@ test('persona, greeting, memory across sessions, date and transcript', async ({ 
     }, original)
     await waitFor(m, (x) => x.type === 'persona' && x.name === original.name && !x.remembered, 10_000)
     await fix.close()
+    // the test's sessions began before that "Forget me", so their memory updates are dropped
+    if (savedMemory) fs.writeFileSync(MEMORY, savedMemory)
   }
 })
 
@@ -64,9 +72,9 @@ async function run(browser, page, messages, original) {
   await waitFor(messages, (m) => m.type === 'persona' && m.name === 'Mia', 10_000)
   await page.keyboard.press('Escape')
   await expect(page.getByTestId('settings')).not.toBeVisible()
-  if (original.remembered) {               // start from no memory
-    await page.evaluate(() => window.__avatarConn.sendJson({ type: 'forget_memory' }))
-  }
+  // start from no memory, always: the sessions of the tests before this one are still being merged into
+  // it in the background ("The user asked what the capital of France is."); "Forget me" drops those too
+  await page.evaluate(() => window.__avatarConn.sendJson({ type: 'forget_memory' }))
 
   // the greeting: spoken, and no "You" bubble for it
   const hello = await greet(page, messages)

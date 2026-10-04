@@ -95,10 +95,9 @@ def render_video_frames(video: Path, fps: int, seconds: float, start_s: float, n
     """Loops and gesture variants from a video (video_source.py): each frame through the face rig relative
     to itself, the loop seam cross-faded. Returns (loops, variants, timings, video info, frames in which
     gesture windows may lie - clear of the seam)."""
-    from video_source import SEAM_FRAMES, close_loop, read_segment
-
     from face_bbox import FaceBoxer
     from face_rig import FaceRig
+    from video_source import SEAM_FRAMES, close_loop, read_segment
 
     def bgr(img):
         return cv2.cvtColor(img, cv2.COLOR_RGB2BGR)

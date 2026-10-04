@@ -809,7 +809,11 @@ person's consent; front-facing, head and shoulders, even light, 1–3 minutes ta
   the avatar had said ("likes trail-side meals" from a cooking persona's replies) and guessed the user's
   gender from the name ("He"); now it gets only the user's own words and is told not to guess gender:
   "The user's name is Sam. They love hiking in the mountains." The Settings show what she remembers;
-  "Forget me" erases it.
+  "Forget me" erases it. Found by the e2e run: a session that ended just before "Forget me" was still
+  being merged in the background and saved afterwards, which brought the erased memory back. Now the
+  memory has a generation counter: an update begun before the erase (or a session, in any tab, that
+  was open before it) is dropped, and the words said earlier in the same session are forgotten too.
+  All the user's words of a session count, also those already summarised out of the LLM's window.
 - **Transcript** button: the conversation as a text file, made in the page.
 - **Date and time**: a message about time or dates carries the current local time (not the system
   prompt, whose cached prefix would change every minute): "It's Sunday, October 4th."
@@ -858,6 +862,38 @@ usage is only checked against the spill limit. The leak criterion is the growth 
 of the run (< 150 MiB): the allocator reserves a block once when an input is larger than any before
 (measured: one +346 MiB step at minute 4 of a 10-minute run, flat afterwards), which is not a leak.
 Restarts are counted during the soak only, so it can run after the crash-recovery test.
+
+### Lip sync timing (owner: "check the sync of speaking of avatar with lip sync", 2026-10-04)
+
+The other tests check that every frame is *drawn* at its time on the audio clock (A/V offset p50/p90
+0 ms). This checks what the frames *show*: does the mouth move when the sound is heard?
+`avatar/musetalk/lipsync_check.py` renders speech with the real engine and compares, per frame, how
+much the mouth differs from the loop's own closed-mouth frame with the loudness of the sound
+(cross-correlation, r ≈ 0.5), and for isolated words the centre of the mouth movement with the centre
+of the word's sound. A first measure (dark pixels of an open mouth) was dropped: r only 0.15 with
+this avatar, whose open mouth mostly shows teeth, and biased ~+50 ms late.
+
+Two timing errors, which partly cancelled:
+- **Audio windows (worker).** MuseTalk is trained with each frame's 200 ms window of whisper
+  features centred on the middle of the frame. Its inference code (`get_whisper_chunk`) does that only
+  at 25 fps; at our 20 fps it centred the window 45 ms early, so the mouth showed sounds that had
+  already been heard. `avatar/musetalk/lipsync.py` centres the windows as in training (unit test: at
+  25 fps the windows are exactly the training ones).
+- **In-between frames (browser).** Blending from one frame's start to the next showed every mouth shape
+  half a frame (25 ms) early; it now blends from one frame's middle to the next.
+
+| 25–35 s of continuous speech | MuseTalk's windows | centred (now) |
+|---|---|---|
+| af_heart (Ava's default voice) | +44 ms | −2 ms |
+| am_michael | +75 ms | +22 ms |
+| bf_emma | +85 ms | +35 ms |
+| isolated words (af_heart) | +15…+23 ms | −6…−23 ms |
+
+\> 0 = the mouth is late; people notice lips about 45 ms early or 125 ms late (ITU-R BT.1359). Centring
+the windows 50 ms later than training (tried first, after the biased measure) made the mouth move
+*before* the sound (−40 ms), so the training alignment is kept. The browser clock itself uses
+`AudioContext.getOutputTimestamp()`, which includes the output latency the browser knows about (42 ms
+in the test browser); Bluetooth headphones can add more than the browser reports.
 
 ### Robustness
 
@@ -985,4 +1021,6 @@ $env:FAKE_MIC='mic_story_bargein.wav'; npx playwright test --project=voice phase
 $env:FAKE_MIC='mic_rag.wav'; npx playwright test --project=voice phase5            # documents
 npx playwright test --project=voice phase4 phase6             # avatar, crash recovery (avatar profiles)
 $env:FAKE_MIC='mic_soak.wav'; $env:FAKE_MIC_LOOP='1'; npx playwright test --project=voice soak
+# lip-sync timing on rendered frames (stack stopped: needs the GPU; any speech .wav, --compare = MuseTalk's windows)
+cd ..\..\avatar\musetalk; .venv\Scripts\python lipsync_check.py speech.wav --compare
 ```

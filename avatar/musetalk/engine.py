@@ -22,6 +22,7 @@ import torch
 from loguru import logger
 from scipy.signal import resample_poly
 
+import lipsync
 from common import WEIGHTS, chdir
 
 EXTRA_MARGIN = 10     # MuseTalk 1.5: extra chin area below the landmark box
@@ -296,9 +297,18 @@ class MuseTalkEngine:
             g = math.gcd(16000, sample_rate)
             audio = resample_poly(audio, 16000 // g, sample_rate // g).astype(np.float32)
         feats = self.audio.feature_extractor(audio, return_tensors="pt", sampling_rate=16000).input_features
-        return self.audio.get_whisper_chunk([feats.to(self.dtype)], self.device, self.dtype, self.whisper,
-                                            len(audio), fps=self.fps, audio_padding_length_left=2,
-                                            audio_padding_length_right=2)
+        # windows centred on each frame's middle as in training (lipsync.py); MuseTalk's get_whisper_chunk
+        # centred them 45 ms early at our 20 fps
+        hidden = self.whisper.encoder(feats.to(self.device, self.dtype), output_hidden_states=True).hidden_states
+        f = torch.stack(hidden, dim=2)[:, : math.floor(len(audio) / 16000 * 50)]       # [1, T, 5, 384]
+        pad = torch.zeros_like(f[:, :1]).expand(-1, lipsync.PAD, -1, -1)
+        f = torch.cat([pad, f, pad], 1)
+        n = lipsync.frame_count(len(audio), self.fps)
+        if n <= 0:
+            return torch.zeros(0, lipsync.WINDOW * f.shape[2], f.shape[3], device=self.device, dtype=self.dtype)
+        idx = torch.tensor(lipsync.window_starts(n, self.fps), device=self.device)[:, None] \
+            + torch.arange(lipsync.WINDOW, device=self.device)
+        return f[0, idx.clamp_(0, f.shape[1] - 1)].flatten(1, 2)                     # [n, 50, 384]
 
     @torch.no_grad()
     def faces(self, loop: Loop, chunks: torch.Tensor, start_idx: int,

@@ -61,14 +61,21 @@ class Services:
         logger.info(f"persona updated: {persona.name}, voice {persona.voice}, memory {'on' if persona.memory else 'off'}")
         return persona
 
-    def remember(self, transcript: str) -> None:
-        """After a session: merge what the user said into the memory of earlier sessions (background)."""
+    def remember(self, transcript: str, generation: int | None = None) -> None:
+        """After a session: merge what the user said into the memory of earlier sessions (background).
+        ``generation``: the memory's when the session began (or the user last said "Forget me" in it); if
+        the memory was erased since, nothing is saved."""
+        generation = self.memory_store.generation if generation is None else generation
+
         async def run() -> None:
             try:
                 text = await self.llm.complete(memory_request(self.memory_store.load(), transcript), max_tokens=160)
-                if text.strip():
-                    self.memory_store.save(text)
+                if not text.strip():
+                    return
+                if self.memory_store.save(text, generation):
                     logger.info(f"memory of the user updated ({len(text.split())} words)")
+                else:
+                    logger.info("memory update dropped: the user asked to be forgotten meanwhile")
             except Exception as exc:  # noqa: BLE001 - the next session simply starts without it
                 logger.warning(f"memory update failed: {exc!r}")
 

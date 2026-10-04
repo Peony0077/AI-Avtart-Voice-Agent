@@ -83,6 +83,7 @@ class MemoryStore:
 
     def __init__(self, path: Path) -> None:
         self.path = path
+        self.generation = 0      # +1 on every "Forget me"; an update begun before it is not saved
 
     def load(self) -> str | None:
         try:
@@ -91,15 +92,21 @@ class MemoryStore:
             return None
         return text.strip() or None
 
-    def save(self, summary: str) -> None:
+    def save(self, summary: str, generation: int | None = None) -> bool:
+        """False (nothing written) if the memory was erased since ``generation``: the update of a session
+        that ended just before "Forget me" would otherwise bring the erased memory back."""
+        if generation is not None and generation != self.generation:
+            return False
         words = summary.split()
         if len(words) > MAX_MEMORY_WORDS:
             summary = " ".join(words[:MAX_MEMORY_WORDS])
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps({"summary": summary.strip(), "updated": time.strftime("%Y-%m-%dT%H:%M:%S")},
                                         indent=2, ensure_ascii=False), encoding="utf-8")
+        return True
 
     def clear(self) -> None:
+        self.generation += 1
         self.path.unlink(missing_ok=True)
 
 

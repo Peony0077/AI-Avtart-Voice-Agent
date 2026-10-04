@@ -102,9 +102,11 @@ class ConversationMemory:
     turns: list[dict] = field(default_factory=list)  # {"role": ..., "content": ...}
     summary: str | None = None
     archived: list[dict] = field(default_factory=list)  # turns dropped from the window, not yet summarised
+    said: list[str] = field(default_factory=list)       # all the user's messages (kept past the window)
 
     def add(self, user_text: str, assistant_text: str, interrupted: bool = False) -> None:
         self.after_interruption = interrupted
+        self.said.append(user_text)
         self.turns.append({"role": "user", "content": user_text})
         self.turns.append({"role": "assistant", "content": assistant_text})
         # Trim in blocks (drop the older half) so the cached prompt prefix changes rarely.
@@ -135,9 +137,13 @@ class ConversationMemory:
 
     def user_said(self) -> str:
         """What the user said in this session, one message per line (for the memory across sessions;
-        placeholders such as the greeting's are left out)."""
-        return "\n".join(f"- {t['content']}" for t in self.archived + self.turns
-                         if t["role"] == "user" and not t["content"].startswith("("))
+        placeholders such as the greeting's are left out). The whole session: turns that were
+        summarised or trimmed from the LLM's window count too."""
+        return "\n".join(f"- {s}" for s in self.said if not s.startswith("("))
+
+    def forget_user(self) -> None:
+        """"Forget me": what the user said so far in this session is not remembered either."""
+        self.said.clear()
 
     @property
     def user_turns(self) -> int:

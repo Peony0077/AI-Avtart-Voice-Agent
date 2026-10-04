@@ -119,17 +119,20 @@ export default function AvatarStage({ conv, voice }) {
             currentTime: engine.playCtx.currentTime, tsContext: ts?.contextTime, audible, start: engine.turnStartCtx.get(turn) }
         }
         if (audible !== null && audible >= 0) {
-          // newest frame not in the future; free the ones we have passed
+          // A frame shows the middle of its 50 ms (its audio is centred there, avatar/musetalk/lipsync.py).
+          // In-between frames blend from one middle to the next; blending from frame start to frame
+          // start showed every mouth shape half a frame early. Free the frames we have passed.
+          const at = SMOOTH ? audible - frameMs / 2 : audible
           let i = -1
-          while (i + 1 < list.length && list[i + 1].pts <= audible) i++
+          while (i + 1 < list.length && list[i + 1].pts <= at) i++
+          if (i < 0 && list[0].pts <= audible) i = 0                // first half of the first frame
           if (i >= 0) {
             const f = list[i]
+            const nx = SMOOTH ? list[i + 1] : null
+            const blend = nx && nx.pts - f.pts <= 3 * frameMs ? Math.min(1, Math.max(0, (at - f.pts) / (nx.pts - f.pts))) : 0
             if (!ended) {
-              // what is on screen: with in-between frames, the picture between this frame and the next
-              const nx = SMOOTH ? list[i + 1] : null
-              const shown = nx && nx.pts - f.pts <= 3 * frameMs
-                ? f.pts + Math.min(1, Math.max(0, (audible - f.pts) / (nx.pts - f.pts))) * (nx.pts - f.pts)
-                : f.pts
+              // the moment of the audio that is on screen (0 = the picture is on time)
+              const shown = f.pts + (blend ? blend * (nx.pts - f.pts) : 0) + frameMs / 2
               st.drawnSpeech++
               st.avOffsets.push(audible - shown)
               if (st.avOffsets.length > 400) st.avOffsets.shift()
@@ -147,10 +150,9 @@ export default function AvatarStage({ conv, voice }) {
             } else {
               frame = f.bmp
               lastSpeechIdx = f.idx
-              const nx = list[1]
-              if (SMOOTH && nx && nx.pts - f.pts <= 3 * frameMs) {
-                next = nx.bmp
-                alpha = Math.min(1, Math.max(0, (audible - f.pts) / (nx.pts - f.pts)))
+              if (blend) {
+                next = list[1].bmp
+                alpha = blend
               }
             }
           }
