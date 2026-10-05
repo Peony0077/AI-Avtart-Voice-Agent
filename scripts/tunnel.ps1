@@ -28,14 +28,23 @@ $customer = -join ((48..57) + (97..122) | Get-Random -Count 24 | ForEach-Object 
 $env:AVATAR_CUSTOMER_TOKEN = $customer
 & (Join-Path $root 'scripts\run.ps1') -Profile $Profile -Port $Port | Out-Host
 $log = Join-Path $root 'logs\cloudflared.log'
-$p = Start-Process $exe -ArgumentList @('tunnel', '--no-autoupdate', '--url', "http://127.0.0.1:$Port") -PassThru -WindowStyle Hidden -RedirectStandardError $log
 $url = $null
-for ($i = 0; $i -lt 60 -and -not $url; $i++) {
-  Start-Sleep 1
-  $m = Select-String -Path $log -Pattern 'https://[a-z0-9-]+\.trycloudflare\.com' -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($m) { $url = $m.Matches[0].Value }
+for ($attempt = 1; $attempt -le 3 -and -not $url; $attempt++) {
+  $p = Start-Process $exe -ArgumentList @('tunnel', '--no-autoupdate', '--url', "http://127.0.0.1:$Port") -PassThru -WindowStyle Hidden -RedirectStandardError $log
+  for ($i = 0; $i -lt 60 -and -not $url -and -not $p.HasExited; $i++) {
+    Start-Sleep 1
+    # not api.trycloudflare.com: that one is in the error when Cloudflare does not answer (2026-10-05 it
+    # was handed out as the link)
+    $m = Select-String -Path $log -Pattern 'https://(?!api\.)[a-z0-9-]+\.trycloudflare\.com' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($m) { $url = $m.Matches[0].Value }
+  }
+  if (-not $url) {
+    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    Write-Host "quick tunnel attempt $attempt failed (Cloudflare did not answer), see $log"
+    Start-Sleep 5
+  }
 }
-if (-not $url) { Stop-Process -Id $p.Id -Force; throw "tunnel did not start; see $log" }
+if (-not $url) { throw "tunnel did not start after 3 attempts; see $log" }
 "$url/?token=$token" | Out-File (Join-Path $root 'logs\tunnel_url.txt') -Encoding ascii
 "$url/?token=$customer" | Out-File (Join-Path $root 'logs\customer_url.txt') -Encoding ascii
 Write-Host ''

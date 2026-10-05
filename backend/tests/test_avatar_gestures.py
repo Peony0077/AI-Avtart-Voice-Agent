@@ -151,7 +151,10 @@ def test_idle_head_makes_short_natural_moves_and_still_joins_the_seam():
 
 def test_v3_expressions_are_stronger_and_include_listening():
     from motion import EXPRESSION_TO_LOOP, EXPRESSIONS
-    assert EXPRESSIONS["happy"]["smile"] >= 1.3 and EXPRESSIONS["happy"]["eye"] <= 0.8   # the smile reaches the eyes
+    # a big smile, but the eyes not narrowed on top of it: the smile narrows them by itself, and with eye 0.8
+    # they were 19 % smaller than the idle face's whenever she spoke happily (owner, 2026-10-05; eyes_check.py).
+    # Below 1.0: at exactly 1.0 eye retargeting is off between blinks and each blink starts with a jump.
+    assert EXPRESSIONS["happy"]["smile"] >= 1.3 and EXPRESSIONS["friendly"]["eye"] < EXPRESSIONS["happy"]["eye"] < 1.0
     assert EXPRESSIONS["concerned"]["eyebrow"] <= -8 and EXPRESSIONS["concerned"]["roll"] != 0   # visible, not pitiful (v3.1)
     assert EXPRESSION_TO_LOOP["interested"] == "interested"
     p = loop_params(idle_curves(40, 20, periodic=True), "concerned")

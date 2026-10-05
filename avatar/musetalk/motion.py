@@ -44,7 +44,11 @@ class RigParams:
 EXPRESSIONS: dict[str, dict] = {
     "neutral": {"smile": 0.0, "eyebrow": 0.0},
     "friendly": {"smile": 0.7, "eyebrow": 4.0, "eye": 0.9},
-    "happy": {"smile": 1.3, "eyebrow": 8.0, "eye": 0.8, "pitch": -1.0, "roll": 1.5},
+    # eye 0.99 (was 0.8): the big smile narrows the eyes by itself (~0.89); with 0.8 on top her eyes were
+    # 19 % smaller than the idle face's whenever she spoke happily (owner, 2026-10-05: "whenever she
+    # talks, her eye height changes very small"). Not 1.0: that switches eye retargeting off between
+    # blinks, and each blink would start with the eyes jumping wider.
+    "happy": {"smile": 1.3, "eyebrow": 8.0, "eye": 0.99, "pitch": -1.0, "roll": 1.5},
     "concerned": {"smile": 0.05, "eyebrow": -8.0, "eye": 0.95, "pitch": 1.0, "roll": -2.0},   # v3.1: -12 brows read as pitiful over a whole reply
     "thinking": {"smile": 0.0, "eyebrow": 5.0, "gaze": (-8.0, 6.0), "yaw": -2.5, "pitch": -1.5},
     "interested": {"smile": 0.45, "eyebrow": 11.0, "eye": 1.06, "roll": 2.0},

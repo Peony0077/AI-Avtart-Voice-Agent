@@ -1125,6 +1125,29 @@ of what remains. Unit tests: `backend/tests/test_video_stream.py` (access units,
 video, the idle lane dropped as a whole), `test_llm_pause.py` (short opener), `test_voice_units.py`
 (line breaks).
 
+### Her eyes while she talks (owner, 2026-10-05: "whenever she talks, her eye height changes very small")
+
+Measured on the avatar's frames (`avatar/musetalk/eyes_check.py`: eyelid gap / eye width from the 68
+DWPose face landmarks, median over frames without blinks). Lip sync does not touch the eyes (the blend
+mask is 0 at the eyelids; compositing changes them by 0/255), and the head movement of the talking
+gestures changes them by ~5 % at most. The cause was the face a reply is spoken with: "happy" (about
+1 reply in 9, and single sentences) had narrowed eyes (`eye` 0.8) on top of a big smile, which narrows
+them by itself - 19 % smaller than the idle face's, so her eyes shrank whenever she spoke happily and
+opened again afterwards. Now `eye` 0.99 (the smile, teeth and raised brows stay); happy and its
+gesture variants re-rendered (`build_avatar.py --update happy`, 31 min; the previous files are in
+`E:\AI-models\avatars\_backup_dev_girl_v3_happy_2026-10-05`).
+
+| Eye opening | idle (friendly) | happy before | happy after |
+|---|---|---|---|
+| loop frames | 0.351 | 0.283 (−19 %) | 0.352 (+0 %) |
+| happy talking / nodding variants | | 0.282 / — | 0.355 / 0.348 |
+| on screen in the browser (a happy reply) | 0.344 | | 0.364 speaking (+6 %), blinks as before |
+
+`eyes_check.py` fails when an expression's eyes are more than 10 % smaller than the idle face's;
+wider ones (neutral = the photo's own eyes, interested) are reported only. Also found: when Cloudflare
+did not answer, `scripts\tunnel.ps1` handed out `https://api.trycloudflare.com` (from the error
+message) as the link; it now ignores that address and tries up to 3 times.
+
 ### Robustness
 
 Playwright `tests/e2e/phase6_recovery.spec.js` kills processes in the middle of a live session
@@ -1258,4 +1281,6 @@ npx playwright test --project=voice phase6_customer phase6_leads   # customer li
 $env:FAKE_MIC='mic_soak.wav'; $env:FAKE_MIC_LOOP='1'; npx playwright test --project=voice soak
 # lip-sync timing on rendered frames (stack stopped: needs the GPU; any speech .wav, --compare = MuseTalk's windows)
 cd ..\..\avatar\musetalk; .venv\Scripts\python lipsync_check.py speech.wav --compare
+# eye opening of every expression vs the idle face (CPU; after changing motion.EXPRESSIONS and --update)
+.venv\Scripts\python eyes_check.py --avatar dev_girl_v3 --sheet eyes.jpg
 ```
