@@ -9,6 +9,13 @@ Lanes (2026-10-05, owner: "delay and non-smooth" through the tunnel): everything
 queue, so on a link slower than the video the voice queued behind video frames and a reply started
 seconds late. Now the "hi" lane (control messages and the voice) always goes first, then the reply's
 lip-synced video ("speech"), then the idle video ("idle").
+
+Window (2026-10-05, owner: "sometimes stuck while she is talking"): the lanes only ordered what was
+still in this queue. The socket (and the tunnel behind it) took megabytes at once, so on a slow link
+the video was already on its way and the voice waited behind it there: at 800 kbit/s 8.9 s of gaps in
+one reply, at 500 kbit/s the voice 5 s late. Now the page acknowledges the bytes it has received
+(``ack``), and video goes out only while less than ``window`` bytes are unacknowledged; control and
+the voice are never held. Video that cannot go out waits here, where it can be dropped (session.py).
 """
 from __future__ import annotations
 
@@ -21,6 +28,7 @@ from fastapi import WebSocket
 from loguru import logger
 
 LANES = ("hi", "speech", "idle")
+VIDEO_WINDOW = 64 * 1024   # unacknowledged bytes before video waits: ~0.5 s at 1 Mbit/s
 
 
 @dataclass
@@ -39,7 +47,10 @@ class Outbox:
         self._stopping = False
         self._task: asyncio.Task | None = None
         self.dropped = 0
-        self.sent_bytes = 0
+        self.sent_bytes = 0            # binary bytes sent (the page counts the same)
+        self.acked_bytes = 0
+        self.window: int | None = None  # None: the page does not acknowledge (older page) - no window
+        self.window_waits = 0          # times video waited for the page
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._run(), name="outbox")
@@ -60,6 +71,16 @@ class Outbox:
     def binary(self, data: bytes, turn_id: int = 0, force: bool = False, lane: str = "hi") -> None:
         self._put(lane, _Item(data, turn_id, force))
 
+    def ack(self, received: int) -> None:
+        """The page has received this many binary bytes."""
+        if received > self.acked_bytes:
+            self.acked_bytes = min(received, self.sent_bytes)
+            self._wake.set()
+
+    @property
+    def in_flight(self) -> int:
+        return self.sent_bytes - self.acked_bytes
+
     def _put(self, lane: str, item: _Item) -> None:
         self._lanes[lane].append(item)
         self._wake.set()
@@ -78,7 +99,12 @@ class Outbox:
         return n
 
     def _next(self) -> _Item | None:
-        for lane in LANES:
+        if self._lanes["hi"]:
+            return self._lanes["hi"].popleft()
+        if self.window is not None and self.in_flight >= self.window and (self._lanes["speech"] or self._lanes["idle"]):
+            self.window_waits += 1
+            return None                           # the page is behind: video waits (an ack wakes us)
+        for lane in LANES[1:]:
             if self._lanes[lane]:
                 return self._lanes[lane].popleft()
         return None

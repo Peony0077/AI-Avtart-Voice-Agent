@@ -54,6 +54,7 @@ export class Connection extends EventTarget {
     const ws = new WebSocket(this.url)
     ws.binaryType = 'arraybuffer'
     this.ws = ws
+    this.received = this.acked = this.ackedAt = 0       // a new connection: the server counts from 0
     ws.onopen = () => {
       this.retry = 0
       this._setStatus('open')
@@ -63,6 +64,7 @@ export class Connection extends EventTarget {
       if (typeof ev.data === 'string') {
         this.dispatchEvent(new CustomEvent('json', { detail: JSON.parse(ev.data) }))
       } else {
+        this._ack(ev.data.byteLength)
         this.dispatchEvent(new CustomEvent('binary', { detail: ev.data }))
       }
     }
@@ -85,6 +87,18 @@ export class Connection extends EventTarget {
 
   sendBinary(buf) {
     if (this.ws?.readyState === WebSocket.OPEN && this.ws.bufferedAmount < 1 << 20) this.ws.send(buf)
+  }
+
+  // The server sends video only while little of it is unacknowledged (backend outbox.py), so on a slow
+  // connection the voice never waits behind seconds of video on its way: tell it what has arrived.
+  _ack(bytes) {
+    this.received += bytes
+    const now = performance.now()
+    if (this.received - this.acked >= 16384 || now - this.ackedAt >= 100) {
+      this.acked = this.received
+      this.ackedAt = now
+      this.sendJson({ type: 'ack', bytes: this.received })
+    }
   }
 
   close() {

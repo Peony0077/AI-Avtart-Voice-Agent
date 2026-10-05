@@ -166,8 +166,19 @@ export default function AvatarStage({ conv, voice }) {
       if (p.kind === KIND_IDLE_VIDEO) addIdle(p.seq, bmp)
       else addSpeech(p, bmp, decodeMs)
     })
+    // shown again after being hidden: the server sent no video meanwhile and continues from keyframes
+    // (session._set_visible) - the decoders start over and wait for them
+    const onVisibility = () => {
+      if (document.hidden) return
+      h264.idle?.close()
+      h264.idle = null
+      for (const d of h264.turns.values()) d.close()
+      h264.turns.clear()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
     window.__avatarStats = statsRef.current // test hook
     return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
       offJson()
       offBinary()
       h264.idle?.close()

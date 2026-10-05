@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AudioEngine } from '../audio/AudioEngine.js'
 import { betterThanBluetooth, setPreferredMic } from '../audio/microphones.js'
-import { KIND_AUDIO, parsePacket } from './protocol.js'
+import { pcm16ToFloat } from '../audio/AudioEngine.js'
+import { decodeOpus } from './opus.js'
+import { KIND_AUDIO, KIND_AUDIO_OPUS, parsePacket } from './protocol.js'
 
 // Voice: server audio → player (also for typed messages: the "speaker"), playback acks → server,
 // and optionally the microphone → server (binary PCM16 16 kHz).
@@ -27,6 +29,7 @@ export function useVoice(conv) {
   const startHoldRef = useRef(0)
   const holdRef = useRef(null)
   const lastTurnRef = useRef(0)
+  const chainRef = useRef(Promise.resolve())   // audio in arrival order (Opus decodes are asynchronous)
 
   const send = (msg) => conv.connRef.current?.sendJson(msg)
 
@@ -39,9 +42,32 @@ export function useVoice(conv) {
       const h = holdRef.current
       dropHold()
       if (!h || h.turnId <= rejectUpToRef.current || h.turnId !== turnRef.current) return
-      for (const payload of h.packets) engineRef.current?.push(h.turnId, payload)
+      for (const samples of h.packets) engineRef.current?.pushFloat(h.turnId, samples)
       if (h.end) engineRef.current?.endTurn(h.turnId)
     }
+    // a decoded clause to the player (or held: the reply's start hold)
+    const deliver = (turnId, samples) => {
+      if (turnId <= rejectUpToRef.current || turnId !== turnRef.current) {   // interrupted while decoding
+        statsRef.current.blockedStale++
+        return
+      }
+      const h = holdRef.current
+      if (h && h.turnId === turnId) {
+        h.packets.push(samples)
+        return
+      }
+      if (turnId !== lastTurnRef.current) {             // the first audio of a reply
+        lastTurnRef.current = turnId
+        if (startHoldRef.current > 0) {
+          dropHold()
+          holdRef.current = { turnId, packets: [samples], end: false, timer: setTimeout(releaseHold, startHoldRef.current) }
+          statsRef.current.holds = [...(statsRef.current.holds ?? []), startHoldRef.current].slice(-50)
+          return
+        }
+      }
+      engineRef.current?.pushFloat(turnId, samples)
+    }
+    const inOrder = (step) => { chainRef.current = chainRef.current.then(step).catch(() => {}) }
     const offJson = conv.onJson((msg) => {
       const engine = engineRef.current
       switch (msg.type) {
@@ -55,8 +81,10 @@ export function useVoice(conv) {
           engine?.flush()
           break
         case 'tts_done':
-          if (holdRef.current?.turnId === msg.turn_id) holdRef.current.end = true
-          else if (msg.turn_id === turnRef.current) engine?.endTurn(msg.turn_id)
+          inOrder(() => {                                // after the reply's last clause is decoded
+            if (holdRef.current?.turnId === msg.turn_id) holdRef.current.end = true
+            else if (msg.turn_id === turnRef.current) engineRef.current?.endTurn(msg.turn_id)
+          })
           break
         case 'vad':
           setSpeechDetected(msg.event === 'start')
@@ -74,28 +102,15 @@ export function useVoice(conv) {
     })
     const offBinary = conv.onBinary((buffer) => {
       const packet = parsePacket(buffer)
-      if (packet.kind !== KIND_AUDIO) return
+      if (packet.kind !== KIND_AUDIO && packet.kind !== KIND_AUDIO_OPUS) return
       if (packet.turnId <= rejectUpToRef.current || packet.turnId !== turnRef.current) {
         statsRef.current.blockedStale++
         return
       }
       statsRef.current.pushes[packet.turnId] = (statsRef.current.pushes[packet.turnId] ?? 0) + 1
-      const h = holdRef.current
-      if (h && h.turnId === packet.turnId) {
-        h.packets.push(packet.payload)
-        return
-      }
-      if (packet.turnId !== lastTurnRef.current) {      // the first audio of a reply
-        lastTurnRef.current = packet.turnId
-        if (startHoldRef.current > 0) {
-          dropHold()
-          holdRef.current = { turnId: packet.turnId, packets: [packet.payload], end: false,
-            timer: setTimeout(releaseHold, startHoldRef.current) }
-          statsRef.current.holds = [...(statsRef.current.holds ?? []), startHoldRef.current].slice(-50)
-          return
-        }
-      }
-      engineRef.current?.push(packet.turnId, packet.payload)
+      // decoding starts at once; the clauses reach the player in the order they came
+      const samples = packet.kind === KIND_AUDIO_OPUS ? decodeOpus(packet.payload) : pcm16ToFloat(packet.payload)
+      inOrder(async () => deliver(packet.turnId, await samples))
     })
     return () => {
       offJson()

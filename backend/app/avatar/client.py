@@ -36,6 +36,7 @@ class AvatarClient:
         self.hello: dict = {}
         self.codec = "jpeg"           # the browser's video codec; sent again when the worker restarts
         self.start_hold_ms = 0        # the page's start hold (services.avatar_start_hold); the same
+        self.kbps: tuple[int, int] | None = None   # video bitrates (services.avatar_bitrate); the same
         self.frame_sink: FrameSink | None = None
         self._waiters: dict[tuple[int, int], asyncio.Future] = {}
         self._reader: asyncio.Task | None = None
@@ -81,6 +82,8 @@ class AvatarClient:
                     self.send_json({"type": "codec", "codec": self.codec})
                 if self.start_hold_ms:
                     self.send_json({"type": "start_hold", "ms": self.start_hold_ms})
+                if self.kbps:
+                    self.send_json({"type": "bitrate", "speech": self.kbps[0], "idle": self.kbps[1]})
                 return
             except (OSError, websockets.WebSocketException, TimeoutError):
                 await asyncio.sleep(1.0)

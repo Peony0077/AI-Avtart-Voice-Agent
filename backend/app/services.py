@@ -336,6 +336,18 @@ class Services:
         if self.avatar is not None and self.avatar.connected:
             self.avatar.send_json({"type": "idle_keyframe"})
 
+    def avatar_bitrate(self, speech_kbps: int, idle_kbps: int) -> None:
+        """H.264 bitrates for the current connection (session._adapt_video); remembered for a worker restart."""
+        if self.avatar is not None:
+            self.avatar.kbps = (speech_kbps, idle_kbps)
+        if self.avatar is not None and self.avatar.connected:
+            self.avatar.send_json({"type": "bitrate", "speech": speech_kbps, "idle": idle_kbps})
+
+    def avatar_speech_keyframe(self) -> None:
+        """The reply's video was dropped (slow link, hidden page): the worker continues it from a keyframe."""
+        if self.avatar is not None and self.avatar.connected:
+            self.avatar.send_json({"type": "speech_keyframe"})
+
     def avatar_start_hold(self, ms: int) -> None:
         """The page holds each reply's first audio ``ms`` longer (lip-synced frames arrived late over the
         network): the worker starts the reply's frames as much later in the loop."""

@@ -95,6 +95,7 @@ class Turn:
     fade_total: int = EXPRESSION_FADE_FRAMES   # length of that blend
     breath: float = 0.0                # breath level at the end of the last sentence (speech_body.py)
     stream: H264Stream | None = None   # H.264: the reply's own video stream (None: JPEG frames)
+    old_streams: list = field(default_factory=list)   # replaced by a keyframe restart: their frames are dropped
 
     def audible_ms(self, at: float) -> float:
         """Playback position at time ``at`` (see catchup.audible_ms)."""
@@ -103,8 +104,8 @@ class Turn:
 
 class AvatarWorker:
     def __init__(self, avatar_id: str, batch: int, quality: int, lead_ms: int, gate_frames: int = 4,
-                 warm_burst_ms: int = 0, late_ms: int = 100, decoder: str = "vae", h264_kbps: int = 1000,
-                 h264_idle_kbps: int = 600, h264_encoder: str = "libx264") -> None:
+                 warm_burst_ms: int = 0, late_ms: int = 100, decoder: str = "vae", h264_kbps: int = 700,
+                 h264_idle_kbps: int = 350, h264_encoder: str = "libx264") -> None:
         folder = AVATARS / avatar_id
         meta = json.loads((folder / "avatar.json").read_text(encoding="utf-8"))
         self.fps = meta["fps"]
@@ -249,6 +250,24 @@ class AvatarWorker:
             asyncio.create_task(self._send_json({"type": "codec", "codec": self.codec}))
         elif kind == "idle_keyframe" and self.codec == "h264":
             self._restart_idle_stream()              # the backend dropped idle frames: start again from a keyframe
+        elif kind == "bitrate":
+            # the connection is slower or faster (backend session._adapt_video): new streams at these rates
+            rates = (int(msg.get("speech") or self.h264_kbps), int(msg.get("idle") or self.h264_idle_kbps))
+            if rates != (self.h264_kbps, self.h264_idle_kbps):
+                self.h264_kbps, self.h264_idle_kbps = rates
+                logger.info(f"video bitrate {rates[0]}/{rates[1]} kbit/s (speech/idle)")
+                if self.codec == "h264":
+                    self._close_later(self._spare)
+                    self._spare = None
+                    if self._loop is not None:
+                        self._loop.run_in_executor(None, self._refill_spare)
+                    self._restart_idle_stream()
+        elif kind == "speech_keyframe" and self.codec == "h264" and self.turn is not None and self.turn.stream:
+            # the backend dropped the reply's frames (slow link, hidden page): its video goes on from a keyframe
+            turn = self.turn
+            turn.old_streams.append(turn.stream)
+            self._close_later(turn.stream)
+            turn.stream = self._take_stream()             # (at the current bitrate: a slow link gets a lighter one)
         elif kind == "speech_end" and self.turn and msg.get("turn_id") == self.turn.turn_id:
             self.turn.end_ms = float(msg.get("total_ms") or 0)
             self.queue.put_nowait((self.turn, 0, 0, None))          # seq 0: the closing tail
@@ -657,7 +676,7 @@ class AvatarWorker:
         if turn.stream is not None:
             if gate is not None:
                 turn.first_frame_sent.add(gate[0])         # sent with this frame's access unit
-            if await asyncio.to_thread(turn.stream.encode, frame, ("speech", turn, idx, pts, flags, gate)):
+            if await asyncio.to_thread(turn.stream.encode, frame, ("speech", turn, idx, pts, flags, gate, turn.stream)):
                 return
             logger.warning(f"turn {turn.turn_id}: video stream ended, JPEG from here")
             turn.stream = None
@@ -685,9 +704,9 @@ class AvatarWorker:
                 self.stats["h264_bytes"] = self.stats.get("h264_bytes", 0) + len(au)
                 await self._send(VIDEO_HEADER.pack(KIND_IDLE_H264, flags, 0, meta[1], 0) + au)
                 continue
-            _, turn, idx, pts, fflags, gate = meta
-            if turn.cancelled:
-                continue                                   # its whole stream is dropped (never decoded)
+            _, turn, idx, pts, fflags, gate, stream = meta
+            if turn.cancelled or stream in turn.old_streams:
+                continue                                   # never decoded (cancelled, or replaced by a keyframe restart)
             self.stats["h264_bytes"] = self.stats.get("h264_bytes", 0) + len(au)
             await self._send(VIDEO_HEADER.pack(KIND_VIDEO_H264, fflags | flags, turn.turn_id, idx, pts) + au)
             if gate is not None:
@@ -803,8 +822,10 @@ async def main() -> None:
     ap.add_argument("--warm-burst-ms", type=int, default=0, help="GPU warm-up when the turn enters THINKING (0 = off)")
     ap.add_argument("--late-ms", type=int, default=100, help="skip frames that would arrive this late (0 = never skip)")
     ap.add_argument("--decoder", choices=("vae", "taesd"), default="vae", help="latent decoder (taesd: ~2.5x faster lip sync)")
-    ap.add_argument("--h264-kbps", type=int, default=1000, help="H.264 bitrate of the lip-synced video")
-    ap.add_argument("--h264-idle-kbps", type=int, default=600, help="H.264 bitrate of the idle video")
+    # 700/350 (were 1000/600): PSNR 37.2/35.7 dB instead of 37.8/37.3, no visible difference; a reply is
+    # ~0.8 Mbit/s with the Opus voice (was ~2), so slower connections keep up (owner: "make it light")
+    ap.add_argument("--h264-kbps", type=int, default=700, help="H.264 bitrate of the lip-synced video")
+    ap.add_argument("--h264-idle-kbps", type=int, default=350, help="H.264 bitrate of the idle video")
     ap.add_argument("--h264-encoder", choices=("libx264", "nvenc"), default="libx264")
     args = ap.parse_args()
     worker = AvatarWorker(args.avatar, args.batch, args.quality, args.lead_ms, args.gate_frames, args.warm_burst_ms,

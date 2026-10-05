@@ -14,9 +14,10 @@ test('a held reply start plays all of the reply, later, in sync', async ({ page 
   let endedMs = null
   page.on('websocket', (ws) => {
     ws.on('framereceived', ({ payload }) => {
-      if (typeof payload === 'string' || payload[0] !== 1) return
+      if (typeof payload === 'string' || (payload[0] !== 1 && payload[0] !== 6)) return
       firstAudioAt ??= Date.now()
-      audioMs += (payload.length - 16) / 48                     // PCM16 at 24 kHz after a 16-byte header
+      // PCM16 at 24 kHz after a 16-byte header, or Opus with its sample count first
+      audioMs += payload[0] === 1 ? (payload.length - 16) / 48 : payload.readUInt32LE(16) / 24
     })
     ws.on('framesent', ({ payload }) => {
       if (typeof payload !== 'string' || !payload.includes('"playback"')) return

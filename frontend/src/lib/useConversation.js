@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Connection } from './connection.js'
 import { h264Support } from './h264.js'
+import { opusSupport } from './opus.js'
 
 // Conversation state derived only from server events (the server owns the state machine).
 export function useConversation() {
@@ -39,8 +40,13 @@ export function useConversation() {
       const h264 = await h264Support
       conn.sendJson({ type: 'hello', voice_out: window.__voiceOut ?? false,
         utc_offset_min: -new Date().getTimezoneOffset(), time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        video: h264 ? ['h264', 'jpeg'] : ['jpeg'] })
+        video: h264 ? ['h264', 'jpeg'] : ['jpeg'], audio: opusSupport ? ['opus', 'pcm'] : ['pcm'], ack: true })
+      if (document.hidden) sendVisible()
     })
+    // a hidden page gets no video (backend session._set_visible): it piled up unread and the connection
+    // was closed every 40 s while the tab was in the background
+    const sendVisible = () => conn.sendJson({ type: 'visible', visible: !document.hidden })
+    document.addEventListener('visibilitychange', sendVisible)
     conn.addEventListener('binary', (e) => handlersRef.current.binary.forEach((h) => h(e.detail)))
     conn.addEventListener('json', (e) => {
       const msg = e.detail
@@ -102,7 +108,10 @@ export function useConversation() {
       }
     })
     conn.connect()
-    return () => conn.close()
+    return () => {
+      document.removeEventListener('visibilitychange', sendVisible)
+      conn.close()
+    }
   }, [upsertAssistant])
 
   const sendText = useCallback((text) => connRef.current?.sendJson({ type: 'user_text', text }), [])

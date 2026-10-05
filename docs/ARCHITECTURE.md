@@ -1148,6 +1148,52 @@ wider ones (neutral = the photo's own eyes, interested) are reported only. Also 
 did not answer, `scripts\tunnel.ps1` handed out `https://api.trycloudflare.com` (from the error
 message) as the link; it now ignores that address and tries up to 3 times.
 
+### "Sometimes stuck while she is talking": a lighter, steadier stream (owner, 2026-10-05)
+
+From the owner's sessions: one reply reached the page 7.5 s after the server sent it and then had 6.7 s
+of gaps; the worker had rendered it faster than real time. The owner's browser is on this PC's own home
+network, so every frame went to Cloudflare (Singapore/Hong Kong) and back through the home upload. After
+that the tab was in the background: Chrome ran the page once a minute, the video piled up unread, the
+server's keepalive ping could not get through, and the connection was closed exactly 40 s after every
+reconnect (uvicorn: ping every 20 s, 20 s to answer).
+
+Reproduced on this PC with Chrome's network throttling (`Network.emulateNetworkConditions`): at 800 kbit/s
+a reply had 8.9 s of gaps and 99 % of the lips late; at 500 kbit/s the voice started 5.9 s late. The
+outbox lanes ordered only what was still queued: the socket and the tunnel took megabytes, so the voice
+waited behind video already on its way (the server saw no backlog). A reply needed ~2 Mbit/s: the voice as
+PCM (384 kbit/s), the reply's video (1,000) and the idle video (600) until playback started.
+
+- **The voice as Opus** (`app/tts/opus.py`, libsndfile in-process; `lib/opus.js`): ~56 kbit/s instead of
+  384, a 2 s sentence 11 KB instead of 94 KB, encoded in ~8 ms while the avatar renders the sentence's
+  first frame. The page decodes it with `decodeAudioData` and cuts it to the exact sample count sent along,
+  so the lip-sync clock stays exact (e2e: 10,283 ms received, 10,283 ms played). Clauses reach the player
+  in order (decoding is asynchronous), and the end of a reply after its last clause. `?pcm`: PCM as before.
+- **Video only while the page keeps up** (`outbox.py`): the page acknowledges the bytes it received
+  (`ack`, every 16 KB or 100 ms); video goes out only while less than 64 KB are unacknowledged; control
+  messages and the voice never wait. A smaller window that followed the bitrate was tried and was worse
+  (500 kbit/s: 26–42 % of the lips late instead of 17–38 %).
+- **Lighter video**: 700/350 kbit/s (reply/idle) instead of 1,000/600 - PSNR 37.2/35.7 dB instead of
+  37.8/37.3, no visible difference. On a slow link the reply's frames that wait more than 0.5 s are dropped
+  and the reply continues from a keyframe (the worker replaces the reply's stream, `speech_keyframe`).
+- **The bitrate follows the connection** (`session.next_video_scale`): dropped frames → 60 %, a reply
+  without drops → 25 % more, but only up to 75 % of the share that was too much (rising 5 % per reply,
+  forgotten after a minute without drops). Going straight back up dropped frames every other reply.
+  Lowest: 245/122 kbit/s.
+- **A hidden page gets no video** (`visible`): shown again, the decoders start over and the worker
+  continues from keyframes. No more 40 s reconnect cycles.
+
+| Link (Chrome throttling) | Before: voice heard / gaps / lips late | After (3 replies on one page) |
+|---|---|---|
+| unthrottled | 0.85 s / 0 / 1 % | 0.84–1.18 s / 0 / 0–1 % (no bitrate change) |
+| 800 kbit/s | 1.5 s / 8.9 s / 99 % | 0.81–1.28 s / 0 / 11 %, 4 %, 0 % |
+| 500 kbit/s | 5.9 s / 11 s / 99 % | 1.3–2.1 s / 0 / 38 %, 17 %, 17 % (video at its lowest) |
+| the tunnel | | 1.2–1.55 s / ≤ 27 ms / 6 %, 0 %, 0 % |
+
+8.5 min soak: 0 of 12,066 lip-synced draws late, backend memory +20 MiB. Tests:
+`backend/tests/test_light_stream.py`, `tests/e2e/phase6_light_stream.spec.js` (Opus, 800 kbit/s, hidden
+page). For testing at home on this PC: `http://localhost:8000/?token=...` (the owner link's token) needs
+no tunnel at all.
+
 ### Robustness
 
 Playwright `tests/e2e/phase6_recovery.spec.js` kills processes in the middle of a live session

@@ -38,15 +38,31 @@ from app.llm.client import LLMStats
 from app.llm.prompt import ConversationMemory, lead_rules
 from app.services import Services
 from app.session.endpointing import looks_unfinished
-from app.session.outbox import Outbox
+from app.session.outbox import VIDEO_WINDOW, Outbox
 from app.session.prefetch import AnswerPrefetch
 from app.session.state_machine import Event, State, StateMachine
 from app.session.turn import TurnContext, TurnRegistry
-from app.transport.protocol import FLAG_KEY, HEADER, KIND_IDLE_H264, KIND_IDLE_VIDEO
+from app.transport.protocol import FLAG_KEY, HEADER, KIND_IDLE_H264, KIND_IDLE_VIDEO, KIND_VIDEO_H264
 from app.tts.chunker import ClauseChunker
 from app.tts.speech_output import SpeechOutput
 
 ACTIVE = (State.THINKING, State.SPEAKING)
+# H.264 bitrate (kbit/s) of the reply's and of the idle video at full quality (worker defaults), and the
+# lowest share of it on a slow connection (adapt_video)
+VIDEO_KBPS = (700, 350)
+VIDEO_SCALE_MIN = 0.35
+
+
+def next_video_scale(scale: float, ceiling: float, congested: bool, calm_s: float = 0.0) -> tuple[float, float]:
+    """(share of VIDEO_KBPS, ceiling) after a reply: frames dropped -> 60 %, and the ceiling 75 % of the
+    share that was too much; no drops -> 25 % more, up to the ceiling, which rises 5 % per such reply and
+    is forgotten after a minute without drops (calm_s: seconds since the last drop) - a short slowdown
+    does not keep the picture soft. A ceiling 80 % rising 10 % dropped frames every third reply on a link
+    carrying half the video; this one about every seventh, and a probe a minute."""
+    if congested:
+        return max(VIDEO_SCALE_MIN, scale * 0.6), max(VIDEO_SCALE_MIN, scale * 0.75)
+    ceiling = 1.0 if calm_s > 60 else min(1.0, ceiling * 1.05)
+    return min(ceiling, scale * 1.25), ceiling
 # A first clause shorter than this ("Sure!", "Absolutely!", "Happy to help!": under ~1.5 s of speech)
 # is over before the next one could be written after the first audio: the LLM writes on (clause_pauses)
 SHORT_OPENER_CHARS = 24
@@ -130,6 +146,16 @@ class Session:
         self.dropped_idle_frames = 0
         self.video_codec = "jpeg"         # what the browser decodes (hello): "h264" or "jpeg"
         self._idle_wait_key = False       # H.264 idle frames were dropped: send again from a keyframe
+        self._speech_wait_key = 0         # the reply (turn id) whose H.264 frames were dropped: from a keyframe on
+        self._keyframe_asked = 0.0        # when the worker was last asked for a keyframe
+        self.audio_codec = "pcm"          # the voice for the page (hello): "opus" or "pcm" (tts/opus.py)
+        self.page_visible = True          # hidden page: no video (nobody sees it; it only filled the link)
+        self.dropped_speech_frames = 0
+        self.video_scale = 1.0            # share of VIDEO_KBPS for this connection (_adapt_video)
+        self._video_ceiling = 1.0         # below the share at which frames were last dropped
+        self._congested_at = 0.0
+        self._adapted_at = 0.0
+        self._drops_mark = 0              # dropped frames when the current reply started
         self.sm.subscribe(self._on_state_change)
         self._closed = False
 
@@ -188,12 +214,25 @@ class Session:
             # H.264 when the browser decodes it (WebCodecs, secure pages): ~1 Mbit/s instead of 6.7 (h264.py)
             self.video_codec = "h264" if "h264" in (msg.get("video") or []) else "jpeg"
             self.svc.avatar_codec(self.video_codec)      # remembered: sent again if the worker restarts
-            logger.info(f"session {self.id}: video {self.video_codec}")
+            self.audio_codec = "opus" if "opus" in (msg.get("audio") or []) else "pcm"
+            if msg.get("ack"):                           # the page acknowledges what it received (outbox.py)
+                self.outbox.window = VIDEO_WINDOW
+            self.video_scale = self._video_ceiling = 1.0  # a new connection starts at full quality
+            self.svc.avatar_bitrate(*VIDEO_KBPS)
+            logger.info(f"session {self.id}: video {self.video_codec}, voice {self.audio_codec}, "
+                        f"window {'on' if self.outbox.window else 'off'}")
             try:      # the customer's time zone (minutes east of UTC), for questions about the time
                 offset = int(msg["utc_offset_min"])
                 self.memory.utc_offset_min = offset if -14 * 60 <= offset <= 14 * 60 else None
             except (KeyError, TypeError, ValueError):
                 pass
+        elif kind == "ack":
+            try:
+                self.outbox.ack(int(msg.get("bytes") or 0))
+            except (TypeError, ValueError):
+                pass
+        elif kind == "visible":
+            self._set_visible(bool(msg.get("visible", True)))
         elif kind == "speaker":
             self.speaker_on = bool(msg.get("enabled"))
             self._update_voice_out()
@@ -531,7 +570,8 @@ class Session:
         if self.voice_out:
             speech = SpeechOutput(turn, self.svc.tts, self.outbox, self.svc.gpu_lock,
                                   on_first_audio=lambda: self._first_output(turn),
-                                  avatar_sink=self.svc.avatar_sink_for(self, turn) if self.svc.avatar_ready else None)
+                                  avatar_sink=self.svc.avatar_sink_for(self, turn) if self.svc.avatar_ready else None,
+                                  audio_codec=self.audio_codec)
             turn.speech = speech
             chunker = ClauseChunker()
         behavior_sent = False
@@ -687,21 +727,78 @@ class Session:
         turn.playback_gap_ms = float(msg.get("gap_ms") or turn.playback_gap_ms)
         turn.played_at = time.time()
         if event == "started":
+            self._drops_mark = self.dropped_speech_frames + self.dropped_idle_frames
             turn.mark("client_first_audio")
             self.svc.avatar_playback(turn.turn_id, "started")
         elif event == "progress":
             self.svc.avatar_playback(turn.turn_id, "progress", turn.played_ms)   # lets the avatar catch up
         elif event == "ended":
+            if self.video_codec == "h264" and self.page_visible:
+                self._adapt_video(self.dropped_speech_frames + self.dropped_idle_frames > self._drops_mark)
             turn.mark("client_playback_ended")
             if turn.playback_gap_ms > 300:
                 logger.warning(f"turn {turn.turn_id}: {turn.playback_gap_ms:.0f} ms of gaps in the spoken reply")
             turn.playback_ended.set()
             self.svc.avatar_playback(turn.turn_id, "ended")
 
+    def _ask_keyframe(self, speech: bool, idle: bool = True) -> None:
+        """Frames were dropped: the worker continues from a keyframe (at most every 2 s; the streams have
+        one every 2 s anyway)."""
+        if time.time() - self._keyframe_asked < 2.0:
+            return
+        self._keyframe_asked = time.time()
+        if idle:
+            self.svc.avatar_idle_keyframe()
+        if speech:
+            self.svc.avatar_speech_keyframe()
+
+    def _adapt_video(self, congested: bool) -> bool:
+        """The video's bitrate follows the connection: when frames had to be dropped (the link is slower
+        than the video) the next video gets 60 % of the bitrate, after a reply without drops 25 % more,
+        up to full quality (as real-time video does, multiplicative decrease and gradual increase). At
+        500 kbit/s a 700 kbit/s video could only freeze; at ~250 it is a little softer and keeps moving.
+        It climbs back only below the share at which frames were last dropped (next_video_scale): going
+        straight back up dropped frames every other reply (500 kbit/s: 44 %, 5 %, 21 % of the lips late)."""
+        now = time.time()
+        if congested and now - self._adapted_at < 2.0:
+            return False
+        scale, self._video_ceiling = next_video_scale(self.video_scale, self._video_ceiling, congested,
+                                                      now - self._congested_at)
+        if congested:
+            self._congested_at = now
+        if abs(scale - self.video_scale) < 0.02:
+            return False
+        self.video_scale, self._adapted_at = scale, now
+        speech, idle = round(VIDEO_KBPS[0] * scale), round(VIDEO_KBPS[1] * scale)
+        self.svc.avatar_bitrate(speech, idle)
+        logger.info(f"session {self.id}: video at {speech}/{idle} kbit/s "
+                    f"({'frames were dropped' if congested else 'the connection keeps up'})")
+        return True                                       # (the worker restarts the idle video at the new rate)
+
+    def _set_visible(self, visible: bool) -> None:
+        """The page was hidden (another tab, minimised) or shown again. Hidden, the browser hardly runs the
+        page: the video it was sent piled up, the server's keepalive pings could not get through, and the
+        connection was closed every 40 s (owner's tab, 2026-10-05). Now no video while hidden (the voice
+        goes on); shown again, the video continues from keyframes (the page restarts its decoders)."""
+        if visible == self.page_visible:
+            return
+        self.page_visible = visible
+        logger.info(f"session {self.id}: page {'visible' if visible else 'hidden'}")
+        self.outbox.clear_lane("idle")
+        if visible and self.video_codec == "h264":
+            self._idle_wait_key = True
+            self._speech_wait_key = self.turns.current_id
+            self._keyframe_asked = 0.0
+            self._ask_keyframe(speech=True)
+
     def on_avatar_frame(self, packet: bytes, kind: int, turn_id: int) -> None:
         """Avatar worker frame → browser, behind the voice (outbox lanes). Idle frames give way when the
         link is backed up: a JPEG one is simply dropped; H.264 frames depend on the ones before, so the
         queued idle video is dropped as a whole and starts again from the next keyframe."""
+        if not self.page_visible:
+            self.dropped_idle_frames += kind in (KIND_IDLE_VIDEO, KIND_IDLE_H264)
+            self.dropped_speech_frames += kind not in (KIND_IDLE_VIDEO, KIND_IDLE_H264)
+            return
         if kind == KIND_IDLE_VIDEO:
             if self.outbox.backlog > 6:
                 self.dropped_idle_frames += 1
@@ -716,18 +813,39 @@ class Session:
             if self.outbox.lane_backlog("idle") > 20:          # 1 s of idle video waiting: the link is slow
                 self.dropped_idle_frames += self.outbox.clear_lane("idle") + 1
                 self._idle_wait_key = True
-                self.svc.avatar_idle_keyframe()
+                adapted = self.turns.current is None or self.turns.current.played_at == 0   # between replies
+                adapted = adapted and self._adapt_video(congested=True)
+                self._ask_keyframe(speech=False, idle=not adapted)
                 return
             self.outbox.binary(packet, 0, force=True, lane="idle")
+        elif kind == KIND_VIDEO_H264:
+            # The reply's video on a link slower than the video: frames already later than the voice are
+            # useless, and they would delay the next ones. Over 0.5 s waiting: dropped, the reply's video
+            # continues from a keyframe (the lips catch up instead of lagging further and further).
+            if self._speech_wait_key == turn_id:
+                if not packet[1] & FLAG_KEY:
+                    self.dropped_speech_frames += 1
+                    return
+                self._speech_wait_key = 0
+            if self.outbox.lane_backlog("speech") > 10:
+                self.dropped_speech_frames += self.outbox.clear_lane("speech") + 1
+                self._speech_wait_key = turn_id
+                adapted = self._adapt_video(congested=True)     # first: the reply continues on a lighter stream
+                self._ask_keyframe(speech=True, idle=not adapted)
+                return
+            self._forward_speech(packet, turn_id)
         else:
-            turn = self.turns.current
-            if turn is not None and turn.turn_id == turn_id and turn.played_at:
-                # how late is this frame already here? (browser position + time since its last report)
-                pts = HEADER.unpack_from(packet)[3]
-                audible = turn.played_ms + min((time.time() - turn.played_at) * 1000, 250.0)
-                turn.av_lateness.append(audible - pts)
-                turn.av_max_backlog = max(turn.av_max_backlog, self.outbox.backlog)
-            self.outbox.binary(packet, turn_id, lane="speech")
+            self._forward_speech(packet, turn_id)
+
+    def _forward_speech(self, packet: bytes, turn_id: int) -> None:
+        turn = self.turns.current
+        if turn is not None and turn.turn_id == turn_id and turn.played_at:
+            # how late is this frame already here? (browser position + time since its last report)
+            pts = HEADER.unpack_from(packet)[3]
+            audible = turn.played_ms + min((time.time() - turn.played_at) * 1000, 250.0)
+            turn.av_lateness.append(audible - pts)
+            turn.av_max_backlog = max(turn.av_max_backlog, self.outbox.backlog)
+        self.outbox.binary(packet, turn_id, lane="speech")
 
     # ------------------------------------------------------------------ interruption
     async def interrupt(self, reason: str) -> None:

@@ -14,7 +14,8 @@ test('a multi-sentence reply plays without long gaps', async ({ page }) => {
     const pcm = new Int16Array(payload.buffer.slice(payload.byteOffset + 16, payload.byteOffset + payload.length))
     audio.push([turnId, payload.readUInt32LE(8), pcm])
   }))
-  await page.goto(appPath())
+  const path = appPath()
+  await page.goto(`${path}${path.includes('?') ? '&' : '?'}pcm`)   // PCM: the samples are analysed below
   await expect(page.getByTestId('conn-status')).toHaveText('open', { timeout: 30_000 })
   const session = await waitFor(messages, (m) => m.type === 'session', 10_000)
   test.skip(session.voice_available === false, 'voice models not loaded')

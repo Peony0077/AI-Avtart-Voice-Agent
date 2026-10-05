@@ -79,9 +79,11 @@ Type a message — the avatar answers aloud with lip sync (**Mute** for text-onl
 **🎤 Tap to talk** on the avatar. Use headphones, with the computer's own microphone: a Bluetooth
 headset's microphone turns the headset into phone-call quality.
 
-The avatar's video goes out as H.264 (~1 Mbit/s; needs `ffmpeg` on the PATH) on https links and on
-`localhost`. On a plain `http://` LAN address the browser cannot decode it, so it falls back to JPEG
-frames (~7 Mbit/s); add `&jpeg` to a link to force JPEG.
+The avatar's video goes out as H.264 (0.35–0.7 Mbit/s, lower on a slow connection; needs `ffmpeg` on
+the PATH) and the voice as Opus (~56 kbit/s) on https links and on `localhost`. On a plain `http://` LAN
+address the browser cannot decode the video, so it falls back to JPEG frames (~7 Mbit/s); add `&jpeg` to
+a link to force JPEG, `&pcm` for uncompressed voice. Testing on this PC itself, open
+`http://localhost:8000/?token=<the owner link's token>`: the tunnel sends everything to Cloudflare and back.
 
 For a truly lifelike avatar, build it from a short video of a real person:
 [docs/RECORDING_A_VIDEO_AVATAR.md](docs/RECORDING_A_VIDEO_AVATAR.md).

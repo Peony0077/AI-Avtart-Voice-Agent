@@ -4,6 +4,13 @@ import playerWorkletUrl from './player-worklet.js?url'
 import { MIC_SAMPLE_RATE, TTS_SAMPLE_RATE } from '../lib/protocol.js'
 import { preferredMic } from './microphones.js'
 
+export function pcm16ToFloat(pcm16Buffer) {
+  const pcm = new Int16Array(pcm16Buffer)
+  const f32 = new Float32Array(pcm.length)
+  for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 32768
+  return f32
+}
+
 export class AudioEngine extends EventTarget {
   constructor() {
     super()
@@ -116,14 +123,17 @@ export class AudioEngine extends EventTarget {
 
   // PCM16 mono 24 kHz from the server.
   push(turnId, pcm16Buffer) {
+    this.pushFloat(turnId, pcm16ToFloat(pcm16Buffer))
+  }
+
+  // Samples at 24 kHz (PCM converted, or the decoded Opus voice: lib/opus.js); the array is transferred.
+  pushFloat(turnId, samples) {
     if (!this.player) {
       // playback still starting (first typed message): queue until the worklet exists
-      this._playbackReady?.then(() => this.push(turnId, pcm16Buffer))
+      this._playbackReady?.then(() => this.pushFloat(turnId, samples))
       return
     }
-    const pcm = new Int16Array(pcm16Buffer)
-    let f32 = new Float32Array(pcm.length)
-    for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 32768
+    let f32 = samples
     const rate = this.playCtx.sampleRate
     if (rate !== TTS_SAMPLE_RATE) {
       // the browser ignored the requested 24 kHz: resample, or the voice plays too fast and too high

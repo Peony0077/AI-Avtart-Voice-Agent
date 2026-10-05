@@ -12,10 +12,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 import numpy as np
+from loguru import logger
 
 from app.behavior.speech_text import normalize_for_speech
-from app.transport.protocol import KIND_AUDIO, pack
+from app.transport.protocol import KIND_AUDIO, KIND_AUDIO_OPUS, pack
 from app.tts.base import pause_after, trim_silence
+from app.tts.opus import opus_payload
 
 AHEAD_MS = 2500.0   # with the avatar: synthesise the next sentence when less audio than this is still queued
 
@@ -32,8 +34,10 @@ class Segment:
 class SpeechOutput:
     def __init__(self, turn, tts, outbox, gpu_lock: asyncio.Lock,
                  on_first_audio: Callable[[], None],
-                 avatar_sink: Callable[[int, int, np.ndarray, int], Awaitable[None]] | None = None) -> None:
+                 avatar_sink: Callable[[int, int, np.ndarray, int], Awaitable[None]] | None = None,
+                 audio_codec: str = "pcm") -> None:
         self.turn = turn
+        self.audio_codec = audio_codec             # what the page decodes: "opus" or "pcm" (opus.py)
         self.tts = tts
         self.outbox = outbox
         self.gpu_lock = gpu_lock
@@ -100,13 +104,14 @@ class SpeechOutput:
             segment = Segment(seq, clause, self.total_ms, result.duration_ms, result.words)
             self.segments.append(segment)
             pcm = (np.clip(result.audio, -1, 1) * 32767).astype(np.int16)
+            encoded = self._encode(pcm)              # while the avatar renders the clause's first frame
             if self.avatar_sink is not None:
                 await self.avatar_sink(tid, seq, pcm, int(self.total_ms))
             self.outbox.json({"type": "tts_segment", "turn_id": tid, "seq": seq, "text": clause,
                               "start_ms": round(segment.start_ms), "duration_ms": round(segment.duration_ms),
                               "synth_ms": result.synth_ms,
                               "words": [[w, round(s * 1000), round(e * 1000)] for w, s, e in result.words]}, tid)
-            self.outbox.binary(pack(KIND_AUDIO, tid, seq, int(self.total_ms), pcm.tobytes()), tid)
+            await self._send_audio(tid, seq, pcm, encoded)
             if seq == 1:
                 self.turn.mark("audio_sent")
                 self.on_first_audio()
@@ -129,11 +134,29 @@ class SpeechOutput:
                 return
             await asyncio.sleep(0.05)
 
+    def _encode(self, pcm: np.ndarray) -> asyncio.Future | None:
+        """Opus for the page, started at once (in a thread: ~4 ms per second of speech)."""
+        if self.audio_codec != "opus":
+            return None
+        return asyncio.ensure_future(asyncio.to_thread(opus_payload, pcm))
+
+    async def _send_audio(self, tid: int, seq: int, pcm: np.ndarray, encoded: asyncio.Future | None) -> None:
+        pts = int(self.total_ms)
+        if encoded is not None:
+            try:
+                self.outbox.binary(pack(KIND_AUDIO_OPUS, tid, seq, pts, await encoded), tid)
+                return
+            except Exception as exc:  # noqa: BLE001 - e.g. libsndfile without Opus: PCM from here on
+                logger.warning(f"Opus encoding failed ({exc!r}): PCM audio")
+                self.audio_codec = "pcm"
+        self.outbox.binary(pack(KIND_AUDIO, tid, seq, pts, pcm.tobytes()), tid)
+
     async def _emit(self, seq: int, pcm: np.ndarray) -> None:
         tid = self.turn.turn_id
+        encoded = self._encode(pcm)
         if self.avatar_sink is not None:
             await self.avatar_sink(tid, seq, pcm, int(self.total_ms))
-        self.outbox.binary(pack(KIND_AUDIO, tid, seq, int(self.total_ms), pcm.tobytes()), tid)
+        await self._send_audio(tid, seq, pcm, encoded)
         if seq == 1:
             self.turn.mark("audio_sent")
             self.on_first_audio()
