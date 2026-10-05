@@ -303,6 +303,9 @@ class Services:
 
     def avatar_reset(self) -> None:
         """Session closed (e.g. the tab was closed while the avatar spoke): back to the idle stream."""
+        if self.avatar is not None:
+            self.avatar.codec = "jpeg"            # the worker goes back to JPEG on reset
+            self.avatar.start_hold_ms = 0
         if self.avatar_ready:
             self.avatar.send_json({"type": "reset"})
 
@@ -320,6 +323,26 @@ class Services:
         """All of the reply's audio has gone to the worker: it renders the closing tail after it."""
         if self.avatar_ready:
             self.avatar.send_json({"type": "speech_end", "turn_id": turn_id, "total_ms": round(total_ms)})
+
+    def avatar_codec(self, codec: str) -> None:
+        """The browser's video codec: "h264" (WebCodecs) or "jpeg" (avatar/musetalk/h264.py)."""
+        if self.avatar is not None:
+            self.avatar.codec = codec
+        if self.avatar is not None and self.avatar.connected:
+            self.avatar.send_json({"type": "codec", "codec": codec})
+
+    def avatar_idle_keyframe(self) -> None:
+        """Idle H.264 frames were dropped (slow link): the worker starts the idle stream again from a keyframe."""
+        if self.avatar is not None and self.avatar.connected:
+            self.avatar.send_json({"type": "idle_keyframe"})
+
+    def avatar_start_hold(self, ms: int) -> None:
+        """The page holds each reply's first audio ``ms`` longer (lip-synced frames arrived late over the
+        network): the worker starts the reply's frames as much later in the loop."""
+        if self.avatar is not None:
+            self.avatar.start_hold_ms = ms
+        if self.avatar is not None and self.avatar.connected:
+            self.avatar.send_json({"type": "start_hold", "ms": ms})
 
     def avatar_start_gap(self, gap: float) -> None:
         """How many loop frames the first lip-synced frame was ahead of the idle frame on screen (the

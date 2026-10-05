@@ -21,7 +21,7 @@ from loguru import logger
 
 from app.core.config import Settings
 from app.core.procjob import JOB, free_port
-from app.transport.protocol import HEADER, KIND_AUDIO, KIND_IDLE_VIDEO
+from app.transport.protocol import HEADER, KIND_AUDIO, KIND_IDLE_H264, KIND_IDLE_VIDEO
 
 FrameSink = Callable[[bytes, int, int], None]  # (packet, kind, turn_id)
 
@@ -34,6 +34,8 @@ class AvatarClient:
         self.ws = None
         self.connected = False
         self.hello: dict = {}
+        self.codec = "jpeg"           # the browser's video codec; sent again when the worker restarts
+        self.start_hold_ms = 0        # the page's start hold (services.avatar_start_hold); the same
         self.frame_sink: FrameSink | None = None
         self._waiters: dict[tuple[int, int], asyncio.Future] = {}
         self._reader: asyncio.Task | None = None
@@ -75,6 +77,10 @@ class AvatarClient:
                 self.connected = True
                 self._reader = asyncio.create_task(self._read(), name="avatar-reader")
                 logger.info(f"avatar worker connected: {self.hello}")
+                if self.codec != "jpeg":          # a restarted worker starts with JPEG frames
+                    self.send_json({"type": "codec", "codec": self.codec})
+                if self.start_hold_ms:
+                    self.send_json({"type": "start_hold", "ms": self.start_hold_ms})
                 return
             except (OSError, websockets.WebSocketException, TimeoutError):
                 await asyncio.sleep(1.0)
@@ -115,7 +121,7 @@ class AvatarClient:
             async for msg in self.ws:
                 if isinstance(msg, bytes):
                     kind, turn_id, _seq, _pts = HEADER.unpack_from(msg)
-                    if kind == KIND_IDLE_VIDEO:
+                    if kind in (KIND_IDLE_VIDEO, KIND_IDLE_H264):
                         self.stats["idle_in"] += 1
                     else:
                         self.stats["frames_in"] += 1

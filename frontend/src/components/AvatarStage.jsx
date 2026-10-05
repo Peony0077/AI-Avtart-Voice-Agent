@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { FLAG_TAIL, KIND_IDLE_VIDEO, KIND_VIDEO, parsePacket } from '../lib/protocol.js'
+import { H264Stream } from '../lib/h264.js'
+import { FLAG_KEY, FLAG_TAIL, KIND_IDLE_H264, KIND_IDLE_VIDEO, KIND_VIDEO, KIND_VIDEO_H264, parsePacket } from '../lib/protocol.js'
 
 // Renders the avatar video.
 // - Speech frames are shown by the audio clock: the frame whose pts (ms on the turn's audio timeline)
@@ -21,6 +22,27 @@ const GRAIN = typeof location === 'undefined' || !new URLSearchParams(location.s
 const FADE_TO_SPEECH_MS = 120
 const FADE_TO_IDLE_MS = 200
 const TAIL_GRACE_MS = 800        // after the audio ends, wait (holding the last frame) this long for the closing tail
+// Playout delay at the start of replies (a jitter buffer). Over the internet the first lip-synced frames
+// arrived after their audio: through the tunnel 205-465 ms late in 3 of 5 replies (2026-10-05), since the
+// renderer only keeps pace with the audio at the start. Frames late in one reply hold the next reply's
+// first audio that much longer (useVoice; the worker starts its frames as much later); a reply with every
+// frame early lowers it again. On this PC it stays 0.
+const MAX_START_HOLD_MS = 400
+const REMOTE_START_HOLD_MS = 150
+const LOCAL_PAGE = typeof location === 'undefined' || ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)
+const FORCED_HOLD_MS = (() => {         // ?hold=300: begin with this hold (tests, a known slow network)
+  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('hold')
+  const ms = v === null ? NaN : Number(v)
+  return Number.isFinite(ms) && ms >= 0 ? Math.min(MAX_START_HOLD_MS, ms) : null
+})()
+
+// worst: how far the latest-arriving frame of the reply came after its audio (ms; null = not measured)
+function nextStartHold(hold, worst) {
+  if (worst === null) return hold
+  if (worst > 80) return Math.min(MAX_START_HOLD_MS, Math.round(hold + worst))
+  if (worst < 0) return Math.max(0, hold - 50)
+  return hold
+}
 
 export default function AvatarStage({ conv, voice }) {
   const canvasRef = useRef(null)
@@ -29,40 +51,67 @@ export default function AvatarStage({ conv, voice }) {
   const doneTurnsRef = useRef(new Set())     // turns whose frames (and closing tail) have been shown
   const tailShiftRef = useRef(new Map())     // turnId -> ms the closing tail is played later than its pts
   const fpsRef = useRef(20)
+  const h264Ref = useRef({ idle: null, turns: new Map() })   // H.264 decoders (lib/h264.js)
+  const jitterRef = useRef({ turn: 0, worst: null, done: 0, hold: 0 })   // start hold (nextStartHold)
   const rejectUpToRef = useRef(0)
   const statsRef = useRef({ idle: 0, speech: 0, drawnSpeech: 0, late: 0, avOffsets: [], arrivals: [], clock: null, startGaps: [],
     arrivedLate: 0, arrivedTimed: 0, recentArrivals: [], decodeMs: [], tails: 0, idleHolds: 0 })
   const [size, setSize] = useState(null)
 
+  // only refs inside: the draw loop's copy from the first render stays valid
+  const setStartHold = (ms) => {
+    jitterRef.current.hold = ms
+    statsRef.current.startHold = ms
+    voice.startHoldRef.current = ms
+    conv.connRef.current?.sendJson({ type: 'start_hold', ms })
+  }
+  const settleTurn = (turn) => {
+    const j = jitterRef.current
+    if (turn !== j.turn) return
+    const next = nextStartHold(j.hold, j.worst)
+    j.done = turn
+    j.turn = 0
+    statsRef.current.worstArrivals = [...(statsRef.current.worstArrivals ?? []), j.worst === null ? null : Math.round(j.worst)].slice(-50)
+    if (next !== j.hold) setStartHold(next)
+  }
+
   useEffect(() => {
     const offJson = conv.onJson((msg) => {
       if (msg.type === 'session' && msg.avatar?.size) setSize(msg.avatar.size)
       if (msg.type === 'session' && msg.avatar?.fps) fpsRef.current = msg.avatar.fps
+      if (msg.type === 'session') {                 // a new session: turn ids start again
+        Object.assign(jitterRef.current, { turn: 0, worst: null, done: 0 })
+        setStartHold(FORCED_HOLD_MS ?? (LOCAL_PAGE ? 0 : Math.max(REMOTE_START_HOLD_MS, jitterRef.current.hold)))
+      }
       if (msg.type === 'interrupt') {
         rejectUpToRef.current = Math.max(rejectUpToRef.current, msg.turn_id)
         dropTurnsUpTo(speechRef.current, msg.turn_id)
+        for (const [id, d] of h264Ref.current.turns) if (id <= msg.turn_id) { d.close(); h264Ref.current.turns.delete(id) }
       }
     })
-    const offBinary = conv.onBinary(async (buffer) => {
-      const p = parsePacket(buffer)
-      if (p.kind !== KIND_IDLE_VIDEO && p.kind !== KIND_VIDEO) return
-      if (p.kind === KIND_VIDEO && (p.turnId <= rejectUpToRef.current || doneTurnsRef.current.has(p.turnId))) return
-      const tDecode = performance.now()
-      const bmp = await createImageBitmap(new Blob([p.payload], { type: 'image/jpeg' }))
-      const decodeMs = performance.now() - tDecode
-      if (p.kind === KIND_IDLE_VIDEO) {
-        statsRef.current.idle++
-        const idle = idleRef.current
-        if (p.seq < idle.staleBelow || idle.buf.some((f) => f.idx === p.seq)) { bmp.close(); return }
-        idle.buf.push({ idx: p.seq, bmp })
-        idle.buf.sort((a, b) => a.idx - b.idx)
-        while (idle.buf.length > 40) releaseIdle(idle, idle.buf.shift())
-      } else {
-        statsRef.current.speech++
+    // decoded frames (JPEG or H.264) into the idle buffer or the reply's frame list
+    const addIdle = (idx, bmp) => {
+      statsRef.current.idle++
+      const idle = idleRef.current
+      if (idx < idle.staleBelow || idle.buf.some((f) => f.idx === idx)) { bmp.close(); return }
+      idle.buf.push({ idx, bmp })
+      idle.buf.sort((a, b) => a.idx - b.idx)
+      while (idle.buf.length > 40) releaseIdle(idle, idle.buf.shift())
+    }
+    const addSpeech = (p, bmp, decodeMs) => {
+      if (p.turnId <= rejectUpToRef.current || doneTurnsRef.current.has(p.turnId)) { bmp.close(); return }
+      statsRef.current.speech++
+      {
         const eng = voice.engineRef.current
         const audibleNow = eng?.playingTurn === p.turnId ? eng.audibleMs(p.turnId) : null
         const st = statsRef.current
         if (st.arrivals.length < 600) st.arrivals.push(audibleNow === null ? null : Math.round(audibleNow - p.ptsMs))
+        const j = jitterRef.current
+        if (p.turnId > j.done && p.turnId !== j.turn) {
+          if (j.turn && p.turnId > j.turn) settleTurn(j.turn)       // the reply before was interrupted
+          if (p.turnId > j.turn) Object.assign(j, { turn: p.turnId, worst: null })
+        }
+        if (audibleNow !== null && p.turnId === j.turn) j.worst = Math.max(j.worst ?? -Infinity, audibleNow - p.ptsMs)
         // whole-session diagnostics (test hooks): arrival lateness after decoding, and decode time
         if (audibleNow !== null) {
           st.arrivedTimed++
@@ -77,9 +126,55 @@ export default function AvatarStage({ conv, voice }) {
         list.sort((a, b) => a.pts - b.pts)
         speechRef.current.set(p.turnId, list)
       }
+    }
+    // H.264: one decoder for the idle video, one per reply (each reply is its own stream)
+    const h264 = h264Ref.current
+    const onH264 = (p) => {
+      const st = statsRef.current
+      st.codec = 'h264'
+      const key = !!(p.flags & FLAG_KEY)
+      if (p.kind === KIND_IDLE_H264) {
+        if (!h264.idle || h264.idle.broken) {
+          h264.idle?.close()
+          h264.idle = new H264Stream((m, bmp) => addIdle(m.idx, bmp), () => { st.h264Errors = (st.h264Errors ?? 0) + 1 })
+        }
+        if (!h264.idle.feed(p.payload, key, { idx: p.seq })) st.h264Waiting = (st.h264Waiting ?? 0) + 1
+        return
+      }
+      if (p.turnId <= rejectUpToRef.current || doneTurnsRef.current.has(p.turnId)) return
+      let dec = h264.turns.get(p.turnId)
+      if (!dec || dec.broken) {
+        dec?.close()
+        for (const [id, d] of h264.turns) if (id < p.turnId) { d.close(); h264.turns.delete(id) }   // older replies
+        dec = new H264Stream((m, bmp) => addSpeech(m, bmp, performance.now() - m.fed),
+          () => { st.h264Errors = (st.h264Errors ?? 0) + 1 })
+        h264.turns.set(p.turnId, dec)
+      }
+      if (!dec.feed(p.payload, key, { turnId: p.turnId, ptsMs: p.ptsMs, seq: p.seq, flags: p.flags, fed: performance.now() })) {
+        st.h264Waiting = (st.h264Waiting ?? 0) + 1
+      }
+    }
+    const offBinary = conv.onBinary(async (buffer) => {
+      const p = parsePacket(buffer)
+      if (p.kind === KIND_IDLE_H264 || p.kind === KIND_VIDEO_H264) { onH264(p); return }
+      if (p.kind !== KIND_IDLE_VIDEO && p.kind !== KIND_VIDEO) return
+      if (p.kind === KIND_VIDEO && (p.turnId <= rejectUpToRef.current || doneTurnsRef.current.has(p.turnId))) return
+      statsRef.current.codec = 'jpeg'
+      const tDecode = performance.now()
+      const bmp = await createImageBitmap(new Blob([p.payload], { type: 'image/jpeg' }))
+      const decodeMs = performance.now() - tDecode
+      if (p.kind === KIND_IDLE_VIDEO) addIdle(p.seq, bmp)
+      else addSpeech(p, bmp, decodeMs)
     })
     window.__avatarStats = statsRef.current // test hook
-    return () => { offJson(); offBinary() }
+    return () => {
+      offJson()
+      offBinary()
+      h264.idle?.close()
+      h264.idle = null
+      for (const d of h264.turns.values()) d.close()
+      h264.turns.clear()
+    }
   }, [conv.onJson, conv.onBinary, voice.engineRef])   // stable: conv and voice are new objects every render
 
   useEffect(() => {
@@ -145,6 +240,7 @@ export default function AvatarStage({ conv, voice }) {
             if (ended && list.length === 1 && audible > f.pts + frameMs + (f.tail ? 0 : TAIL_GRACE_MS)) {
               // the reply and its closing tail are over: the idle video continues on the next frame
               doneTurnsRef.current.add(turn)
+              settleTurn(turn)
               st.tails++
               continueIdleAfter(idle, f.idx, now)
               lastSpeechIdx = f.idx

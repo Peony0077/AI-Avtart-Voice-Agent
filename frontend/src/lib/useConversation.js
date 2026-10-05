@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Connection } from './connection.js'
+import { h264Support } from './h264.js'
 
 // Conversation state derived only from server events (the server owns the state machine).
 export function useConversation() {
@@ -33,8 +34,13 @@ export function useConversation() {
     window.__avatarConn = conn // test hook (Playwright)
     conn.addEventListener('status', (e) => setStatus(e.detail))
     // the customer's time zone (minutes east of UTC): "what time is it" is answered in their time
-    conn.addEventListener('open', () => conn.sendJson({ type: 'hello', voice_out: window.__voiceOut ?? false,
-      utc_offset_min: -new Date().getTimezoneOffset(), time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone }))
+    // and the video it can decode: H.264 (~1 Mbit/s) where WebCodecs has it, else JPEG frames (6.7 Mbit/s)
+    conn.addEventListener('open', async () => {
+      const h264 = await h264Support
+      conn.sendJson({ type: 'hello', voice_out: window.__voiceOut ?? false,
+        utc_offset_min: -new Date().getTimezoneOffset(), time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        video: h264 ? ['h264', 'jpeg'] : ['jpeg'] })
+    })
     conn.addEventListener('binary', (e) => handlersRef.current.binary.forEach((h) => h(e.detail)))
     conn.addEventListener('json', (e) => {
       const msg = e.detail
@@ -52,7 +58,7 @@ export function useConversation() {
           break
         case 'persona':
           setPersona(msg)
-          setSession((s) => (s ? { ...s, persona: msg.name } : s))
+          setSession((s) => (s && s.persona !== msg.name ? { ...s, persona: msg.name } : s))
           break
         case 'state':
           setState(msg.state)

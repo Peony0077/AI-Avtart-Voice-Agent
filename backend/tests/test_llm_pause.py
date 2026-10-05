@@ -83,3 +83,17 @@ def test_without_pause_it_streams_straight_through():
 
     assert asyncio.run(run()) == "The capital is Tokyo. It is very big."
     assert [path for path, _ in seen] == ["/v1/chat/completions"]
+
+
+def test_a_short_opener_does_not_pause_the_llm():
+    from app.session.session import clause_pauses
+
+    pause = clause_pauses()
+    assert not pause("Sure!")                               # nothing complete yet (no text after it)
+    assert not pause("Sure! Here")                          # "Sure!" alone: write on
+    assert not pause("Sure! Here are four facts")
+    assert pause("Sure! Here are four facts about octopuses. They")   # the next sentence: pause as usual
+    assert not pause("Sure! Here are four facts about octopuses. They have")
+
+    pause = clause_pauses()
+    assert pause("The capital of France is Paris. It")     # a full first sentence: pause right away

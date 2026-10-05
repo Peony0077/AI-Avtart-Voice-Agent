@@ -10,6 +10,7 @@ import re
 
 _SENTENCE_END = re.compile(r"[.!?]+[\"')\]]*(\s+|$)")
 _SOFT_BREAK = re.compile(r"[,;:]\s+")
+_LINE_BREAK = re.compile(r"\n")
 # a period after these is not a sentence end ("Dr. Lee", "e.g. apples"): splitting there made a
 # one-word clause with its own pauses (measured: "Dr." alone was a 1.45 s clip)
 _ABBREVIATION = re.compile(r"(?:\b(?:mr|mrs|ms|dr|prof|sr|jr|st|mt|vs|etc|approx|dept|inc|ltd|co|fig|vol)"
@@ -42,14 +43,22 @@ class ClauseChunker:
 
     def _take(self) -> str | None:
         buf = self._buf
+        # a line break ends a clause too (lists, paragraphs): "Here are four short facts about octopuses:
+        # \n\nOctopuses have three hearts, ..." was one 8.7 s clause, slow to synthesise
+        line_end = next((m.start() for m in _LINE_BREAK.finditer(buf) if any(ch.isalnum() for ch in buf[:m.start()])),
+                        None)
         # require at least one more char after the punctuation unless the buffer ends there,
         # so "3.5" mid-stream is less likely to split (the regex needs whitespace/end)
         for match in _SENTENCE_END.finditer(buf):
+            if line_end is not None and match.start() > line_end:
+                break
             if buf[match.start()] == "." and _ABBREVIATION.search(buf[:match.start() + 1]):
                 continue
             if match.end() < len(buf) or buf.endswith("\n"):
                 return self._cut(match.end())
             break
+        if line_end is not None:
+            return self._cut(line_end)
         if self._emitted == 0:
             soft = None
             for m in _SOFT_BREAK.finditer(buf):

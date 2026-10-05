@@ -22,10 +22,26 @@ export function useVoice(conv) {
   const [micHint, setMicHint] = useState(null)      // {label, deviceId}: a better microphone than a Bluetooth headset's
   const silentTimerRef = useRef(null)
   const statsRef = useRef({ interrupts: [], blockedStale: 0, pushes: {}, gaps: {} })
+  // A reply's first audio waits startHoldRef ms (set by AvatarStage from how late the lip-synced frames
+  // arrived): { turnId, packets, end, timer } while it waits
+  const startHoldRef = useRef(0)
+  const holdRef = useRef(null)
+  const lastTurnRef = useRef(0)
 
   const send = (msg) => conv.connRef.current?.sendJson(msg)
 
   useEffect(() => {
+    const dropHold = () => {
+      clearTimeout(holdRef.current?.timer)
+      holdRef.current = null
+    }
+    const releaseHold = () => {
+      const h = holdRef.current
+      dropHold()
+      if (!h || h.turnId <= rejectUpToRef.current || h.turnId !== turnRef.current) return
+      for (const payload of h.packets) engineRef.current?.push(h.turnId, payload)
+      if (h.end) engineRef.current?.endTurn(h.turnId)
+    }
     const offJson = conv.onJson((msg) => {
       const engine = engineRef.current
       switch (msg.type) {
@@ -35,15 +51,19 @@ export function useVoice(conv) {
         case 'interrupt':
           rejectUpToRef.current = Math.max(rejectUpToRef.current, msg.turn_id)
           statsRef.current.interrupts.push({ turnId: msg.turn_id, reason: msg.reason, receivedAt: performance.now() })
+          if (holdRef.current && holdRef.current.turnId <= msg.turn_id) dropHold()
           engine?.flush()
           break
         case 'tts_done':
-          if (msg.turn_id === turnRef.current) engine?.endTurn(msg.turn_id)
+          if (holdRef.current?.turnId === msg.turn_id) holdRef.current.end = true
+          else if (msg.turn_id === turnRef.current) engine?.endTurn(msg.turn_id)
           break
         case 'vad':
           setSpeechDetected(msg.event === 'start')
           break
         case 'session':
+          dropHold()
+          lastTurnRef.current = 0                   // turn ids start again
           // (re)connected: restore speaker and microphone on the server
           if (engine && !mutedRef.current) send({ type: 'speaker', enabled: true })
           if (engine?.micOn) send({ type: 'voice', enabled: true, mic: engine.micInfo })
@@ -60,13 +80,31 @@ export function useVoice(conv) {
         return
       }
       statsRef.current.pushes[packet.turnId] = (statsRef.current.pushes[packet.turnId] ?? 0) + 1
+      const h = holdRef.current
+      if (h && h.turnId === packet.turnId) {
+        h.packets.push(packet.payload)
+        return
+      }
+      if (packet.turnId !== lastTurnRef.current) {      // the first audio of a reply
+        lastTurnRef.current = packet.turnId
+        if (startHoldRef.current > 0) {
+          dropHold()
+          holdRef.current = { turnId: packet.turnId, packets: [packet.payload], end: false,
+            timer: setTimeout(releaseHold, startHoldRef.current) }
+          statsRef.current.holds = [...(statsRef.current.holds ?? []), startHoldRef.current].slice(-50)
+          return
+        }
+      }
       engineRef.current?.push(packet.turnId, packet.payload)
     })
     return () => {
       offJson()
       offBinary()
+      dropHold()
     }
-  }, [conv])
+    // stable: conv is a new object every render - keyed on it, every render (a streamed word)
+    // subscribed again and dropped the reply's held first audio
+  }, [conv.onJson, conv.onBinary])
 
   useEffect(() => {
     if (!active) return undefined
@@ -189,5 +227,5 @@ export function useVoice(conv) {
   }, [restartMic])
 
   return { active, starting, speaker, muted, level, speechDetected, error, start, stop, ensureSpeaker, toggleMute,
-    engineRef, micHint, useMic, restartMic, dismissMicHint: () => setMicHint(null) }
+    engineRef, startHoldRef, micHint, useMic, restartMic, dismissMicHint: () => setMicHint(null) }
 }

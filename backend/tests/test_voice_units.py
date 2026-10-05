@@ -26,6 +26,14 @@ def test_first_clause_breaks_early_then_sentences():
     assert clauses[0] == "Well, the capital of France," and clauses[-1].endswith("Paris.")
 
 
+def test_a_line_break_ends_a_clause():
+    text = "Sure! Here are four facts:\n\nOctopuses have three hearts, and blue blood.\n\n1. They are smart.\n"
+    for step in (1, 3, len(text)):                        # streamed in small pieces, or all at once
+        assert _stream(ClauseChunker(), text, step) == ["Sure!", "Here are four facts:",
+                                                         "Octopuses have three hearts, and blue blood.", "1.",
+                                                         "They are smart."]
+
+
 def test_decimal_numbers_are_not_split():
     assert _stream(ClauseChunker(), "It costs 3.5 dollars today.") == ["It costs 3.5 dollars today."]
 

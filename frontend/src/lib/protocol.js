@@ -4,8 +4,11 @@
 export const KIND_AUDIO = 1
 export const KIND_VIDEO = 2
 export const KIND_IDLE_VIDEO = 3
+export const KIND_VIDEO_H264 = 4     // the same frames as H.264 access units (lib/h264.js)
+export const KIND_IDLE_H264 = 5
 export const HEADER_BYTES = 16
 export const FLAG_TAIL = 1
+export const FLAG_KEY = 2              // H.264 keyframe
 export const TTS_SAMPLE_RATE = 24000
 export const MIC_SAMPLE_RATE = 16000
 

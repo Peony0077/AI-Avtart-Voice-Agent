@@ -42,11 +42,31 @@ from app.session.outbox import Outbox
 from app.session.prefetch import AnswerPrefetch
 from app.session.state_machine import Event, State, StateMachine
 from app.session.turn import TurnContext, TurnRegistry
-from app.transport.protocol import HEADER, KIND_IDLE_VIDEO
+from app.transport.protocol import FLAG_KEY, HEADER, KIND_IDLE_H264, KIND_IDLE_VIDEO
 from app.tts.chunker import ClauseChunker
 from app.tts.speech_output import SpeechOutput
 
 ACTIVE = (State.THINKING, State.SPEAKING)
+# A first clause shorter than this ("Sure!", "Absolutely!", "Happy to help!": under ~1.5 s of speech)
+# is over before the next one could be written after the first audio: the LLM writes on (clause_pauses)
+SHORT_OPENER_CHARS = 24
+
+
+def clause_pauses():
+    """LLM pause points for spoken replies: after every new speakable clause (as the speech chunker
+    cuts them), except after a short opener. Measured (2026-10-05): "Sure!" is 0.8 s of speech; the next
+    sentence, written only once the first audio was out and with lip sync sharing the GPU (29 ms a token
+    instead of 12), arrived 120 ms before it was due, and in one run 448 ms too late - a gap."""
+    seen = 0
+
+    def pause_after(text: str) -> bool:
+        nonlocal seen
+        clauses = ClauseChunker().feed(clean_delta(text))
+        if len(clauses) <= seen:
+            return False
+        seen = len(clauses)
+        return not (seen == 1 and len(clauses[0]) < SHORT_OPENER_CHARS)
+    return pause_after
 
 
 def _lateness_stats(values: list[float], backlog: int) -> dict | None:
@@ -108,6 +128,8 @@ class Session:
         self._summary_task: asyncio.Task | None = None
         self._warm_task: asyncio.Task | None = None
         self.dropped_idle_frames = 0
+        self.video_codec = "jpeg"         # what the browser decodes (hello): "h264" or "jpeg"
+        self._idle_wait_key = False       # H.264 idle frames were dropped: send again from a keyframe
         self.sm.subscribe(self._on_state_change)
         self._closed = False
 
@@ -163,6 +185,10 @@ class Session:
         if kind == "hello":
             self.speaker_on = bool(msg.get("voice_out", False))
             self._update_voice_out()
+            # H.264 when the browser decodes it (WebCodecs, secure pages): ~1 Mbit/s instead of 6.7 (h264.py)
+            self.video_codec = "h264" if "h264" in (msg.get("video") or []) else "jpeg"
+            self.svc.avatar_codec(self.video_codec)      # remembered: sent again if the worker restarts
+            logger.info(f"session {self.id}: video {self.video_codec}")
             try:      # the customer's time zone (minutes east of UTC), for questions about the time
                 offset = int(msg["utc_offset_min"])
                 self.memory.utc_offset_min = offset if -14 * 60 <= offset <= 14 * 60 else None
@@ -222,6 +248,12 @@ class Session:
                 gap = None
             if gap is not None and abs(gap) <= 40 and self.svc.avatar_ready:
                 self.svc.avatar_start_gap(gap)
+        elif kind == "start_hold":
+            # the page holds a reply's first audio this long (its jitter buffer, AvatarStage.jsx)
+            try:
+                self.svc.avatar_start_hold(max(0, min(1000, int(msg.get("ms") or 0))))
+            except (TypeError, ValueError):
+                pass
         elif kind == "client_error":
             # a problem the page showed the user (the microphone did not start, ...)
             logger.warning(f"session {self.id} browser problem ({str(msg.get('where'))[:40]}): "
@@ -618,23 +650,14 @@ class Session:
             self._first_output(turn)
 
     def _pause_after(self):
-        """LLM pause points for spoken replies: after every new speakable clause (as the speech chunker
-        cuts them). Just-in-time writing: generating the rest of a reply at once shared the GPU with the
-        first clause's synthesis and the avatar's first frames (slower start), or - resumed when the first
-        audio was out - with the lip sync of the first sentences (12 % of the avatar's frames skipped).
-        None with the behaviour tag (its header is not speech)."""
+        """LLM pause points for spoken replies (clause_pauses). Just-in-time writing: generating the rest
+        of a reply at once shared the GPU with the first clause's synthesis and the avatar's first frames
+        (slower start), or - resumed when the first audio was out - with the lip sync of the first
+        sentences (12 % of the avatar's frames skipped). None with the behaviour tag (its header is not
+        speech)."""
         if self.cfg.llm.behavior_tag:
             return None
-        seen = 0
-
-        def pause_after(text: str) -> bool:
-            nonlocal seen
-            n = len(ClauseChunker().feed(clean_delta(text)))
-            if n > seen:
-                seen = n
-                return True
-            return False
-        return pause_after
+        return clause_pauses()
 
     async def _resume_llm(self, turn: TurnContext) -> None:
         """When the paused LLM continues: the first time once the first audio is out, later when less
@@ -642,7 +665,6 @@ class Session:
         try:
             if not turn.first_audio_sent.is_set():
                 await asyncio.wait_for(turn.first_audio_sent.wait(), 8.0)
-                return
             deadline = time.perf_counter() + 15.0
             while (not turn.is_cancelled and turn.speech is not None and time.perf_counter() < deadline
                    and turn.speech.backlog_ms() > self.cfg.llm.speech_ahead_ms):
@@ -677,12 +699,26 @@ class Session:
             self.svc.avatar_playback(turn.turn_id, "ended")
 
     def on_avatar_frame(self, packet: bytes, kind: int, turn_id: int) -> None:
-        """Avatar worker frame → browser. Idle frames are dropped if the link is backed up."""
+        """Avatar worker frame → browser, behind the voice (outbox lanes). Idle frames give way when the
+        link is backed up: a JPEG one is simply dropped; H.264 frames depend on the ones before, so the
+        queued idle video is dropped as a whole and starts again from the next keyframe."""
         if kind == KIND_IDLE_VIDEO:
             if self.outbox.backlog > 6:
                 self.dropped_idle_frames += 1
                 return
-            self.outbox.binary(packet, 0, force=True)
+            self.outbox.binary(packet, 0, force=True, lane="idle")
+        elif kind == KIND_IDLE_H264:
+            if self._idle_wait_key:
+                if not packet[1] & FLAG_KEY:
+                    self.dropped_idle_frames += 1
+                    return
+                self._idle_wait_key = False
+            if self.outbox.lane_backlog("idle") > 20:          # 1 s of idle video waiting: the link is slow
+                self.dropped_idle_frames += self.outbox.clear_lane("idle") + 1
+                self._idle_wait_key = True
+                self.svc.avatar_idle_keyframe()
+                return
+            self.outbox.binary(packet, 0, force=True, lane="idle")
         else:
             turn = self.turns.current
             if turn is not None and turn.turn_id == turn_id and turn.played_at:
@@ -691,7 +727,7 @@ class Session:
                 audible = turn.played_ms + min((time.time() - turn.played_at) * 1000, 250.0)
                 turn.av_lateness.append(audible - pts)
                 turn.av_max_backlog = max(turn.av_max_backlog, self.outbox.backlog)
-            self.outbox.binary(packet, turn_id)
+            self.outbox.binary(packet, turn_id, lane="speech")
 
     # ------------------------------------------------------------------ interruption
     async def interrupt(self, reason: str) -> None:

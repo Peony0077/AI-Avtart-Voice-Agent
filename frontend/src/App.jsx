@@ -31,10 +31,13 @@ export default function App() {
     : !voice.active ? { cls: 'READY', label: 'Ready · mic off' }
       : { cls: 'LISTENING', label: voice.speechDetected ? 'Hearing you…' : 'Listening' }
 
-  // her name and what she remembers about this person (a customer's "Forget me" button)
+  // her name and what she remembers about this person (a customer's "Forget me" button). Once per
+  // session: keyed on the whole session object, every persona reply asked for the persona again (a
+  // request every round trip, 2026-10-05)
+  const sessionId = conv.session?.session_id
   useEffect(() => {
-    if (conv.session) conv.loadPersona()
-  }, [conv.session, conv.loadPersona])
+    if (sessionId) conv.loadPersona()
+  }, [sessionId, conv.loadPersona])
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight })

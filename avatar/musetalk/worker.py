@@ -24,6 +24,7 @@ import argparse
 import asyncio
 import json
 import struct
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -38,13 +39,16 @@ from catchup import audible_ms, batch_frames, first_on_time, stride_for
 from common import AVATARS
 from engine import Loop, LoopDelta, MuseTalkEngine
 from gestures import choose_gesture, cycle_windows, earliest_start, next_window
+from h264 import H264Stream, ffmpeg_exe
 from motion import EXPRESSION_TO_LOOP
 from speech_body import breath_levels, frame_rms, lift_body, settle, to_lift
 
 HEADER = struct.Struct("<B3xIII")
 VIDEO_HEADER = struct.Struct("<BB2xIII")    # speech frames: byte 1 = flags (FLAG_TAIL: a closing-tail frame)
 FLAG_TAIL = 1
+FLAG_KEY = 2              # H.264: a keyframe (a decoder can start here)
 KIND_AUDIO, KIND_VIDEO, KIND_IDLE = 1, 2, 3
+KIND_VIDEO_H264, KIND_IDLE_H264 = 4, 5   # the same frames as H.264 access units (h264.py)
 CONTEXT_FRAMES = 4   # 200 ms at 20 fps
 PLAYBACK_SILENT_S = 5.0   # speaking turn without a playback report for this long = playback stopped
 SMALL_BATCH = 4           # batch size while the renderer is only a little ahead of the audio
@@ -90,6 +94,7 @@ class Turn:
     fade_left: int = 0                 # ... for this many more frames
     fade_total: int = EXPRESSION_FADE_FRAMES   # length of that blend
     breath: float = 0.0                # breath level at the end of the last sentence (speech_body.py)
+    stream: H264Stream | None = None   # H.264: the reply's own video stream (None: JPEG frames)
 
     def audible_ms(self, at: float) -> float:
         """Playback position at time ``at`` (see catchup.audible_ms)."""
@@ -98,7 +103,8 @@ class Turn:
 
 class AvatarWorker:
     def __init__(self, avatar_id: str, batch: int, quality: int, lead_ms: int, gate_frames: int = 4,
-                 warm_burst_ms: int = 0, late_ms: int = 100, decoder: str = "vae") -> None:
+                 warm_burst_ms: int = 0, late_ms: int = 100, decoder: str = "vae", h264_kbps: int = 1000,
+                 h264_idle_kbps: int = 600, h264_encoder: str = "libx264") -> None:
         folder = AVATARS / avatar_id
         meta = json.loads((folder / "avatar.json").read_text(encoding="utf-8"))
         self.fps = meta["fps"]
@@ -137,6 +143,16 @@ class AvatarWorker:
         # IDLE_LAG_FRAMES are guesses; the page measures how far off they were (start_gap, in frames) and
         # this learns it (the v3 head moves quickly, so 5 frames off was a visible jump at every reply).
         self.start_bias = 0.0
+        self.start_hold_frames = 0   # the page holds each reply's first audio this long (start_hold)
+        # Video codec of the current browser (backend: {"type":"codec"}): JPEG frames, or H.264 streams -
+        # one for the idle video and one per reply, taken from a spare started in advance (an ffmpeg
+        # process takes ~70 ms to start; a reply must not wait for it).
+        self.codec = "jpeg"
+        self.h264_kbps, self.h264_idle_kbps, self.h264_encoder = h264_kbps, h264_idle_kbps, h264_encoder
+        self._idle_stream: H264Stream | None = None
+        self._spare: H264Stream | None = None
+        self._au_queue: asyncio.Queue = asyncio.Queue()
+        self._loop: asyncio.AbstractEventLoop | None = None
         self.turn: Turn | None = None
         self.queue: asyncio.Queue = asyncio.Queue()
         self.ws = None
@@ -155,7 +171,9 @@ class AvatarWorker:
                                   "frames": len(self.loops[self.idle_loop]), "size": self.loops[self.idle_loop].size,
                                   "load_s": self.engine.load_s, "warmup_s": self.warmup_s,
                                   "gestures": sorted({g for _, g in self.variants})}))
-        tasks = [asyncio.create_task(self._idle()), asyncio.create_task(self._render())]
+        self._loop = asyncio.get_running_loop()
+        tasks = [asyncio.create_task(self._idle()), asyncio.create_task(self._render()),
+                 asyncio.create_task(self._send_access_units())]
         try:
             async for msg in ws:
                 if isinstance(msg, bytes):
@@ -169,7 +187,10 @@ class AvatarWorker:
         finally:
             for t in tasks:
                 t.cancel()
+            if self.turn is not None:
+                self._end_stream(self.turn)
             self.ws, self.turn = None, None
+            self._set_codec("jpeg")
             logger.info("backend disconnected")
 
     def _on_json(self, msg: dict) -> None:
@@ -216,12 +237,18 @@ class AvatarWorker:
                 # the idle video continues on the frame after the reply's last one (its closing tail)
                 turn = self.turn
                 self.turn = None
+                self._end_stream(turn)                 # (normally already ended after its closing tail)
                 if turn.rendered:
                     self.idx = turn.base_idx + turn.rendered
                     if turn.loop in self.loops and turn.loop != self.idle_loop:
                         # the reply may have changed its face sentence by sentence: idle goes on with
                         # the face it ended with (its last frame is that loop's own frame)
                         self.idle_loop, self._fade = turn.loop, None
+        elif kind == "codec":
+            self._set_codec(str(msg.get("codec") or "jpeg"))
+            asyncio.create_task(self._send_json({"type": "codec", "codec": self.codec}))
+        elif kind == "idle_keyframe" and self.codec == "h264":
+            self._restart_idle_stream()              # the backend dropped idle frames: start again from a keyframe
         elif kind == "speech_end" and self.turn and msg.get("turn_id") == self.turn.turn_id:
             self.turn.end_ms = float(msg.get("total_ms") or 0)
             self.queue.put_nowait((self.turn, 0, 0, None))          # seq 0: the closing tail
@@ -229,12 +256,21 @@ class AvatarWorker:
             # reset: the browser session ended (tab closed while the avatar spoke) - back to idle
             if self.turn is not None:
                 self.turn.cancelled = True
+                self._end_stream(self.turn)
                 if self.turn.playing:      # idle continues near the frame that was on screen
                     shown = self.turn.audible_ms(time.perf_counter()) * self.fps / 1000
                     self.idx = self.turn.base_idx + max(0, min(self.turn.rendered, round(shown)))
             self.turn = None
+            if kind == "reset":
+                self._set_codec("jpeg")            # the next browser says which codec it can show
+                self.start_hold_frames = 0
             while not self.queue.empty():
                 self.queue.get_nowait()
+        elif kind == "start_hold":
+            frames = max(0, min(20, round(float(msg.get("ms") or 0) * self.fps / 1000)))
+            if frames != self.start_hold_frames:
+                logger.info(f"the page holds replies {frames} frames (network jitter)")
+            self.start_hold_frames = frames
         elif kind == "start_gap":
             gap = float(msg.get("gap") or 0.0)
             self.start_bias = max(-START_BIAS_MAX, min(START_BIAS_MAX, self.start_bias - 0.5 * gap))
@@ -247,9 +283,13 @@ class AvatarWorker:
             if self.turn is not None and turn_id < self.turn.turn_id:
                 return  # stale
             # the first speech frame should follow the idle frame on screen when the audio starts: the
-            # audio starts ~lead_ms from now, and the browser shows idle frames IDLE_LAG_FRAMES late
-            start = self.idx + max(-6, self.lead_frames - IDLE_LAG_FRAMES + round(self.start_bias))   # may be behind idx: the idle on screen is
-            self.turn = Turn(turn_id, base_idx=start, loop=self.speech_loop)
+            # audio starts ~lead_ms from now (plus the page's start hold), and the browser shows idle frames
+            # IDLE_LAG_FRAMES late - so the start may be behind idx
+            start = self.idx + max(-6, self.lead_frames + self.start_hold_frames - IDLE_LAG_FRAMES
+                                   + round(self.start_bias))
+            if self.turn is not None:
+                self._end_stream(self.turn)        # a newer reply replaces it
+            self.turn = Turn(turn_id, base_idx=start, loop=self.speech_loop, stream=self._take_stream())
             logger.info(f"turn {turn_id}: speaking with loop '{self.speech_loop}' from frame {self.turn.base_idx}")
             if self._fade is not None and self._fade[0] in self.loops and self._fade[0] != self.speech_loop:
                 # the idle video is still fading from the thinking face into the reply's: the first
@@ -351,22 +391,30 @@ class AvatarWorker:
                 # so (connection lost) - never leave the avatar frozen without idle frames
                 logger.warning(f"turn {turn.turn_id}: no playback report for {PLAYBACK_SILENT_S:.0f} s, back to idle")
                 turn.cancelled = True
+                self._end_stream(turn)
                 self.turn = None
             if self._pending_idle is not None and self.idx >= self._pending_idle[1]:
                 self._switch_idle(self._pending_idle[0])
             if self.turn is None or not self.turn.playing:
+                stream = self._idle_stream if self.codec == "h264" else None
                 if self._fade:
                     prev, left = self._fade
                     alpha = 1 - left / 7
                     # both sides with any gesture in progress (base frames alone made the head snap)
                     blend = cv2.addWeighted(self._source(prev, self.idx).frame(self.idx), 1 - alpha,
                                             self._source(self.idle_loop, self.idx).frame(self.idx), alpha, 0)
-                    jpg = cv2.imencode(".jpg", blend, [cv2.IMWRITE_JPEG_QUALITY, self.quality])[1].tobytes()
                     self._fade = (prev, left - 1) if left > 1 else None
+                    if stream is not None:
+                        await asyncio.to_thread(stream.encode, blend, ("idle", self.idx, stream))
+                    else:
+                        jpg = cv2.imencode(".jpg", blend, [cv2.IMWRITE_JPEG_QUALITY, self.quality])[1].tobytes()
+                        await self._send(HEADER.pack(KIND_IDLE, 0, self.idx, 0) + jpg)
                 else:
                     src = self._source(self.idle_loop, self.idx)
-                    jpg = src.frames_jpg[self.idx % len(src)]
-                await self._send(HEADER.pack(KIND_IDLE, 0, self.idx, 0) + jpg)
+                    if stream is not None:
+                        await asyncio.to_thread(self._encode_idle, stream, src, self.idx)
+                    else:
+                        await self._send(HEADER.pack(KIND_IDLE, 0, self.idx, 0) + src.frames_jpg[self.idx % len(src)])
             self.idx += 1
 
     # ------------------------------------------------------------------ speech rendering
@@ -539,14 +587,17 @@ class AvatarWorker:
             f = k - TAIL_CLOSE_FRAMES + 1                  # 1..TAIL_FADE_FRAMES inside the fade
             x = min(1.0, max(0.0, f / TAIL_FADE_FRAMES))
             alpha = 1.0 - x * x * (3 - 2 * x)               # smoothstep: eases in and out
-            jpg = await asyncio.to_thread(self._compose_one, srcs[j], idx[j], faces[j], alpha, float(tail_lifts[k]))
+            frame = await asyncio.to_thread(self._compose_one, srcs[j], idx[j], faces[j], alpha, float(tail_lifts[k]))
             if turn.cancelled:
                 return
-            await self._send(VIDEO_HEADER.pack(KIND_VIDEO, FLAG_TAIL, turn.turn_id, base + k,
-                                               pts + round(k * 1000 / self.fps)) + jpg)
+            await self._send_speech(turn, frame, base + k, pts + round(k * 1000 / self.fps), FLAG_TAIL)
         src = self._source(turn.loop, base + last)          # the loop's own frame: the idle video continues from it
-        await self._send(VIDEO_HEADER.pack(KIND_VIDEO, FLAG_TAIL, turn.turn_id, base + last,
-                                           pts + round(last * 1000 / self.fps)) + src.frames_jpg[(base + last) % len(src)])
+        if turn.stream is not None:
+            await self._send_speech(turn, src.frame(base + last), base + last, pts + round(last * 1000 / self.fps), FLAG_TAIL)
+        else:
+            await self._send(VIDEO_HEADER.pack(KIND_VIDEO, FLAG_TAIL, turn.turn_id, base + last,
+                                               pts + round(last * 1000 / self.fps)) + src.frames_jpg[(base + last) % len(src)])
+        self._end_stream(turn)                                # the reply's video is complete
         turn.rendered += n
         self.stats["tails"] = self.stats.get("tails", 0) + 1
         logger.debug(f"turn {turn.turn_id}: closing tail of {n} frames (frames {base}-{base + n - 1}, pts {pts}) "
@@ -564,19 +615,17 @@ class AvatarWorker:
                 weight = 1.0 - turn.fade_left / (turn.fade_total + 1)
                 turn.fade_left -= 1
                 old = self._source(turn.fade_from, i)
-                jpg = await asyncio.to_thread(self._compose_blend, old, srcs[k], i, face, weight, lift)
+                frame = await asyncio.to_thread(self._compose_blend, old, srcs[k], i, face, weight, lift)
             else:
-                jpg = await asyncio.to_thread(self._compose_one, srcs[k], i, face, 1.0, lift)
+                frame = await asyncio.to_thread(self._compose_one, srcs[k], i, face, 1.0, lift)
             if turn.cancelled:
                 return
             frame_pts = pts + round(frames[k] * 1000 / self.fps)
-            await self._send(HEADER.pack(KIND_VIDEO, turn.turn_id, turn.base_idx + turn.rendered + frames[k], frame_pts) + jpg)
-            if seq not in turn.first_frame_sent and frames[k] + 1 >= gate:
-                turn.first_frame_sent.add(seq)
-                await self._send_json({"type": "first_frame", "turn_id": turn.turn_id, "seq": seq,
-                                       "ms": round((time.perf_counter() - t0) * 1000, 1)})
+            gated = seq not in turn.first_frame_sent and frames[k] + 1 >= gate
+            await self._send_speech(turn, frame, turn.base_idx + turn.rendered + frames[k], frame_pts, 0,
+                                    (seq, t0) if gated else None)
 
-    def _compose_one(self, loop: Loop, i: int, face: np.ndarray, alpha: float = 1.0, lift: float = 0.0) -> bytes:
+    def _compose_one(self, loop: Loop, i: int, face: np.ndarray, alpha: float = 1.0, lift: float = 0.0) -> np.ndarray:
         """Composite one frame; ``alpha`` < 1 fades the lip-synced face into the loop's own face; ``lift``:
         the body below the face moved up by this many px (speech_body.py)."""
         t = time.perf_counter()
@@ -585,11 +634,10 @@ class AvatarWorker:
             frame = cv2.addWeighted(frame, alpha, loop.frame(i), 1.0 - alpha, 0)
         if abs(lift) >= 0.05:
             frame = lift_body(frame, int(loop.coords[i][3]), lift)
-        jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.quality])[1].tobytes()
         self._compose_ms = 0.8 * self._compose_ms + 0.2 * (time.perf_counter() - t) * 1000
-        return jpg
+        return frame
 
-    def _compose_blend(self, old: Loop, new: Loop, i: int, face: np.ndarray, weight: float, lift: float = 0.0) -> bytes:
+    def _compose_blend(self, old: Loop, new: Loop, i: int, face: np.ndarray, weight: float, lift: float = 0.0) -> np.ndarray:
         """The two expressions' frames (same head pose) blended, and the lip-synced face pasted once into
         the blend: the face changes smoothly from one sentence's expression to the next. (Pasting into
         both and blending would show the mouth twice wherever their face boxes differ.)"""
@@ -598,9 +646,123 @@ class AvatarWorker:
         frame = self.engine.compose(new, i, face, background=background)
         if abs(lift) >= 0.05:
             frame = lift_body(frame, int(new.coords[i][3]), lift)
-        jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.quality])[1].tobytes()
         self._compose_ms = 0.8 * self._compose_ms + 0.2 * (time.perf_counter() - t) * 1000
-        return jpg
+        return frame
+
+    # ------------------------------------------------------------------ video out (JPEG or H.264)
+    async def _send_speech(self, turn: Turn, frame: np.ndarray, idx: int, pts: int, flags: int,
+                           gate: tuple[int, float] | None = None) -> None:
+        """One lip-synced frame of ``turn``. ``gate`` = (seq, t0): the segment's gate frame - after it the
+        backend may release the segment's audio (first_frame)."""
+        if turn.stream is not None:
+            if gate is not None:
+                turn.first_frame_sent.add(gate[0])         # sent with this frame's access unit
+            if await asyncio.to_thread(turn.stream.encode, frame, ("speech", turn, idx, pts, flags, gate)):
+                return
+            logger.warning(f"turn {turn.turn_id}: video stream ended, JPEG from here")
+            turn.stream = None
+            if gate is not None:
+                turn.first_frame_sent.discard(gate[0])
+        t = time.perf_counter()
+        jpg = await asyncio.to_thread(lambda: cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.quality])[1].tobytes())
+        self._compose_ms = 0.8 * self._compose_ms + 0.2 * (self._compose_ms + (time.perf_counter() - t) * 1000)
+        await self._send(VIDEO_HEADER.pack(KIND_VIDEO, flags, turn.turn_id, idx, pts) + jpg)
+        if gate is not None and gate[0] not in turn.first_frame_sent:
+            turn.first_frame_sent.add(gate[0])
+            await self._send_json({"type": "first_frame", "turn_id": turn.turn_id, "seq": gate[0],
+                                   "ms": round((time.perf_counter() - gate[1]) * 1000, 1)})
+
+    async def _send_access_units(self) -> None:
+        """Encoded frames (from the encoders' reader threads) to the backend, in order."""
+        while True:
+            meta, au, key = await self._au_queue.get()
+            if not meta:
+                continue
+            flags = FLAG_KEY if key else 0
+            if meta[0] == "idle":
+                if meta[2] is not self._idle_stream:
+                    continue                               # the last frames of a replaced idle stream
+                self.stats["h264_bytes"] = self.stats.get("h264_bytes", 0) + len(au)
+                await self._send(VIDEO_HEADER.pack(KIND_IDLE_H264, flags, 0, meta[1], 0) + au)
+                continue
+            _, turn, idx, pts, fflags, gate = meta
+            if turn.cancelled:
+                continue                                   # its whole stream is dropped (never decoded)
+            self.stats["h264_bytes"] = self.stats.get("h264_bytes", 0) + len(au)
+            await self._send(VIDEO_HEADER.pack(KIND_VIDEO_H264, fflags | flags, turn.turn_id, idx, pts) + au)
+            if gate is not None:
+                await self._send_json({"type": "first_frame", "turn_id": turn.turn_id, "seq": gate[0],
+                                       "ms": round((time.perf_counter() - gate[1]) * 1000, 1)})
+
+    @staticmethod
+    def _encode_idle(stream: H264Stream, src: Loop, idx: int) -> None:
+        stream.encode(src.frame(idx), ("idle", idx, stream))
+
+    def _on_access_unit(self, meta, au: bytes, key: bool) -> None:
+        """Called from an encoder's reader thread."""
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._au_queue.put_nowait, (meta, au, key))
+
+    def _new_stream(self, kbps: int) -> H264Stream | None:
+        try:
+            return H264Stream(self._on_access_unit, size=tuple(self.loops[self.idle_loop].size), fps=self.fps,
+                              kbps=kbps, gop=2 * self.fps, encoder=self.h264_encoder)
+        except Exception as exc:  # noqa: BLE001 - no ffmpeg: JPEG frames
+            logger.warning(f"H.264 stream could not start ({exc!r}): JPEG frames")
+            return None
+
+    def _set_codec(self, codec: str) -> None:
+        if codec == "h264" and ffmpeg_exe() is None:
+            logger.warning("the browser can show H.264 but ffmpeg is missing: JPEG frames")
+            codec = "jpeg"
+        if codec == self.codec and (codec == "jpeg" or self._idle_stream is not None):
+            return
+        self.codec = codec
+        for stream in (self._idle_stream, self._spare):
+            self._close_later(stream)
+        self._idle_stream = self._spare = None
+        if codec == "h264":
+            self._idle_stream = self._new_stream(self.h264_idle_kbps)
+            self._spare = self._new_stream(self.h264_kbps)
+            if self._idle_stream is None:
+                self.codec = "jpeg"
+        logger.info(f"video: {self.codec}")
+
+    def _restart_idle_stream(self) -> None:
+        if self.codec != "h264":
+            return
+        self._close_later(self._idle_stream)
+        self._idle_stream = self._new_stream(self.h264_idle_kbps)
+
+    def _take_stream(self) -> H264Stream | None:
+        """The reply's video stream (H.264): the spare, and a new spare started in the background."""
+        if self.codec != "h264":
+            return None
+        stream, self._spare = self._spare, None
+        if stream is None or stream.closed:
+            stream = self._new_stream(self.h264_kbps)
+        if self._loop is not None:
+            self._loop.run_in_executor(None, self._refill_spare)
+        return stream
+
+    def _refill_spare(self) -> None:
+        if self.codec == "h264" and self._spare is None:
+            spare = self._new_stream(self.h264_kbps)
+            if spare is not None and (self.codec != "h264" or self._spare is not None):
+                spare.close()                     # the codec changed meanwhile, or another spare is there
+            else:
+                self._spare = spare
+
+    def _end_stream(self, turn: Turn) -> None:
+        """No more frames for this reply: the encoder flushes its last frames and exits."""
+        stream, turn.stream = turn.stream, None
+        self._close_later(stream)
+
+    @staticmethod
+    def _close_later(stream: H264Stream | None) -> None:
+        """Close without waiting here: ffmpeg takes a moment to exit, and the idle video must not stop."""
+        if stream is not None:
+            threading.Thread(target=stream.close, daemon=True).start()
 
     # ------------------------------------------------------------------ io
     async def _send(self, data: bytes) -> None:
@@ -641,9 +803,12 @@ async def main() -> None:
     ap.add_argument("--warm-burst-ms", type=int, default=0, help="GPU warm-up when the turn enters THINKING (0 = off)")
     ap.add_argument("--late-ms", type=int, default=100, help="skip frames that would arrive this late (0 = never skip)")
     ap.add_argument("--decoder", choices=("vae", "taesd"), default="vae", help="latent decoder (taesd: ~2.5x faster lip sync)")
+    ap.add_argument("--h264-kbps", type=int, default=1000, help="H.264 bitrate of the lip-synced video")
+    ap.add_argument("--h264-idle-kbps", type=int, default=600, help="H.264 bitrate of the idle video")
+    ap.add_argument("--h264-encoder", choices=("libx264", "nvenc"), default="libx264")
     args = ap.parse_args()
     worker = AvatarWorker(args.avatar, args.batch, args.quality, args.lead_ms, args.gate_frames, args.warm_burst_ms,
-                          args.late_ms, args.decoder)
+                          args.late_ms, args.decoder, args.h264_kbps, args.h264_idle_kbps, args.h264_encoder)
     async with websockets.serve(worker.handle, args.host, args.port, max_size=None, ping_interval=20):
         logger.info(f"avatar worker listening on ws://{args.host}:{args.port}")
         await asyncio.Future()

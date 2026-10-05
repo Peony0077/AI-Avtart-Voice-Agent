@@ -1049,6 +1049,82 @@ can too (`build_avatar.py --video`). How to record one: [RECORDING_A_VIDEO_AVATA
   Kokoro averages the voices); speech is a touch slower (0.95).
 - `run.ps1 -Https` (LAN) had a control character in place of `certs\a` (the certificate path): fixed.
 
+### Delay and stutter: H.264 video, the voice first (owner, 2026-10-05)
+
+The owner's test: "some delay and non-smooth issues". Reproduced with a headless browser on this PC
+opening the tunnel link (the owner's own network path), then measured locally too. Three causes:
+
+- **The video was too big for the link.** One JPEG per frame: 41 KB × 20 fps = 6.7 Mbit/s even when
+  she was idle; the tunnel carried ~4.7 Mbit/s. Frames queued without end.
+- **The voice waited behind the video.** One first-in, first-out queue per browser (`Outbox`), so a
+  reply's audio waited behind seconds of queued frames: through the tunnel replies started 3.5–6.7 s
+  late, or did not finish within 36 s.
+- **The page asked for the persona in a loop** (since c31154b): every persona reply made a new
+  session object, which asked for the persona again. Locally 9,419 requests in 5 s; each one read the
+  memory file and listed the voices on the server's event loop, which also sends the audio and video.
+  Now once per session (`App.jsx`, `useConversation.js`).
+
+Fixes:
+- **H.264 instead of JPEG** (`avatar/musetalk/h264.py`): the worker pipes raw frames to ffmpeg
+  (libx264 ultrafast/zerolatency, baseline, no B-frames, a keyframe every 2 s), one persistent stream
+  for the idle video and one per reply (taken from a stream started in advance: ffmpeg starts in
+  ~70 ms). 1.0 Mbit/s at PSNR 38–39 dB. NVENC was slower to start (243 ms) and would share the GPU
+  with lip sync. ffmpeg writes FLV, which gives every frame with its exact length as soon as it is
+  encoded (1.8 ms p50; MP4/Matroska held every frame back 50 ms); each frame goes to the browser as an
+  Annex-B access unit (SPS and PPS before keyframes), one per packet (kinds 4 and 5, flag 2 =
+  keyframe, `transport/protocol.py`). The first version split a raw H.264 stream by timing ("no new
+  bytes for 4 ms = the frame is complete"): under load a frame arrived in pieces further apart, was
+  cut in two, and the browser's decoder failed until the next keyframe. At the end of a short reply
+  that lost the closing frames and the picture froze for 0.9 s (`phase6_speech_end`, 1 run in ~10),
+  and the idle video sometimes resumed 1.3–1.7 s late instead of 0.65 s. With FLV framing: 6 of 6
+  repeats with the hand-over at 647–654 ms.
+- **The browser decodes with WebCodecs** (`frontend/src/lib/h264.js`), turns each frame into an
+  ImageBitmap and closes the decoder's frame at once, so the avatar view draws them by the audio clock
+  exactly as before. WebCodecs needs a secure page (https, or localhost); elsewhere the page asks for
+  JPEG (`hello.video`), and `?jpeg` forces JPEG. A decoder error or a lost keyframe waits for the next
+  keyframe instead of showing broken pictures.
+- **Priority lanes** (`session/outbox.py`): control messages and audio, then the reply's video, then
+  the idle video. H.264 idle frames depend on the ones before, so they are never dropped one by one:
+  when more than 1 s of idle video waits, the whole queued idle video is dropped and the worker
+  restarts the idle stream at a keyframe (`idle_keyframe`).
+- A restarted worker starts with JPEG; the backend sends it the browser's codec again.
+
+Measured (customer link, "What is the capital of France?", headless Chromium on this PC):
+
+| | Before (JPEG, one queue) | After (H.264, lanes) |
+|---|---|---|
+| Idle video | 6.7 Mbit/s (4.7 received through the tunnel) | 0.6–1.0 Mbit/s |
+| Voice starts, through the tunnel | 3.5–6.7 s, or the reply never finished | 0.72–1.3 s in 8 of 10 replies (all fixes); 2.0 s for the first reply after a restart, 4.6 s once (tunnel stall) |
+| Voice starts, locally | 0.96 s | 0.63–1.10 s (most ~0.7–0.8 s) |
+| Lip frames arriving after their audio | — | 0 locally; through the tunnel late at the start of 3 of 5 replies, 0 of 10 with the start hold (below) |
+| Decoder errors / frame decode time | — | 0 / 1.4 ms p50 locally, ~3 ms through the tunnel |
+
+Found while measuring, and fixed:
+- **A gap after a short opener.** "Sure!" is 0.8 s of speech. The LLM paused after it until its
+  audio was out, then wrote the next sentence with lip sync sharing the GPU (29 ms a token instead of
+  12): it arrived 120 ms before it was due, and in one test run 448 ms too late (`phase6_speech_gaps`
+  failed; the same 430–530 ms gaps were in the logs before the H.264 change). Now the LLM writes on
+  after a first clause under 24 characters (`session.clause_pauses`): the next sentence arrives
+  670–760 ms early, first audio unchanged (0.72–0.75 s).
+- **A line break ends a clause** (`tts/chunker.py`): a list without numbers made "Here are four short
+  facts about octopuses: … Octopuses have three hearts, …" one 8.7 s clause, slow to synthesise.
+- **Lips late at the start of replies over the internet** (3 of 5 tunnel replies, 205–465 ms late,
+  frames 6–70): the first sentence's audio arrives in one piece and plays at once, while its frames
+  are rendered only about as fast as the audio and each one pays the network's jitter. The page now
+  has an adaptive playout delay (`AvatarStage.jsx` `nextStartHold`, `useVoice.js`): when a reply's
+  frames arrived late, the next reply's first audio waits that much longer (at most 400 ms; 150 ms
+  to begin with on a remote page, 0 on this PC); a reply with every frame early lowers it by 50 ms.
+  The page tells the worker (`start_hold`), which starts the reply's frames as much later in the
+  loop, so the head does not jump where speech takes over from the idle video. After: 0 late frames
+  in 10 tunnel replies, the delay settled at 0–100 ms.
+
+The tunnel itself: round trips 23 ms (p50), 76 ms (p99), up to 0.9 s, and twice in ~25 replies
+the whole connection stalled for 3–3.5 s (the voice started late, the lips stayed in sync). A quick
+tunnel has no guarantees; a named Cloudflare tunnel or a server near the customers would remove most
+of what remains. Unit tests: `backend/tests/test_video_stream.py` (access units, the voice before
+video, the idle lane dropped as a whole), `test_llm_pause.py` (short opener), `test_voice_units.py`
+(line breaks).
+
 ### Robustness
 
 Playwright `tests/e2e/phase6_recovery.spec.js` kills processes in the middle of a live session
