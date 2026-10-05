@@ -7,6 +7,7 @@ Outputs: streamed text, behaviour events, TTS audio packets (+ avatar frames in 
 from __future__ import annotations
 
 import asyncio
+import base64
 import re
 import time
 import uuid
@@ -20,7 +21,10 @@ from app.audio.mic_stats import MicStats
 from app.audio.vad import StreamingVAD, VadEvent
 from app.behavior.manager import (
     behavior_from_text,
+    clause_behavior,
     for_state,
+    for_user_pause,
+    for_user_speaking,
     from_meta,
     refine_behavior,
     smile_for_happy_user,
@@ -29,8 +33,9 @@ from app.behavior.manager import (
 from app.behavior.meta import MetaStreamParser
 from app.behavior.speech_text import clean_delta
 from app.core.logging import write_metrics
+from app.leads import worth_reading
 from app.llm.client import LLMStats
-from app.llm.prompt import ConversationMemory
+from app.llm.prompt import ConversationMemory, lead_rules
 from app.services import Services
 from app.session.endpointing import looks_unfinished
 from app.session.outbox import Outbox
@@ -62,20 +67,33 @@ async def _scripted(text: str):
         yield piece
 
 
+# Only the owner (owner link) changes the persona, reads the leads or previews voices; customers
+# (customer link) talk to her and can make her forget them.
+OWNER_ONLY = ("set_persona", "get_leads", "preview_voice")
+
+
 class Session:
-    def __init__(self, ws: WebSocket, services: Services) -> None:
+    def __init__(self, ws: WebSocket, services: Services, role: str = "owner", visitor_id: str | None = None) -> None:
         self.id = uuid.uuid4().hex[:8]
         self.ws = ws
         self.svc = services
         self.cfg = services.settings
+        self.role = role                  # "owner" | "customer"
+        self.visitor_id = visitor_id      # the customer's browser (random id it keeps)
+        self.last_activity = time.time()  # the customer spoke, typed or listened (SessionManager's idle hand-over)
+        self.started = False              # waits in line until SessionManager starts it
+        self.pending_hello: dict | None = None   # the page's hello while it waited
         self.sm = StateMachine()
         self.turns = TurnRegistry()
         persona = services.persona
+        # each customer has their own memory; the owner's is data/memory.json
+        self.memory_store = (services.memory_store if role == "owner"
+                             else services.visitor_memories.store(visitor_id or ""))
         self.memory = ConversationMemory(persona=persona.name, max_turns=self.cfg.llm.history_turns,
                                          knowledge_enabled=self.cfg.rag.enabled, behavior_tag=self.cfg.llm.behavior_tag,
-                                         personality=persona.personality,
-                                         long_term=services.memory_store.load() if persona.memory else None)
-        self._memory_gen = services.memory_store.generation   # erased later (any tab): nothing from before is kept
+                                         personality=persona.personality, long_term=self._long_term())
+        self._apply_business()
+        self._memory_gen = self.memory_store.generation if self.memory_store else 0   # erased later: nothing from before is kept
         self._greeted = False
         self.outbox = Outbox(ws, self.turns.is_current)
         self.voice_out = False            # replies are spoken (client plays assistant audio)
@@ -93,13 +111,23 @@ class Session:
         self.sm.subscribe(self._on_state_change)
         self._closed = False
 
+    def _long_term(self) -> str | None:
+        return self.memory_store.load() if self.svc.persona.memory and self.memory_store is not None else None
+
+    def _apply_business(self) -> None:
+        """The business and lead-generation rules for the system prompt (persona.py)."""
+        p = self.svc.persona
+        self.memory.company = p.company
+        self.memory.lead = lead_rules(p.company, p.offer, p.next_step) if p.lead_gen else ""
+
     # ------------------------------------------------------------------ lifecycle
     async def start(self) -> None:
+        self.started = True
         self.outbox.start()
         self.outbox.json({"type": "session", "session_id": self.id, "persona": self.memory.persona,
                           "profile": self.cfg.profile, "voice_available": self.svc.voice_ready,
                           "avatar_available": self.svc.avatar_ready,
-                          "avatar": self.svc.avatar.hello if self.svc.avatar_ready else None,
+                          "avatar": self.svc.avatar.hello if self.svc.avatar_ready else None, "role": self.role,
                           "server_time": time.time()}, force=True)
         self.sm.fire(Event.START)
 
@@ -116,8 +144,10 @@ class Session:
                 task.cancel()
         self.sm.try_fire(Event.STOP)
         await self.outbox.stop()
-        if self.svc.persona.memory and (said := self.memory.user_said()):
-            self.svc.remember(said, self._memory_gen)       # what she remembers next time (persona.py)
+        if self.svc.persona.memory and self.memory_store is not None and (said := self.memory.user_said()):
+            self.svc.remember(said, self._memory_gen, self.memory_store)   # what she remembers next time
+        if self.svc.persona.lead_gen and worth_reading(self.memory.said):
+            self.svc.capture_lead(self.memory.lead_transcript(), self.id, self.visitor_id)   # leads.py
         if (mic := self.mic_stats.summary()) is not None:
             logger.info(f"session {self.id} microphone audio: {mic}")
         logger.info(f"session {self.id} closed ({reason})")
@@ -125,9 +155,19 @@ class Session:
     # ------------------------------------------------------------------ inbound
     async def on_json(self, msg: dict) -> None:
         kind = msg.get("type")
+        if kind in OWNER_ONLY and self.role != "owner":
+            logger.warning(f"session {self.id}: '{kind}' refused (customer link)")
+            return
+        if kind in ("user_text", "playback", "greet") or kind == "voice" and msg.get("enabled"):
+            self.last_activity = time.time()
         if kind == "hello":
             self.speaker_on = bool(msg.get("voice_out", False))
             self._update_voice_out()
+            try:      # the customer's time zone (minutes east of UTC), for questions about the time
+                offset = int(msg["utc_offset_min"])
+                self.memory.utc_offset_min = offset if -14 * 60 <= offset <= 14 * 60 else None
+            except (KeyError, TypeError, ValueError):
+                pass
         elif kind == "speaker":
             self.speaker_on = bool(msg.get("enabled"))
             self._update_voice_out()
@@ -156,15 +196,32 @@ class Session:
         elif kind == "set_persona":
             persona = self.svc.set_persona(msg.get("persona") or {})
             self.memory.persona, self.memory.personality = persona.name, persona.personality
-            self.memory.long_term = self.svc.memory_store.load() if persona.memory else None
+            self.memory.long_term = self._long_term()
+            self._apply_business()
             self._send_persona()
         elif kind == "forget_memory":
-            self.svc.memory_store.clear()
+            if self.memory_store is not None:
+                self.memory_store.clear()
+                self._memory_gen = self.memory_store.generation
             self.memory.long_term = None
             self.memory.forget_user()
-            self._memory_gen = self.svc.memory_store.generation
-            logger.info("memory of the user erased (Forget me)")
+            logger.info(f"session {self.id}: memory of the {'user' if self.role == 'owner' else 'customer'} erased (Forget me)")
             self._send_persona()
+        elif kind == "get_leads":
+            rows = list(reversed(self.svc.lead_store.load()))          # newest first
+            self.outbox.json({"type": "leads", "leads": rows, "csv": self.svc.lead_store.to_csv(rows)}, force=True)
+        elif kind == "preview_voice":
+            voice = str(msg.get("voice", ""))
+            wav = await self.svc.voice_preview(voice)
+            self.outbox.json({"type": "voice_preview", "voice": voice,
+                              "wav_b64": base64.b64encode(wav).decode() if wav else None}, force=True)
+        elif kind == "avatar_start":
+            try:
+                gap = float(msg.get("gap"))
+            except (TypeError, ValueError):
+                gap = None
+            if gap is not None and abs(gap) <= 40 and self.svc.avatar_ready:
+                self.svc.avatar_start_gap(gap)
         elif kind == "client_error":
             # a problem the page showed the user (the microphone did not start, ...)
             logger.warning(f"session {self.id} browser problem ({str(msg.get('where'))[:40]}): "
@@ -210,8 +267,12 @@ class Session:
 
     def _send_persona(self) -> None:
         p = self.svc.persona
+        if self.role != "owner":        # a customer sees her name and what she remembers about them
+            self.outbox.json({"type": "persona", "name": p.name, "memory": p.memory,
+                              "remembered": self._long_term()}, force=True)
+            return
         self.outbox.json({"type": "persona", **p.to_dict(), "voices": self.svc.voices(),
-                          "remembered": self.svc.memory_store.load() if p.memory else None}, force=True)
+                          "remembered": self._long_term()}, force=True)
 
     async def greet(self) -> None:
         """Say hello when the user starts talking to her (the page's Start voice), once per session and
@@ -232,6 +293,9 @@ class Session:
     # ------------------------------------------------------------------ voice input
     async def _on_speech_start(self, ev: VadEvent) -> None:
         self.outbox.json({"type": "vad", "event": "start", "bargein": ev.bargein}, force=True)
+        self.last_activity = time.time()
+        if self.sm.state is State.LISTENING:
+            self._send_behavior(None, for_user_speaking())      # active listening: an attentive face
         if self.sm.state in ACTIVE:
             await self.interrupt("barge_in")
         elif self.sm.state is State.END_OF_TURN:
@@ -259,6 +323,7 @@ class Session:
         """Start STT (and the answer) speculatively; reused at the endpoint if the user stayed silent."""
         if self.sm.state is not State.LISTENING or not len(ev.audio):
             return
+        self._send_behavior(None, for_user_pause())             # "mm-hm": a small nod
         if self._spec and not self._spec[1].done():
             self._spec[1].cancel()
         self._drop_prefetch()
@@ -455,7 +520,14 @@ class Session:
                 # than the LLM's tag; refined before this clause's audio reaches the avatar
                 refined = refine_behavior(behavior, clause)
                 if refined is not None:
+                    behavior = refined
                     self._send_behavior(turn, refined)
+            elif behavior is not None:
+                # a later sentence: its own face if it is happy or sad (the avatar blends into it)
+                changed = clause_behavior(behavior, clause)
+                if changed is not None:
+                    behavior = changed
+                    self._send_behavior(turn, changed)
             first_clause = False
             speech.say(clause)
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AudioEngine } from '../audio/AudioEngine.js'
+import { betterThanBluetooth, setPreferredMic } from '../audio/microphones.js'
 import { KIND_AUDIO, parsePacket } from './protocol.js'
 
 // Voice: server audio → player (also for typed messages: the "speaker"), playback acks → server,
@@ -18,6 +19,7 @@ export function useVoice(conv) {
   const [speechDetected, setSpeechDetected] = useState(false)
   const [error, setError] = useState(null)
   const [starting, setStarting] = useState(false)   // waiting for the microphone (permission prompt)
+  const [micHint, setMicHint] = useState(null)      // {label, deviceId}: a better microphone than a Bluetooth headset's
   const silentTimerRef = useRef(null)
   const statsRef = useRef({ interrupts: [], blockedStale: 0, pushes: {}, gaps: {} })
 
@@ -136,6 +138,7 @@ export function useVoice(conv) {
       send({ type: 'greet' })     // she says hello (once a session, only before anything else was said)
       setSpeaker(true)
       setActive(true)
+      betterThanBluetooth(e.micInfo?.device).then(setMicHint)
       // a muted or disabled microphone sends exact zeros: say so instead of "listening" to nothing
       clearTimeout(silentTimerRef.current)
       silentTimerRef.current = setTimeout(() => {
@@ -162,5 +165,29 @@ export function useVoice(conv) {
     clearTimeout(silentTimerRef.current)
   }, [conv])
 
-  return { active, starting, speaker, muted, level, speechDetected, error, start, stop, ensureSpeaker, toggleMute, engineRef }
+  // Another microphone (Settings, or the Bluetooth hint): restart capture with it; permission is
+  // already granted, so no prompt.
+  const restartMic = useCallback(async () => {
+    const e = engineRef.current
+    if (!e?.micOn) return
+    await e.stopMic()
+    try {
+      await e.startMic((pcm) => conv.connRef.current?.sendBinary(pcm))
+      send({ type: 'voice', enabled: true, mic: e.micInfo })
+      setMicHint(await betterThanBluetooth(e.micInfo?.device))
+    } catch (err) {
+      setError(err.message ?? String(err))
+      report('voice_restart', err)
+      setActive(false)
+    }
+  }, [conv])
+
+  const useMic = useCallback((deviceId) => {
+    setPreferredMic(deviceId)
+    setMicHint(null)
+    restartMic()
+  }, [restartMic])
+
+  return { active, starting, speaker, muted, level, speechDetected, error, start, stop, ensureSpeaker, toggleMute,
+    engineRef, micHint, useMic, restartMic, dismissMicHint: () => setMicHint(null) }
 }

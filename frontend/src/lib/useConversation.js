@@ -13,6 +13,8 @@ export function useConversation() {
   const noticeTimer = useRef(0)
   const [session, setSession] = useState(null)
   const [persona, setPersona] = useState(null)   // name, personality, greeting, voice, memory, voices, remembered
+  const [waiting, setWaiting] = useState(null)   // position in line, while another conversation is on
+  const [leads, setLeads] = useState(null)       // {leads, csv} (owner link)
   const handlersRef = useRef({ binary: [], json: [] })
 
   const upsertAssistant = useCallback((turnId, fn) => {
@@ -30,7 +32,9 @@ export function useConversation() {
     connRef.current = conn
     window.__avatarConn = conn // test hook (Playwright)
     conn.addEventListener('status', (e) => setStatus(e.detail))
-    conn.addEventListener('open', () => conn.sendJson({ type: 'hello', voice_out: window.__voiceOut ?? false }))
+    // the customer's time zone (minutes east of UTC): "what time is it" is answered in their time
+    conn.addEventListener('open', () => conn.sendJson({ type: 'hello', voice_out: window.__voiceOut ?? false,
+      utc_offset_min: -new Date().getTimezoneOffset(), time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone }))
     conn.addEventListener('binary', (e) => handlersRef.current.binary.forEach((h) => h(e.detail)))
     conn.addEventListener('json', (e) => {
       const msg = e.detail
@@ -38,6 +42,13 @@ export function useConversation() {
       switch (msg.type) {
         case 'session':
           setSession(msg)
+          setWaiting(null)
+          break
+        case 'waiting':
+          setWaiting(msg.position)       // in line behind another conversation (one avatar, one GPU)
+          break
+        case 'leads':
+          setLeads(msg)
           break
         case 'persona':
           setPersona(msg)
@@ -93,6 +104,7 @@ export function useConversation() {
   const loadPersona = useCallback(() => connRef.current?.sendJson({ type: 'get_persona' }), [])
   const savePersona = useCallback((p) => connRef.current?.sendJson({ type: 'set_persona', persona: p }), [])
   const forgetMemory = useCallback(() => connRef.current?.sendJson({ type: 'forget_memory' }), [])
+  const loadLeads = useCallback(() => connRef.current?.sendJson({ type: 'get_leads' }), [])
   const onJson = useCallback((h) => {
     handlersRef.current.json.push(h)
     return () => { handlersRef.current.json = handlersRef.current.json.filter((x) => x !== h) }
@@ -103,5 +115,6 @@ export function useConversation() {
   }, [])
 
   return { connRef, status, state, messages, behavior, metrics, session, notice, sendText, interrupt, onJson, onBinary,
-    persona, loadPersona, savePersona, forgetMemory }
+    persona, loadPersona, savePersona, forgetMemory, waiting, leads, loadLeads,
+    role: session?.role ?? 'owner' }
 }

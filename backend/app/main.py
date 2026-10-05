@@ -50,6 +50,8 @@ async def health() -> dict:
         "llm_restarts": services.llm_server.restarts,
         "llm_ready": services.llm_server.ready.is_set() or not services.settings.llm.manage_server,
         "active_session": manager.active.id if manager.active else None,
+        "waiting_sessions": len(manager.waiting),
+        "background_jobs": services.pending_background(),   # memory / lead jobs not finished yet
         "avatar": {"connected": services.avatar_ready, "restarts": services.avatar.restarts,
                    "hello": services.avatar.hello, "stats": services.avatar.stats} if services.avatar else None,
         "load_report": services.load_report,

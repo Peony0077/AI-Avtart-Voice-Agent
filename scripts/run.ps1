@@ -61,10 +61,11 @@ if ($Build -or -not (Test-Path frontend\dist\index.html)) {
 $scheme = 'http'
 $uvArgs = @('-m', 'uvicorn', 'app.main:app', '--app-dir', 'backend', '--host', $BindHost, '--port', "$Port", '--ws-max-size', '16777216')
 if ($Https) {
-  if (-not (Test-Path certsvatar.pem)) { & .\.venv\Scripts\python.exe scripts\make_cert.py | Out-Host }
+  if (-not (Test-Path certs\avatar.pem)) { & .\.venv\Scripts\python.exe scripts\make_cert.py | Out-Host }
   if (-not $env:AVATAR_ACCESS_TOKEN) { $env:AVATAR_ACCESS_TOKEN = -join ((48..57) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ }) }
+  if (-not $env:AVATAR_CUSTOMER_TOKEN) { $env:AVATAR_CUSTOMER_TOKEN = -join ((48..57) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ }) }
   $uvArgs = @('-m', 'uvicorn', 'app.main:app', '--app-dir', 'backend', '--host', '0.0.0.0', '--port', "$Port", '--ws-max-size', '16777216',
-              '--ssl-certfile', 'certsvatar.pem', '--ssl-keyfile', 'certsvatar-key.pem')
+              '--ssl-certfile', 'certs\avatar.pem', '--ssl-keyfile', 'certs\avatar-key.pem')
   $scheme = 'https'
 }
 if ($Foreground) { & .\.venv\Scripts\python.exe @uvArgs; exit $LASTEXITCODE }
@@ -83,7 +84,7 @@ if (-not $h) { throw 'backend did not become healthy in 300 s' }
 $h | ConvertTo-Json -Compress
 if ($Https) {
   Write-Host "LAN access (accept the certificate warning once):" -ForegroundColor Green
-  Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notmatch '^(127|169\.254)\.' } | ForEach-Object { Write-Host "  https://$($_.IPAddress):$Port/?token=$env:AVATAR_ACCESS_TOKEN" }
+  Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notmatch '^(127|169\.254)\.' } | ForEach-Object { Write-Host "  owner:    https://$($_.IPAddress):$Port/?token=$env:AVATAR_ACCESS_TOKEN"; Write-Host "  customer: https://$($_.IPAddress):$Port/?token=$env:AVATAR_CUSTOMER_TOKEN" }
   Write-Host "If other PCs cannot connect, allow the port in Windows Firewall (admin):"
   Write-Host "  New-NetFirewallRule -DisplayName 'AI Avatar' -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow"
 } else { Write-Host "open http://127.0.0.1:$Port/" }

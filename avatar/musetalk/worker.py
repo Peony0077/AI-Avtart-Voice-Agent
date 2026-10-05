@@ -39,6 +39,7 @@ from common import AVATARS
 from engine import Loop, LoopDelta, MuseTalkEngine
 from gestures import choose_gesture, cycle_windows, earliest_start, next_window
 from motion import EXPRESSION_TO_LOOP
+from speech_body import breath_levels, frame_rms, lift_body, settle, to_lift
 
 HEADER = struct.Struct("<B3xIII")
 VIDEO_HEADER = struct.Struct("<BB2xIII")    # speech frames: byte 1 = flags (FLAG_TAIL: a closing-tail frame)
@@ -58,6 +59,14 @@ TAIL_FADE_FRAMES = 8      # 400 ms
 TAIL_RENDERED = (0, 2, 4, 6, 8)
 IDLE_LAG_FRAMES = 3       # the browser plays idle frames ~150 ms behind the worker (jitter buffer)
 STATE_TO_LOOP = {"THINKING": "thinking", "LISTENING": "friendly", "IDLE": "friendly", "END_OF_TURN": "friendly"}  # warm idle
+# Emotions that change and stay (owner, 2026-10-05: "only small & short changes in face emotion"):
+# a later sentence of a reply can change the face (behavior source "clause"), blended over
+# EXPRESSION_FADE_FRAMES; after a happy or concerned reply the face stays for LINGER_FRAMES before it
+# relaxes into the default.
+EXPRESSION_FADE_FRAMES = 8   # 400 ms
+START_BIAS_MAX = 10          # frames the learned reply start may move (start_gap)
+LINGER_FRAMES = 50           # 2.5 s
+LINGERING = ("happy", "concerned")
 
 
 @dataclass
@@ -76,6 +85,11 @@ class Turn:
     end_ms: float | None = None        # total audio of the reply (speech_end), then the tail follows
     tail_done: bool = False
     tail_tries: int = 0
+    segment_loops: dict = field(default_factory=dict)   # seq -> expression loop of that sentence
+    fade_from: str | None = None       # the previous sentence's loop while the face changes ...
+    fade_left: int = 0                 # ... for this many more frames
+    fade_total: int = EXPRESSION_FADE_FRAMES   # length of that blend
+    breath: float = 0.0                # breath level at the end of the last sentence (speech_body.py)
 
     def audible_ms(self, at: float) -> float:
         """Playback position at time ``at`` (see catchup.audible_ms)."""
@@ -118,6 +132,11 @@ class AvatarWorker:
         self.idle_loop = "friendly" if "friendly" in self.loops else next(iter(self.loops))
         self.speech_loop = self.idle_loop
         self._fade: tuple[str, int] | None = None   # (previous loop, frames left)
+        self._pending_idle: tuple[str, int] | None = None   # (loop, from frame): relax after an emotional reply
+        # Where a reply starts in the loop: the idle frame on screen when its audio starts. lead_ms and
+        # IDLE_LAG_FRAMES are guesses; the page measures how far off they were (start_gap, in frames) and
+        # this learns it (the v3 head moves quickly, so 5 frames off was a visible jump at every reply).
+        self.start_bias = 0.0
         self.turn: Turn | None = None
         self.queue: asyncio.Queue = asyncio.Queue()
         self.ws = None
@@ -157,11 +176,19 @@ class AvatarWorker:
         kind = msg.get("type")
         if kind == "behavior":
             loop = EXPRESSION_TO_LOOP.get(msg.get("expression", ""), None)
+            source = str(msg.get("source", ""))
             if loop in self.loops:
                 self.speech_loop = loop
-                self._switch_idle(loop)
+                if source == "clause" and self.turn is not None:
+                    pass                    # from the next sentence's audio on (_on_audio)
+                elif source in ("state:LISTENING", "state:IDLE"):
+                    self._relax_idle(loop)
+                else:
+                    self._switch_idle(loop)
             gesture, intensity = msg.get("gesture"), float(msg.get("intensity") or 0.0)
-            if str(msg.get("source", "")).startswith("state"):
+            if source == "clause":
+                pass
+            elif source.startswith("state"):
                 # e.g. a small nod when the avatar starts listening: at most one every ~5 s
                 if self.turn is None or not self.turn.playing:
                     self._schedule_gesture(gesture, intensity, self.idx + 2, self.idle_loop, min_gap=5 * self.fps)
@@ -176,7 +203,10 @@ class AvatarWorker:
                     asyncio.get_running_loop().create_task(self._warm_burst(self.warm_burst_ms))
             loop = STATE_TO_LOOP.get(msg.get("state", ""))
             if loop in self.loops and (self.turn is None or not self.turn.playing):
-                self._switch_idle(loop)
+                if msg.get("state") in ("LISTENING", "IDLE"):
+                    self._relax_idle(loop)
+                else:
+                    self._switch_idle(loop)
         elif kind == "playback" and self.turn and msg.get("turn_id") == self.turn.turn_id:
             if msg.get("event") in ("started", "progress"):
                 self.turn.playing = True
@@ -188,6 +218,10 @@ class AvatarWorker:
                 self.turn = None
                 if turn.rendered:
                     self.idx = turn.base_idx + turn.rendered
+                    if turn.loop in self.loops and turn.loop != self.idle_loop:
+                        # the reply may have changed its face sentence by sentence: idle goes on with
+                        # the face it ended with (its last frame is that loop's own frame)
+                        self.idle_loop, self._fade = turn.loop, None
         elif kind == "speech_end" and self.turn and msg.get("turn_id") == self.turn.turn_id:
             self.turn.end_ms = float(msg.get("total_ms") or 0)
             self.queue.put_nowait((self.turn, 0, 0, None))          # seq 0: the closing tail
@@ -201,6 +235,10 @@ class AvatarWorker:
             self.turn = None
             while not self.queue.empty():
                 self.queue.get_nowait()
+        elif kind == "start_gap":
+            gap = float(msg.get("gap") or 0.0)
+            self.start_bias = max(-START_BIAS_MAX, min(START_BIAS_MAX, self.start_bias - 0.5 * gap))
+            logger.debug(f"reply start {gap:+.1f} frames off the idle on screen: bias {self.start_bias:+.1f}")
         elif kind == "stats":
             asyncio.create_task(self._send_json({"type": "stats", **self._stats()}))
 
@@ -210,12 +248,22 @@ class AvatarWorker:
                 return  # stale
             # the first speech frame should follow the idle frame on screen when the audio starts: the
             # audio starts ~lead_ms from now, and the browser shows idle frames IDLE_LAG_FRAMES late
-            self.turn = Turn(turn_id, base_idx=self.idx + max(0, self.lead_frames - IDLE_LAG_FRAMES), loop=self.speech_loop)
+            start = self.idx + max(-6, self.lead_frames - IDLE_LAG_FRAMES + round(self.start_bias))   # may be behind idx: the idle on screen is
+            self.turn = Turn(turn_id, base_idx=start, loop=self.speech_loop)
             logger.info(f"turn {turn_id}: speaking with loop '{self.speech_loop}' from frame {self.turn.base_idx}")
+            if self._fade is not None and self._fade[0] in self.loops and self._fade[0] != self.speech_loop:
+                # the idle video is still fading from the thinking face into the reply's: the first
+                # lip-synced frames continue that fade instead of cutting it short (with the v3 faces
+                # the cut changed 3.8 % of the picture at once; e2e phase6_speech_end)
+                prev, left = self._fade
+                left -= self.turn.base_idx - self.idx
+                if left > 0:
+                    self.turn.fade_from, self.turn.fade_left, self.turn.fade_total = prev, left, 6   # idle: 1 - left / 7
             if self._reply_gesture is not None:
                 gesture, intensity = self._reply_gesture
                 self._reply_gesture = None
                 self._schedule_gesture(gesture, intensity, self.turn.base_idx, self.turn.loop)
+        self.turn.segment_loops[seq] = self.speech_loop
         self.queue.put_nowait((self.turn, seq, pts, pcm))
 
     async def _warm_burst(self, ms: float = 150.0) -> None:
@@ -274,9 +322,19 @@ class AvatarWorker:
         return self.loops[loop_name]
 
     def _switch_idle(self, loop: str) -> None:
+        self._pending_idle = None
         if loop != self.idle_loop:
             self._fade = (self.idle_loop, 6)
             self.idle_loop = loop
+
+    def _relax_idle(self, loop: str) -> None:
+        """Back to a state's default face - after a happy or concerned reply only LINGER_FRAMES later,
+        so the emotion does not vanish with the last word."""
+        if self.idle_loop in LINGERING and loop != self.idle_loop:
+            if self._pending_idle is None:
+                self._pending_idle = (loop, self.idx + LINGER_FRAMES)
+        else:
+            self._switch_idle(loop)
 
     # ------------------------------------------------------------------ idle stream
     async def _idle(self) -> None:
@@ -294,6 +352,8 @@ class AvatarWorker:
                 logger.warning(f"turn {turn.turn_id}: no playback report for {PLAYBACK_SILENT_S:.0f} s, back to idle")
                 turn.cancelled = True
                 self.turn = None
+            if self._pending_idle is not None and self.idx >= self._pending_idle[1]:
+                self._switch_idle(self._pending_idle[0])
             if self.turn is None or not self.turn.playing:
                 if self._fade:
                     prev, left = self._fade
@@ -350,11 +410,20 @@ class AvatarWorker:
             await self._release(turn, seq)
             return
         chunks = (await asyncio.to_thread(self.engine.audio_features, audio))[ctx:]
+        want = turn.segment_loops.pop(seq, turn.loop)
+        if want != turn.loop and want in self.loops:      # this sentence has another face: blend into it
+            logger.info(f"turn {turn.turn_id} seq {seq}: expression {turn.loop} -> {want}")
+            turn.fade_from, turn.fade_left, turn.loop = turn.loop, EXPRESSION_FADE_FRAMES, want
+            turn.fade_total = EXPRESSION_FADE_FRAMES
         loop = self.loops[turn.loop]
         n = chunks.shape[0]
         if n == 0:
             await self._release(turn, seq)
             return
+        # breathing that follows the speech: in pauses the shoulders rise, while speaking they settle
+        levels = breath_levels(frame_rms(pcm, spf, n), self.fps, turn.breath)
+        lifts = to_lift(levels)
+        turn.breath = float(levels[-1])
         # First clause of a turn: release the audio only when gate_frames frames exist, and ramp the
         # batch size (gate frames, 4, then b) so rendering stays ahead of playback at turn start
         # (measured: a 2-frame gate followed by a batch of 8 let frames arrive up to 368 ms late).
@@ -411,7 +480,8 @@ class AvatarWorker:
             self._frame_ms = (1 - a) * self._frame_ms + a * ms
             if pending is not None:
                 await pending
-            pending = asyncio.create_task(self._compose_and_send(turn, seq, pts, srcs, idx, faces, frames, t0, gate))
+            pending = asyncio.create_task(self._compose_and_send(turn, seq, pts, srcs, idx, faces, frames, t0, gate,
+                                                                 lifts))
             e = min(n, frames[-1] + stride)
             skipped += (e - s) - len(frames)            # left out by the stride
             strided += (e - s) - len(frames)
@@ -460,6 +530,8 @@ class AvatarWorker:
         pts = turn.next_pts if turn.next_pts >= 0 else round(turn.end_ms or 0)
         last = n - 1
         render = [k for k in TAIL_RENDERED if k < last]
+        tail_lifts = to_lift(settle(turn.breath, n))           # the breath settles: 0 on the loop's own last frame
+        turn.breath = 0.0
         srcs = [self._source(turn.loop, base + k) for k in render]
         idx, faces = await asyncio.to_thread(self.engine.faces, self.loops[turn.loop], chunks[render], base, srcs,
                                              [base + k for k in render])
@@ -467,7 +539,7 @@ class AvatarWorker:
             f = k - TAIL_CLOSE_FRAMES + 1                  # 1..TAIL_FADE_FRAMES inside the fade
             x = min(1.0, max(0.0, f / TAIL_FADE_FRAMES))
             alpha = 1.0 - x * x * (3 - 2 * x)               # smoothstep: eases in and out
-            jpg = await asyncio.to_thread(self._compose_one, srcs[j], idx[j], faces[j], alpha)
+            jpg = await asyncio.to_thread(self._compose_one, srcs[j], idx[j], faces[j], alpha, float(tail_lifts[k]))
             if turn.cancelled:
                 return
             await self._send(VIDEO_HEADER.pack(KIND_VIDEO, FLAG_TAIL, turn.turn_id, base + k,
@@ -481,12 +553,20 @@ class AvatarWorker:
                      f"in {(time.perf_counter() - t0) * 1000:.0f} ms")
 
     async def _compose_and_send(self, turn: Turn, seq: int, pts: int, srcs: list[Loop], idx: list[int],
-                                faces: np.ndarray, frames: list[int], t0: float, gate: int) -> None:
+                                faces: np.ndarray, frames: list[int], t0: float, gate: int,
+                                lifts: np.ndarray | None = None) -> None:
         """CPU stage. Each frame goes out as soon as it is composited: waiting for the whole batch of 8
         (~80 ms) made the first frames of every batch the ones most likely to arrive late.
         ``frames``: the frames' positions in the segment (every 2nd/3rd when the GPU is too slow)."""
         for k, (i, face) in enumerate(zip(idx, faces, strict=True)):
-            jpg = await asyncio.to_thread(self._compose_one, srcs[k], i, face)
+            lift = float(lifts[frames[k]]) if lifts is not None else 0.0
+            if turn.fade_left > 0 and turn.fade_from in self.loops:
+                weight = 1.0 - turn.fade_left / (turn.fade_total + 1)
+                turn.fade_left -= 1
+                old = self._source(turn.fade_from, i)
+                jpg = await asyncio.to_thread(self._compose_blend, old, srcs[k], i, face, weight, lift)
+            else:
+                jpg = await asyncio.to_thread(self._compose_one, srcs[k], i, face, 1.0, lift)
             if turn.cancelled:
                 return
             frame_pts = pts + round(frames[k] * 1000 / self.fps)
@@ -496,12 +576,28 @@ class AvatarWorker:
                 await self._send_json({"type": "first_frame", "turn_id": turn.turn_id, "seq": seq,
                                        "ms": round((time.perf_counter() - t0) * 1000, 1)})
 
-    def _compose_one(self, loop: Loop, i: int, face: np.ndarray, alpha: float = 1.0) -> bytes:
-        """Composite one frame; ``alpha`` < 1 fades the lip-synced face into the loop's own face."""
+    def _compose_one(self, loop: Loop, i: int, face: np.ndarray, alpha: float = 1.0, lift: float = 0.0) -> bytes:
+        """Composite one frame; ``alpha`` < 1 fades the lip-synced face into the loop's own face; ``lift``:
+        the body below the face moved up by this many px (speech_body.py)."""
         t = time.perf_counter()
         frame = self.engine.compose(loop, i, face)
         if alpha < 1.0:
             frame = cv2.addWeighted(frame, alpha, loop.frame(i), 1.0 - alpha, 0)
+        if abs(lift) >= 0.05:
+            frame = lift_body(frame, int(loop.coords[i][3]), lift)
+        jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.quality])[1].tobytes()
+        self._compose_ms = 0.8 * self._compose_ms + 0.2 * (time.perf_counter() - t) * 1000
+        return jpg
+
+    def _compose_blend(self, old: Loop, new: Loop, i: int, face: np.ndarray, weight: float, lift: float = 0.0) -> bytes:
+        """The two expressions' frames (same head pose) blended, and the lip-synced face pasted once into
+        the blend: the face changes smoothly from one sentence's expression to the next. (Pasting into
+        both and blending would show the mouth twice wherever their face boxes differ.)"""
+        t = time.perf_counter()
+        background = cv2.addWeighted(new.frame(i), weight, old.frame(i), 1.0 - weight, 0)
+        frame = self.engine.compose(new, i, face, background=background)
+        if abs(lift) >= 0.05:
+            frame = lift_body(frame, int(new.coords[i][3]), lift)
         jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.quality])[1].tobytes()
         self._compose_ms = 0.8 * self._compose_ms + 0.2 * (time.perf_counter() - t) * 1000
         return jpg

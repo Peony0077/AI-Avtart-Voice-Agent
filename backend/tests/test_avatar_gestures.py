@@ -119,9 +119,44 @@ def test_talking_windows_each_move_differently_and_join_the_idle_motion():
     for d in (a, b):
         for v in d.values():
             assert abs(v[0]) < 1e-9 and abs(v[-1]) < 1e-9           # starts and ends on the idle motion
-            assert np.abs(v).max() <= 2.2 + 1e-9                    # small: talking, not gesturing
+            assert np.abs(v).max() <= 5.0 + 1e-9                    # talking, not gesturing
+    # v3 (owner: no short natural head movement): visibly moving, with quick beat dips of the head
+    assert max(np.abs(a["pitch"]).max(), np.abs(b["pitch"]).max()) > 2.5
     w = gesture_windows(600, 20, "talk")
     assert all(b[0] - a[1] <= 4 for a, b in zip(w, w[1:], strict=False))   # nearly back to back
+
+
+def test_idle_head_makes_short_natural_moves_and_still_joins_the_seam():
+    from motion import head_shifts
+    lively = idle_curves(600, 20, periodic=True)
+    still = idle_curves(600, 20, periodic=True, lively=False)
+    for axis in ("pitch", "yaw", "roll"):
+        v = lively[axis]
+        steps = np.abs(np.diff(v))
+        assert abs(v[0] - v[-1]) <= steps.max() + 1e-9, axis            # seamless
+        assert steps.max() < 1.0, axis                                   # no jumps (degrees per 50 ms frame)
+        assert np.abs(v).max() < 7.0, axis                               # natural range
+    # quick moves the slow drift alone never makes: peak head speed (deg/s), and more motion overall
+    speed = lambda c, q: np.percentile(np.abs(np.diff(c["yaw"])) * 20, q)    # noqa: E731
+    assert speed(lively, 100) > 3 * speed(still, 100) and speed(lively, 90) > 1.3 * speed(still, 90)
+    # the moves: every 2-6 s, each over in well under a second, then held
+    shifts = head_shifts(600, 20, np.random.default_rng(3))
+    moving = np.abs(np.diff(shifts["yaw"])) > 0.02
+    starts = np.flatnonzero(moving[1:] & ~moving[:-1])
+    assert 5 <= len(starts) <= 15
+    assert moving.mean() < 0.35                                         # mostly holding a position
+    # blinks and gaze are those of the earlier loops (only the head changed)
+    assert np.array_equal(lively["eye_open"], still["eye_open"]) and np.array_equal(lively["gaze_x"], still["gaze_x"])
+
+
+def test_v3_expressions_are_stronger_and_include_listening():
+    from motion import EXPRESSION_TO_LOOP, EXPRESSIONS
+    assert EXPRESSIONS["happy"]["smile"] >= 1.3 and EXPRESSIONS["happy"]["eye"] <= 0.8   # the smile reaches the eyes
+    assert EXPRESSIONS["concerned"]["eyebrow"] <= -8 and EXPRESSIONS["concerned"]["roll"] != 0   # visible, not pitiful (v3.1)
+    assert EXPRESSION_TO_LOOP["interested"] == "interested"
+    p = loop_params(idle_curves(40, 20, periodic=True), "concerned")
+    q = loop_params(idle_curves(40, 20, periodic=True), "neutral")
+    assert abs((p[0].roll - q[0].roll) - EXPRESSIONS["concerned"]["roll"]) < 1e-9     # the held head tilt
 
 
 def test_body_breathes_and_sways_seamlessly_and_subtly():

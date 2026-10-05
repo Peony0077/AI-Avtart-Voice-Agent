@@ -33,11 +33,16 @@ class KokoroTTS:
 
     @torch.inference_mode()
     def synthesize(self, text: str) -> TTSResult:
+        return self.synthesize_with(text, self.voice)
+
+    @torch.inference_mode()
+    def synthesize_with(self, text: str, voice: str) -> TTSResult:
+        """``text`` in ``voice`` (same language as the current voice: Settings' voice preview)."""
         t0 = time.perf_counter()
         pieces: list[np.ndarray] = []
         words: list[tuple[str, float, float]] = []
         offset = 0.0
-        for result in self.pipeline(text, voice=self.voice, speed=self.cfg.speed):
+        for result in self.pipeline(text, voice=voice, speed=self.cfg.speed):
             if result.audio is None:
                 continue
             audio = result.audio.detach().float().cpu().numpy()

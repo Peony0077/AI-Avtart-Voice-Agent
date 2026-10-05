@@ -72,6 +72,7 @@ test(`voice soak for ${minutes} minutes`, async ({ page, request }) => {
         const q = (a, p) => (a.length ? Math.round(a[Math.min(a.length - 1, Math.floor(p * a.length))]) : null)
         return { speech_frames: s.speech, drawn_speech: s.drawnSpeech, late: s.late,
           av_offset_p50: off[Math.floor(off.length / 2)], av_offset_p90: off[Math.floor(off.length * 0.9)],
+          detached_frames: s.detached ?? 0,          // frames released before they were drawn (never drawn now)
           arrived_late_100ms: s.arrivedLate, arrived_while_playing: s.arrivedTimed,
           arrival_lateness_p50: q(arr, 0.5), arrival_lateness_p90: q(arr, 0.9), decode_ms_p50: q(dec, 0.5), decode_ms_p90: q(dec, 0.9) }
       })),
@@ -96,5 +97,6 @@ test(`voice soak for ${minutes} minutes`, async ({ page, request }) => {
     expect(summary.avatar.drawn_speech).toBeGreaterThan(minutes * 100)               // lip-sync all along
     expect(summary.avatar.late / summary.avatar.drawn_speech).toBeLessThan(0.05)       // frames ready in time
     expect(summary.avatar.av_offset_p90).toBeLessThan(80)
+    expect(summary.avatar.detached_frames).toBe(0)
   }
 })

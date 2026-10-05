@@ -124,7 +124,8 @@ class Settings(BaseSettings):
     rag: RAGCfg = RAGCfg()
     avatar: AvatarCfg = AvatarCfg()
     voice_enabled: bool = True
-    access_token: str | None = None   # required as ?token=... on /ws and /api when set (remote access)
+    access_token: str | None = None   # required as ?token=... on /ws and /api when set (remote access): the owner's link
+    customer_token: str | None = None   # the customer link: talks to her, no settings or leads (api/ws.py)
     vram_min_free_gib: float = 0.8
 
     @classmethod

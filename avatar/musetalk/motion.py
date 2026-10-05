@@ -37,18 +37,23 @@ class RigParams:
 # "eye" scales eye openness (blinks stay complete): slightly narrowed eyes read as a real, warm smile.
 # friendly is the avatar's default face (idle, listening, ordinary replies), so it must look warm:
 # the earlier 0.35 smile was not visible next to neutral (logs/expressions_now.jpg vs smile_trials.jpg).
+# v3 (owner, 2026-10-05: "only small & short changes in face emotion"): stronger and whole-face -
+# the happy smile reaches the eyes and lifts the chin a little, concern draws the brows and tilts the
+# head, and "interested" (raised brows, open eyes, a slight tilt) is the face of active listening.
+# pitch/yaw/roll: head pose offsets (degrees) held for the whole expression.
 EXPRESSIONS: dict[str, dict] = {
     "neutral": {"smile": 0.0, "eyebrow": 0.0},
-    "friendly": {"smile": 0.6, "eyebrow": 3.0, "eye": 0.92},
-    "happy": {"smile": 1.15, "eyebrow": 5.0, "eye": 0.85},
-    "concerned": {"smile": -0.15, "eyebrow": -8.0},
-    "thinking": {"smile": 0.0, "eyebrow": 3.0, "gaze": (-7.0, 5.0), "yaw": -1.5, "pitch": -1.0},
+    "friendly": {"smile": 0.7, "eyebrow": 4.0, "eye": 0.9},
+    "happy": {"smile": 1.3, "eyebrow": 8.0, "eye": 0.8, "pitch": -1.0, "roll": 1.5},
+    "concerned": {"smile": 0.05, "eyebrow": -8.0, "eye": 0.95, "pitch": 1.0, "roll": -2.0},   # v3.1: -12 brows read as pitiful over a whole reply
+    "thinking": {"smile": 0.0, "eyebrow": 5.0, "gaze": (-8.0, 6.0), "yaw": -2.5, "pitch": -1.5},
+    "interested": {"smile": 0.45, "eyebrow": 11.0, "eye": 1.06, "roll": 2.0},
 }
 
 # BehaviorManager expression names (backend) -> loop names
 EXPRESSION_TO_LOOP = {
     "neutral": "neutral", "neutral_firm": "neutral", "soft_smile": "friendly", "smile": "happy",
-    "soft_concern": "concerned", "concern": "concerned", "thinking": "thinking",
+    "soft_concern": "concerned", "concern": "concerned", "thinking": "thinking", "interested": "interested",
 }
 
 # Head gestures (degrees; + pitch = head down), as the BehaviorManager names them. They are rendered
@@ -63,12 +68,15 @@ GESTURES: dict[str, dict] = {
     # Talking: people move their head while they speak. Windows of small, varied head movement (each
     # window its own random pattern, 0.5-1.6 Hz like speech-related motion) that the worker chains
     # while the avatar speaks; between them the head is back on the idle motion for a moment.
-    "talk": {"seconds": 2.4, "talk": {"pitch": 2.0, "yaw": 2.2, "roll": 1.0}, "gap": 4},
+    # v3: larger (2.0/2.2/1.0 deg looked still) with 1-3 quick "beat" nods per window - the head dips
+    # on stressed words while people talk.
+    "talk": {"seconds": 2.4, "talk": {"pitch": 3.0, "yaw": 3.4, "roll": 1.6}, "beats": (1, 3), "beat_pitch": 1.8,
+             "gap": 4},
 }
 # which expression loops get which gesture (natural pairings; each variant costs build time and RAM)
 GESTURE_VARIANTS: dict[str, tuple[str, ...]] = {
-    "small_nod": ("neutral", "friendly", "happy", "concerned"),
-    "nod": ("neutral", "friendly", "happy", "concerned"),            # concerned: the empathetic nod
+    "small_nod": ("neutral", "friendly", "happy", "concerned", "interested"),   # interested: listening nods
+    "nod": ("neutral", "friendly", "happy", "concerned", "interested"),         # concerned: the empathetic nod
     "head_tilt": ("neutral", "friendly", "concerned", "thinking"),   # neutral: "serious" replies tilt too
     "shake": ("neutral", "concerned"),
     "talk": ("neutral", "friendly", "happy", "concerned"),         # the loops replies are spoken with
@@ -90,10 +98,16 @@ def talk_delta(n: int, fps: float, seed: int) -> dict[str, np.ndarray]:
     t = np.arange(n) / fps
     env = np.sin(math.pi * np.arange(n) / max(1, n - 1)) ** 2
     out = {}
-    for axis, amp in GESTURES["talk"]["talk"].items():
+    g = GESTURES["talk"]
+    for axis, amp in g["talk"].items():
         sig = sum(rng.uniform(0.5, 1.0) * np.sin(2 * math.pi * f * t + rng.uniform(0, 2 * math.pi))
                   for f in rng.uniform(0.5, 1.6, size=2))
         out[axis] = amp * env * sig / (np.abs(sig).max() + 1e-6)
+    if "beats" in g:                                # quick dips of the head (+pitch = down), 0.3 s each
+        beat = 0.5 * (1 - np.cos(2 * math.pi * np.arange(max(2, round(0.3 * fps))) / max(1, round(0.3 * fps))))
+        for _ in range(int(rng.integers(g["beats"][0], g["beats"][1] + 1))):
+            s0 = int(rng.integers(int(0.15 * n), max(int(0.15 * n) + 1, int(0.85 * n) - len(beat))))
+            out["pitch"][s0:s0 + len(beat)] += g["beat_pitch"] * rng.uniform(0.6, 1.0) * beat[: n - s0]
     return out
 
 
@@ -204,15 +218,58 @@ def blink_curve(n: int, fps: float, rng: np.random.Generator, blinks_per_min: fl
     return eye
 
 
+def _min_jerk(x: np.ndarray) -> np.ndarray:
+    """0 -> 1 with zero speed and acceleration at both ends (how people move their head)."""
+    x = np.clip(x, 0.0, 1.0)
+    return x ** 3 * (10 - 15 * x + 6 * x * x)
+
+
+def head_shifts(n: int, fps: float, rng: np.random.Generator, amp=(1.6, 2.6, 1.2)) -> dict[str, np.ndarray]:
+    """Short natural head movements (owner: "there is no short natural movement of the head"): every
+    2-6 s the head moves to a slightly different position in 0.35-0.7 s and stays there, as people
+    resettle their head while they listen. Periodic over n frames: the last move returns to the start."""
+    out = {axis: np.zeros(n) for axis in ("pitch", "yaw", "roll")}
+    t = int(rng.uniform(1.0, 3.0) * fps)
+    moves = []
+    while t < n - int(1.0 * fps):
+        target = np.array([rng.uniform(-1, 1) * amp[0], rng.uniform(-1, 1) * amp[1], rng.uniform(-1, 1) * amp[2]])
+        moves.append((t, int(rng.uniform(0.35, 0.7) * fps), target))
+        t += int(rng.uniform(2.0, 6.0) * fps)
+    if moves:                                       # the seam: the last move goes back to the start pose
+        s, d, _ = moves[-1]
+        moves[-1] = (s, d, np.zeros(3))
+    cur = np.zeros(3)
+    for k, (start, dur, target) in enumerate(moves):
+        end = moves[k + 1][0] if k + 1 < len(moves) else n
+        ramp = _min_jerk(np.arange(end - start) / max(1, dur))[:, None]
+        seg = cur + (target - cur) * ramp
+        for i, axis in enumerate(("pitch", "yaw", "roll")):
+            out[axis][start:end] = seg[:, i]
+        cur = target
+    return out
+
+
+def head_follows_eyes(gaze_x: np.ndarray, gaze_y: np.ndarray, fps: float) -> tuple[np.ndarray, np.ndarray]:
+    """Yaw and pitch (degrees) of the head following the eyes a little: a glance aside turns the head
+    slightly, ~120 ms after the eyes and more slowly (eye-head coordination)."""
+    lag = int(round(0.12 * fps))
+    yaw = _circular_smooth(np.roll(gaze_x, lag), 0.12 * fps)
+    pitch = _circular_smooth(np.roll(gaze_y, lag), 0.12 * fps)
+    return 0.7 * yaw, -0.4 * pitch
+
+
 def idle_curves(n: int, fps: float, seed: int = 7, head_amp=(1.8, 2.6, 1.0), blinks_per_min: float = 16,
-                periodic: bool = False) -> dict:
-    """Shared motion curves (length n). periodic: a seamless loop (see the module docstring)."""
+                periodic: bool = False, lively: bool = True) -> dict:
+    """Shared motion curves (length n). periodic: a seamless loop (see the module docstring).
+    lively (seamless loops): besides the slow drift, short head moves (head_shifts), a fine fast
+    micro-motion and the head following the eyes - the slow drift alone (0.07-0.23 Hz) looked like a
+    still head (owner, 2026-10-05)."""
     rng = np.random.default_rng(seed)
     if periodic:
         span = n / fps
         breath = 0.25 * np.sin(2 * math.pi * max(1, round(0.24 * span)) * np.arange(n) / n)   # ~0.24 Hz
         gaze_x, gaze_y = eye_movements(n, fps, rng)
-        return {
+        curves = {
             "pitch": head_amp[0] * _periodic_noise(n, fps, rng) + breath,
             "yaw": head_amp[1] * _periodic_noise(n, fps, rng),
             "roll": head_amp[2] * _periodic_noise(n, fps, rng),
@@ -220,6 +277,17 @@ def idle_curves(n: int, fps: float, seed: int = 7, head_amp=(1.8, 2.6, 1.0), bli
             "gaze_x": gaze_x,
             "gaze_y": gaze_y,
         }
+        if lively:
+            lrng = np.random.default_rng(seed + 100)       # the drift, blinks and gaze stay as they were
+            drift = 0.7                                     # the slow drift a little smaller: the moves add up
+            shifts = head_shifts(n, fps, lrng)
+            fy, fp = head_follows_eyes(gaze_x, gaze_y, fps)
+            micro = {a: amp * _periodic_noise(n, fps, lrng, freqs=(0.45, 0.8, 1.25))
+                     for a, amp in (("pitch", 0.35), ("yaw", 0.4), ("roll", 0.25))}
+            curves["pitch"] = drift * (curves["pitch"] - breath) + breath + shifts["pitch"] + micro["pitch"] + fp
+            curves["yaw"] = drift * curves["yaw"] + shifts["yaw"] + micro["yaw"] + fy
+            curves["roll"] = drift * curves["roll"] + shifts["roll"] + micro["roll"]
+        return curves
     curves = {
         "pitch": head_amp[0] * _smooth_noise(n, fps, rng),
         "yaw": head_amp[1] * _smooth_noise(n, fps, rng),
@@ -262,7 +330,7 @@ def loop_params(curves: dict, expression: str) -> list[RigParams]:
         RigParams(
             pitch=float(curves["pitch"][i] + e.get("pitch", 0.0)),
             yaw=float(curves["yaw"][i] + e.get("yaw", 0.0)),
-            roll=float(curves["roll"][i]),
+            roll=float(curves["roll"][i] + e.get("roll", 0.0)),
             eye_open=float(curves["eye_open"][i] * e.get("eye", 1.0)),
             gaze_x=float(curves["gaze_x"][i] + gx),
             gaze_y=float(curves["gaze_y"][i] + gy),

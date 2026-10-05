@@ -4,7 +4,8 @@ import fs from 'node:fs'
 // Page path incl. the access token when testing remote access (AVATAR_TOKEN=...)
 // NOSMOOTH=1: no in-between frames (compares the GPU load of the test browser, which shares this GPU)
 export const appPath = (token = process.env.AVATAR_TOKEN) => {
-  const params = [token ? `token=${encodeURIComponent(token)}` : '', process.env.NOSMOOTH ? 'nosmooth' : ''].filter(Boolean)
+  const params = [token ? `token=${encodeURIComponent(token)}` : '', process.env.NOSMOOTH ? 'nosmooth' : '',
+    process.env.NOGRAIN ? 'nograin' : ''].filter(Boolean)
   return params.length ? `/?${params.join('&')}` : '/'
 }
 

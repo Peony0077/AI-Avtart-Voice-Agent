@@ -920,6 +920,135 @@ recognition itself was fine (the voice tests pass through the same tunnel). What
 Browser test `phase6_mic_start.spec.js` (project `mic`): badge and tap-to-talk, a question heard through
 the fake microphone, and the blocked / unavailable / muted microphone messages and their log lines.
 
+### Closer to a real person: motion v3 and emotions (owner, 2026-10-05)
+
+Owner: "no short natural movement of the head", "only small & short changes in face emotion",
+"feeling talking with a normal AI bot"; "must look 100% realistic, with accurate lip-sync, natural
+facial expressions, blinking, head movement and body movement".
+
+What the avatar did: the idle head only drifted slowly (0.07-0.23 Hz, peak 2.3 deg/s), the face was
+chosen once per reply (almost always "friendly") and snapped back to it the moment she stopped, and
+the shoulders moved independently of the head. Avatar `dev_girl_v3` (`motion.py` v3, `"motion": 3`
+in avatar.json), rendered again from the photo:
+- **Head**: short natural moves every 2-6 s (to a new position in 0.35-0.7 s, minimum-jerk, then
+  held: peak 17 deg/s), a fine micro-motion (0.45-1.25 Hz, ~0.3 deg), and the head following the
+  eyes ~120 ms after a glance. Blinks and gaze are unchanged. While talking: larger movement
+  (3.0/3.4/1.6 deg) with 1-3 quick "beat" dips of the head per 2.4 s window.
+- **Faces**: stronger and whole-face (preview `E:\AI-models\avatars\dev_girl_v3\preview`): the happy
+  smile narrows the eyes and lifts the chin, concern draws the brows and tilts the head, and the new
+  "interested" face (raised brows, open eyes, slight tilt) is used for active listening.
+- **Emotions that change and stay**: every later sentence of a reply can change the face
+  (`behavior.clause_behavior`: concern for sad words, a smile for happy ones, otherwise the face
+  stays), blended over 400 ms on the same head pose (`worker._compose_blend`). After a happy or
+  concerned reply the face holds 2.5 s before it relaxes (`worker._relax_idle`).
+- **Active listening**: the interested face while the user talks, a small nod ("mm-hm") at their
+  pauses (at most one every ~5 s).
+- **Body**: deeper breathing (3 px), and the shoulders follow the head's turn and tilt by up to ~2 px,
+  0.3 s later (`body_motion.head_follow`). While she talks she breathes like a speaker
+  (`speech_body.py`): in the pauses between sentences the shoulders rise (a breath in 0.45 s), while
+  she speaks they settle over ~2 s, and the closing tail brings them back to the idle loop.
+- **One mouth**: when the face changes expression mid-reply, the two expressions are blended first and
+  the lip-synced mouth is pasted once (pasting it into both and blending would show it twice wherever
+  their face boxes differ).
+- **Camera**: a faint, constantly changing sensor grain over the picture (AvatarStage, `?nograin`):
+  a perfectly clean, frozen background is a tell-tale of a still image.
+- **Build**: rendered frames are kept JPEG-compressed until their loop is prepared. Raw, the v3 build
+  (6 loops + 11 000 gesture frames) needed ~9 GB of RAM and was killed on this 16 GB PC. Full build
+  ~80 min (render 45, prepare 35, body motion 1.5); the worker loads 6 loops + 20 gesture variants in
+  6.9 s, with 4.4 GB of RAM still free while everything runs.
+- **Checked on the result** (frames captured in the browser during a reply, lip-sync measured with
+  `lipsync_check.py --avatar dev_girl_v3`): lips -4 ms (af_heart) / +17 ms (am_michael) / isolated
+  words -27 ms; the head visibly moving, a blink, the shoulders moving. Two faults found and fixed
+  (v3.1): a message with good news and a worry ("I passed my test! But I'm worried about the
+  highway.") made the whole reply look worried - now the reply's first words lead ("Congratulations!"
+  is a smile) and later sentences change the face; and the concerned face (brows -12) looked pitiful
+  over a whole reply - softened (brows -8, a hint of warmth) and its loop re-rendered
+  (`build_avatar.py --id dev_girl_v3 --update concerned`, ~20 min).
+
+Found by the e2e run on v3 and fixed (each with a test):
+- **Hard cut into speech** (an old bug, now visible): the page's drawing loop restarted on every
+  render (its effect depended on `voice`, a new object each render), forgot the picture on screen
+  and skipped the 120 ms cross-fade into speech whenever the state changed as she started talking.
+  3.8-5.8 % of the picture changed at once; now 0 (`phase6_speech_end`).
+- **Where a reply starts in the loop**: the first lip-synced frame was up to 5 frames (250 ms of
+  head motion) away from the idle frame on screen (lead_ms and the browser's idle lag are guesses).
+  The page now measures the gap at every reply start and the worker learns it (`start_bias`): after
+  one reply within about +-2 frames. The first lip-synced frames also continue the idle video's fade
+  from the thinking face instead of cutting it short.
+- **Numbered lists spoken**: "2." became a clause of its own, spoken "Two." with pauses (890 ms
+  silence); list numbers are now left out of the speech (`normalize_for_speech`). Kokoro also pauses
+  up to 520 ms at a comma (at speed 0.95), which sounds halting: pauses inside a sentence are cut to
+  320 ms (`tts.base.cap_pauses`; people pause ~200-400 ms there).
+- **Camera grain cost**: as a separate canvas with a CSS blend mode it made the browser re-composite
+  every frame: in a 10-minute soak 6.9 % of the lip-synced frames were drawn late (0.2 % without
+  it). It is now painted into the avatar canvas (one pattern fill a frame): 18 of 7 814 late (0.2 %).
+- **Released frames drawn**: when a reply started a little behind the idle frame on screen (the
+  learned start) and was cut short, an idle frame still queued was released and then drawn
+  ("drawImage: the image source is detached", 7x in 10 minutes). Fixed, and the page never draws a
+  released frame (counted in the soak, must be 0).
+- **Body lift cost**: the speech-breathing warp rebuilt full-frame maps every frame (3.5 ms); only
+  the rows below the face, in place: 0.95 ms, identical pixels (`speech_body.lift_body`).
+- **Avatar VRAM estimate**: measured 2.6 GB loaded, ~3.0 GB peak while rendering; the old estimate
+  (4.0 GB) refused to start the avatar while desktop apps held 2.5 GB of the GPU. Now 3.3 GB (+ the
+  0.8 GB reserve).
+- **Soak (10 min, avatar, v3)**: 31 of 32 turns completed, A/V offset p90 0 ms, 0 frames arriving
+  > 100 ms late after the fixes, no page or server errors, GPU memory flat. Time to first audio p50
+  ~1.0-1.2 s today against ~0.9 s on 2026-10-04: speech recognition (168 -> 250 ms) and the voice
+  (141 -> 237 ms) were both slower on unchanged code while desktop apps shared the GPU; during a
+  reply the GPU runs at full clock and ~98 % busy. Once in four runs the player waited 0.5 s for the
+  next sentence (`phase6_speech_gaps`): the speech pipeline has little margin when the LLM, the voice
+  and the lip sync share the one GPU.
+- **Test traces**: with page snapshots in the Playwright trace, closing the browser after the
+  barge-in test hung for over 2 minutes (19 s test; 6 ms close without tracing). Traces keep steps,
+  network, console and sources, without snapshots.
+- **Background LLM jobs** (memory, leads) made the next reply wait; they now run only while no
+  conversation needs the LLM and give way when one does (`Services._run_llm_jobs`).
+- **Settings lost typing**: a persona message arriving after the owner had started typing reset the
+  form, and Save stored the old values. The form now only loads until it is edited.
+- **Time questions**: the hint wording was measured on the live model (18 questions each): "(It is
+  now ...)" -> 3x "just like you said!", a "Note for you" -> 3 refusals, "Current local time where
+  the customer is: ... You know this; say it naturally." -> 18/18. The sales rules made the model
+  write "[First Name]" when it did not know the name: forbidden now.
+- **Faces**: no smile inside a sad reply ("Thank you for sharing that" after a loss).
+- **Test data**: test conversations went into the owner's memory ("...or your bakery website") and
+  one answer then refused to tell the time. `tests/e2e/data-guard.js` copies the owner's data aside
+  before the run, clears the memory and puts everything back after.
+
+What cannot be fixed by motion: every frame comes from one AI-generated photo - its skin, light and
+room. HeyGen and Anam build their realistic avatars from a short video of a real person; this project
+can too (`build_avatar.py --video`). How to record one: [RECORDING_A_VIDEO_AVATAR.md](RECORDING_A_VIDEO_AVATAR.md).
+
+### Lead generation, the customer link, voice and US/Canada style (owner, 2026-10-05)
+
+- **Business & leads** (Settings, `persona.py`): company, what it offers, the next step for customers,
+  lead generation on/off. The system prompt then makes her a helpful, never pushy salesperson
+  (`prompt.LEAD_RULES`): one short question at a time, a check that she understood, a concrete
+  benefit, the next step, then first name and email or phone, repeated back to catch recognition
+  errors; never passwords or card numbers; unknown prices "a team member will follow up".
+- **Leads** (`leads.py`): after each conversation the LLM writes down only what the customer said
+  (name, email, phone, company, need, timeline, budget, interest, agreed next step); a name, a way to
+  reach them or a real need makes it a lead in `data\leads.jsonl` (this PC only; the log says only
+  whether there was one). The owner sees them under Leads and downloads a CSV.
+- **Two links** (`api/ws.py`): the owner link (`logs\tunnel_url.txt`) has everything; the customer
+  link (`logs\customer_url.txt`) only the conversation and the customer's own "Forget me". Each
+  customer has their own memory (`data\visitors\<id>.json`, keyed by a random id their browser keeps)
+  - one shared memory would have greeted the next customer with the previous one's name.
+- **One conversation at a time, nobody cut off**: a new connection used to replace the current one.
+  Now only the owner's reload or the same customer's reconnect take over; anyone else waits in line
+  ("number 1 in line", the page connects automatically). With people waiting, a customer inactive
+  for 90 s is handed over (close code 4002).
+- **US and Canada**: a friendly North American customer-care tone (contractions, "Absolutely!",
+  "Happy to help!" now and then), American spelling, dollars, miles and Fahrenheit (Canadian units
+  for Canadians); time questions answered in the customer's own time zone from their browser (this
+  PC's time zone was used before), as "Sunday, October 4, 2026, 8:00 PM"; American voices only.
+- **Voice**: the owner's microphone was "Headset (OpenBuds P7) (Bluetooth)". Using a Bluetooth
+  headset's microphone switches the headset to its phone-call profile, so her voice played at
+  telephone quality and the owner's speech reached recognition the same way. The page now offers the
+  computer's own microphone when it sees a Bluetooth headset's (and Settings has a microphone picker).
+  Settings also has "▶ Listen" for each voice, with two warm blends (Heart + Bella, Heart + Nicole:
+  Kokoro averages the voices); speech is a touch slower (0.95).
+- `run.ps1 -Https` (LAN) had a control character in place of `certs\a` (the certificate path): fixed.
+
 ### Robustness
 
 Playwright `tests/e2e/phase6_recovery.spec.js` kills processes in the middle of a live session
@@ -1046,6 +1175,10 @@ $env:FAKE_MIC='mic_story_bargein.wav'; npx playwright test --project=voice phase
 $env:FAKE_MIC='mic_rag.wav'; npx playwright test --project=voice phase5            # documents
 npx playwright test --project=voice phase4 phase6             # avatar, crash recovery (avatar profiles)
 npx playwright test --project=mic                            # starting the microphone as in a normal browser
+npx playwright test --project=voice phase6_customer phase6_leads   # customer link, waiting line, leads, voice
+#   preview, customer time zone (started with scripts\tunnel.ps1: the customer link is read from logs\customer_url.txt)
+# The owner's data\ (memory, persona, leads, customers' memories) is copied aside before a run and put back
+# after it (tests\e2e\data-guard.js).
 $env:FAKE_MIC='mic_soak.wav'; $env:FAKE_MIC_LOOP='1'; npx playwright test --project=voice soak
 # lip-sync timing on rendered frames (stack stopped: needs the GPU; any speech .wav, --compare = MuseTalk's windows)
 cd ..\..\avatar\musetalk; .venv\Scripts\python lipsync_check.py speech.wav --compare

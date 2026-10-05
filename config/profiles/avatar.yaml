@@ -1,6 +1,6 @@
 ﻿# Full experience: voice pipeline + realistic neural avatar (LivePortrait loops + MuseTalk lip sync).
-# Build the avatar once first (~45 min):  avatar\musetalk\.venv\Scripts\python avatar\musetalk\build_avatar.py --photo data\avatars\dev_girl\photo.png --id dev_girl_v2
-#   then the talking head motion (~15 min):  ...build_avatar.py --id dev_girl_v2 --gestures-only --gestures talk
+# Build the avatar once first (~80 min, all loops and head gestures):  avatar\musetalk\.venv\Scripts\python avatar\musetalk\build_avatar.py --photo data\avatars\dev_girl\photo.png --id dev_girl_v3
+#   or from a video of a real person (docs\RECORDING_A_VIDEO_AVATAR.md):  ...build_avatar.py --video data\avatars\<name>\video.mp4 --id <name>
 llm:
   context: 4096
   max_tokens: 320
@@ -9,9 +9,10 @@ stt:
 tts:
   engine: kokoro
   voice: af_heart
+  speed: 0.95       # a touch slower: calmer and clearer for customers (owner: "warm, friendly voice")
 avatar:
   enabled: true
-  avatar_id: dev_girl_v2   # seamless 30 s loops + talking motion (dev_girl: the first, 7 s ping-pong build)
+  avatar_id: dev_girl_v3   # motion v3: lively head, stronger faces, listening face, body follows the head (v2: the previous build)
   jpeg_quality: 90
   gate_frames: 2        # lip-synced frames before the first audio. With the TAESD decoder (avatar.decoder) the renderer
   #                        keeps up: voice p50 758 ms, 0 % late frames (3-min soak). With the SD VAE use 4.

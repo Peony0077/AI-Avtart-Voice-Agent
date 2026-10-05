@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass, replace
 
-EMOTIONS = ("neutral", "friendly", "happy", "empathetic", "concerned", "serious", "thinking", "excited")
+EMOTIONS = ("neutral", "friendly", "happy", "empathetic", "concerned", "serious", "thinking", "excited", "interested")
 GESTURES = ("none", "small_nod", "nod", "head_tilt", "shake", "smile")
 
 # emotion -> (expression, gaze, blink_rate_per_min, head_motion 0..1)
@@ -23,6 +23,7 @@ _PROFILE = {
     "serious": ("neutral_firm", "user", 12, 0.20),
     "thinking": ("thinking", "away_up", 10, 0.20),
     "excited": ("smile", "user", 20, 0.60),
+    "interested": ("interested", "user", 16, 0.35),     # listening: raised brows, open eyes, slight tilt
 }
 # Conversation-state defaults while no reply is being spoken.
 _STATE_DEFAULT = {
@@ -123,7 +124,7 @@ _HAPPY_USER = re.compile(
 _SAD = re.compile(
     r"\b(sad|sorry|die[ds]?|dead|death|passed away|sick|ill|hurt\w*|pain\w*|lost|los(e|ing)|fail\w*|worr\w*|"
     r"anxi\w*|scar\w*|afraid|angry|upset|terribl\w*|awful|bad news|cry\w*|depress\w*|lonely|accident|hospital|"
-    r"stress\w*|unfortunately|broke up|fired)\b")
+    r"stress\w*|unfortunately|broke up|fired|nervous|frighten\w*|difficult|tough|hard time)\b")
 _NO_SMILE = ("empathetic", "concerned", "serious")
 
 
@@ -131,6 +132,35 @@ def is_happy_text(text: str, reply: bool = True) -> bool:
     """Happy moment (greeting, thanks, good news, congratulations, laughter) and nothing sad in it."""
     t = text.lower().replace("’", "'")
     return bool((_HAPPY_REPLY if reply else _HAPPY_USER).search(t)) and not _SAD.search(t)
+
+
+def for_user_speaking() -> Behavior:
+    """Active listening (as Anam/HeyGen avatars do): while the user talks, an attentive face."""
+    behavior = from_meta({"emotion": "interested", "gesture": "none", "intensity": 0.4})
+    behavior.source = "state:USER_SPEAKING"
+    return behavior
+
+
+def for_user_pause() -> Behavior:
+    """The user paused mid-utterance: a small nod, like "mm-hm" (the worker allows one every ~5 s)."""
+    behavior = from_meta({"emotion": "interested", "gesture": "small_nod", "intensity": 0.4})
+    behavior.source = "state:USER_PAUSE"
+    return behavior
+
+
+def clause_behavior(current: Behavior, clause: str) -> Behavior | None:
+    """The face for a later sentence of a reply: concern for sad or worrying words, a smile for happy
+    ones, or None to keep the face it has (an emotion stays over the next sentences instead of flashing
+    for one). Owner: "only small & short changes in face emotion" - the face was chosen once per reply."""
+    t = clause.lower().replace("’", "'")
+    if _SAD.search(t):
+        if current.expression in ("soft_concern", "concern"):
+            return None
+        return replace(current, emotion="empathetic", expression="soft_concern", gesture="none", source="clause")
+    # no smile inside a sad or worried reply ("Thank you for sharing that with me" after a loss)
+    if is_happy_text(clause) and current.expression != "smile" and current.emotion not in _NO_SMILE:
+        return replace(current, emotion="happy", expression="smile", gesture="none", source="clause")
+    return None
 
 
 def smile_for_user_text(user_text: str) -> Behavior | None:
@@ -158,9 +188,17 @@ def behavior_from_text(user_text: str, first_clause: str) -> Behavior:
     anyway (see _TEXT_GESTURES)."""
     user = user_text.lower().replace("’", "'")
     reply = first_clause.lower().replace("’", "'")
-    if _SAD.search(user) or _SAD.search(reply):
+    # the reply's own first words lead: "I passed my test, but I'm worried about the highway" ->
+    # "Congratulations!" is a smile (a worried word anywhere in the message made the whole reply look
+    # worried); the user's words decide only when the reply starts neutrally. Later sentences can still
+    # change the face (clause_behavior).
+    if _SAD.search(reply):
         emotion = "empathetic"
-    elif is_happy_text(user_text, reply=False) or is_happy_text(first_clause):
+    elif is_happy_text(first_clause):
+        emotion = "happy"
+    elif _SAD.search(user):
+        emotion = "empathetic"
+    elif is_happy_text(user_text, reply=False):
         emotion = "happy"
     else:
         emotion = "friendly"

@@ -68,3 +68,30 @@ def _chunks(text):
 ])
 def test_no_sentence_break_after_abbreviations(text, clauses):
     assert _chunks(text) == clauses
+
+
+def test_numbered_lists_are_spoken_without_their_numbers():
+    """The chunker cut "2." into a clause of its own, spoken "Two." with pauses (890 ms gap, e2e)."""
+    from app.behavior.speech_text import normalize_for_speech as speak
+    nl = chr(10)
+    assert speak("2.") == "" and speak(" 3) ") == ""
+    assert speak("Here are four facts about octopuses:" + nl + nl + "1.") == "Here are four facts about octopuses:"
+    assert speak("1. Octopuses have three hearts.") == "Octopuses have three hearts."
+    assert speak("It costs 2.5 dollars.") == "It costs 2.5 dollars." and speak("Call 911.") == "Call 911."
+
+
+def test_long_pauses_inside_a_sentence_are_shortened():
+    """Kokoro paused up to 520 ms at a comma; people pause ~200-400 ms (cap_pauses)."""
+    import numpy as np
+
+    from app.tts.base import cap_pauses
+    sr = 24000
+    tone = (0.3 * np.sin(np.arange(sr // 2) / 3)).astype(np.float32)      # 0.5 s of sound
+    gap = np.zeros(int(0.6 * sr), np.float32)                              # 600 ms comma pause
+    audio = np.concatenate([tone, gap, tone])
+    words = [("a", 0.0, 0.5), ("b", 1.1, 1.6)]
+    out, moved = cap_pauses(audio, sr, words, max_ms=320)
+    assert abs(len(out) / sr - (1.0 + 0.32)) < 0.02                       # the pause is now ~320 ms
+    assert moved[0] == ("a", 0.0, 0.5) and abs(moved[1][1] - 0.82) < 0.02  # the next word moved up
+    short = np.concatenate([tone, np.zeros(int(0.2 * sr), np.float32), tone])
+    assert len(cap_pauses(short, sr, words)[0]) == len(short)              # a short pause stays

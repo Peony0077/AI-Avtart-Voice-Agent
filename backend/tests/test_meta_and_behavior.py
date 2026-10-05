@@ -108,6 +108,9 @@ def test_unclosed_bracket_at_the_end_is_still_spoken():
     ("Is the sun a star?", "Yes, the sun is a star.", "friendly", "soft_smile", "nod"),
     ("Can fish fly?", "No, most fish can't fly.", "friendly", "soft_smile", "shake"),
     ("I feel stressed about my exam.", "That sounds hard.", "empathetic", "soft_concern", "none"),
+    # good news with a worry in it: the reply's first words lead (owner's test, 2026-10-05)
+    ("I passed my driving test! But I'm worried about the highway.", "Congratulations on passing your test!",
+     "happy", "smile", "none"),
 ])
 def test_behaviour_from_the_words(user, first, emotion, expression, gesture):
     from app.behavior.manager import behavior_from_text

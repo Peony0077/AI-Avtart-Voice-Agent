@@ -12,10 +12,30 @@ export function accessToken() {
   }
 }
 
+// A random id this browser keeps: each customer has their own memory on the server, and a reconnect
+// (same browser) continues its own conversation instead of waiting in line behind itself.
+export function visitorId() {
+  try {
+    let id = localStorage.getItem('avatarVisitor')
+    if (!id) {
+      id = crypto.randomUUID()
+      localStorage.setItem('avatarVisitor', id)
+    }
+    return id
+  } catch {
+    return ''
+  }
+}
+
 export function wsUrl(path = '/ws') {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const params = new URLSearchParams()
   const token = accessToken()
-  return `${proto}//${location.host}${path}${token ? `?token=${encodeURIComponent(token)}` : ''}`
+  if (token) params.set('token', token)
+  const visitor = visitorId()
+  if (visitor) params.set('visitor', visitor)
+  const query = params.toString()
+  return `${proto}//${location.host}${path}${query ? `?${query}` : ''}`
 }
 
 export class Connection extends EventTarget {
@@ -48,8 +68,9 @@ export class Connection extends EventTarget {
     }
     ws.onclose = (ev) => {
       this.dispatchEvent(new CustomEvent('close', { detail: { code: ev.code, reason: ev.reason } }))
-      if (this.closedByUser || ev.code === 4001 || ev.code === 4003) {
-        this._setStatus(ev.code === 4001 ? 'replaced' : ev.code === 4003 ? 'access denied (token)' : 'closed')
+      if (this.closedByUser || ev.code === 4001 || ev.code === 4002 || ev.code === 4003) {
+        this._setStatus(ev.code === 4001 ? 'replaced' : ev.code === 4002 ? 'ended (inactive)'
+          : ev.code === 4003 ? 'access denied (token)' : 'closed')
         return
       }
       const delay = Math.min(8000, 500 * 2 ** this.retry++)

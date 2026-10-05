@@ -68,8 +68,19 @@ scripts\tunnel.ps1 -Profile avatar -Detach # same, keeps running in the backgrou
 scripts\run.ps1 -Profile avatar -Https     # same network: prints https://<LAN IP>:8000/?token=...
 ```
 
-Open the printed link (it contains a random access token). Type a message — the avatar answers aloud
-with lip sync (**Mute** for text-only replies) — or click **Start voice** to talk. Use headphones.
+Two links are printed (and saved in `logs\tunnel_url.txt` and `logs\customer_url.txt`):
+
+- **Owner link**: everything, including **Settings** (persona, voice with ▶ Listen, business and lead
+  generation, microphone) and **Leads** (what customers left, with a CSV download).
+- **Customer link**: only the conversation. Each customer has their own memory; one conversation runs
+  at a time and the next customer waits in line.
+
+Type a message — the avatar answers aloud with lip sync (**Mute** for text-only replies) — or tap
+**🎤 Tap to talk** on the avatar. Use headphones, with the computer's own microphone: a Bluetooth
+headset's microphone turns the headset into phone-call quality.
+
+For a truly lifelike avatar, build it from a short video of a real person:
+[docs/RECORDING_A_VIDEO_AVATAR.md](docs/RECORDING_A_VIDEO_AVATAR.md).
 
 ## Make it yours
 

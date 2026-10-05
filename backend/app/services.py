@@ -13,17 +13,33 @@ from loguru import logger
 
 from app.core.config import Settings
 from app.core.gpu import gpu_snapshot, vram_free_gib
+from app.leads import LeadStore, is_lead, lead_request, parse_lead
 from app.llm.client import LLMClient
 from app.llm.prompt import system_prompt
 from app.llm.server import LlamaServerSupervisor
-from app.persona import MemoryStore, Persona, PersonaStore, memory_request
+from app.persona import MemoryStore, Persona, PersonaStore, VisitorMemories, memory_request
 
 # Measured on the RTX 3060 (docs/ARCHITECTURE.md); used to refuse loads that would make Windows
 # spill VRAM into system RAM (which silently makes everything ~10x slower).
 VRAM_NEED_MIB = {
     "stt:openai/whisper-large-v3-turbo": 2000, "stt:openai/whisper-small.en": 800,
-    "tts:kokoro": 700, "tts:clone": 2600, "tts:clone_light": 900, "avatar": 4000,
+    "tts:kokoro": 700, "tts:clone": 2600, "tts:clone_light": 900,
+    # measured 2026-10-05 (dev_girl_v3, TAESD): 2610 MiB loaded and warm, ~3000 MiB peak while rendering (torch 2484
+    # reserved + CUDA context). 4000 refused the avatar with 4.35 GiB free while desktop apps held 2.5 GiB.
+    "avatar": 3300,
 }
+# Customers are in the US and Canada: American voices only (the British ones need another phonemizer
+# and accent). Kokoro averages comma-separated voices: Heart's warmth with Bella's brighter energy.
+VOICE_BLENDS = ("af_heart,af_bella", "af_heart,af_nicole")
+# Memory and lead extraction after a conversation use the same LLM as the conversations. They used
+# to start at once and the next conversation's reply waited behind them (a 890 ms gap in the e2e run;
+# with a waiting line the next customer starts the moment the previous one leaves). Now they run only
+# when no conversation has needed the LLM for BACKGROUND_QUIET_S, and stop (to retry later) as soon as
+# one does.
+BACKGROUND_QUIET_S = 1.5
+BACKGROUND_TRIES = 6
+PREVIEW_TEXT = ("Hi there! I'm so glad you stopped by. Tell me a little about what you're looking for, "
+                "and I'll be happy to help.")
 
 
 class Services:
@@ -44,12 +60,37 @@ class Services:
         # persona and memory of the user (persona.py), set from the page; stored under data/
         self.persona_store = PersonaStore(settings.repo_path("data/persona.json"),
                                           Persona(name=settings.persona_name, voice=settings.tts.voice))
-        self.memory_store = MemoryStore(settings.repo_path("data/memory.json"))
+        self.memory_store = MemoryStore(settings.repo_path("data/memory.json"))     # the owner's
+        self.visitor_memories = VisitorMemories(settings.repo_path("data/visitors"))  # each customer's
+        self.lead_store = LeadStore(settings.repo_path("data/leads.jsonl"))
         self.persona = self.persona_store.load()
         self._background: set[asyncio.Task] = set()
+        self._llm_jobs: list[tuple[str, object, int]] = []
+        self._llm_runner: asyncio.Task | None = None
+        self.conversation_busy = lambda: False      # set by api/ws.py: a conversation is using the LLM
 
     def voices(self) -> list[str]:
-        return self.tts.voices() if self.tts is not None and hasattr(self.tts, "voices") else []
+        if self.tts is None or not hasattr(self.tts, "voices"):
+            return []
+        stock = [v for v in self.tts.voices() if v.startswith("a")]
+        blends = [b for b in VOICE_BLENDS if all(v in stock for v in b.split(","))]
+        current = [self.persona.voice] if self.persona.voice and self.persona.voice not in stock + blends else []
+        return blends + stock + current
+
+    async def voice_preview(self, voice: str) -> bytes | None:
+        """A short sample of ``voice`` as WAV (Settings: "Listen"), without changing the persona."""
+        if voice not in self.voices() or not hasattr(self.tts, "synthesize_with"):
+            return None
+        import io
+
+        import numpy as np
+        import soundfile as sf
+
+        async with self.gpu_lock:
+            result = await asyncio.to_thread(self.tts.synthesize_with, PREVIEW_TEXT, voice)
+        buf = io.BytesIO()
+        sf.write(buf, (np.clip(result.audio, -1, 1) * 32767).astype(np.int16), result.sample_rate, format="WAV")
+        return buf.getvalue()
 
     def set_persona(self, data: dict) -> Persona:
         """Apply and store the persona settings from the page (valid fields only)."""
@@ -61,27 +102,81 @@ class Services:
         logger.info(f"persona updated: {persona.name}, voice {persona.voice}, memory {'on' if persona.memory else 'off'}")
         return persona
 
-    def remember(self, transcript: str, generation: int | None = None) -> None:
+    def remember(self, transcript: str, generation: int | None = None, store: MemoryStore | None = None) -> None:
         """After a session: merge what the user said into the memory of earlier sessions (background).
         ``generation``: the memory's when the session began (or the user last said "Forget me" in it); if
-        the memory was erased since, nothing is saved."""
-        generation = self.memory_store.generation if generation is None else generation
+        the memory was erased since, nothing is saved. ``store``: a customer's own memory (default: the
+        owner's)."""
+        store = store or self.memory_store
+        generation = store.generation if generation is None else generation
 
         async def run() -> None:
             try:
-                text = await self.llm.complete(memory_request(self.memory_store.load(), transcript), max_tokens=160)
+                text = await self.llm.complete(memory_request(store.load(), transcript), max_tokens=160)
                 if not text.strip():
                     return
-                if self.memory_store.save(text, generation):
+                if store.save(text, generation):
                     logger.info(f"memory of the user updated ({len(text.split())} words)")
                 else:
                     logger.info("memory update dropped: the user asked to be forgotten meanwhile")
             except Exception as exc:  # noqa: BLE001 - the next session simply starts without it
                 logger.warning(f"memory update failed: {exc!r}")
 
-        task = asyncio.get_running_loop().create_task(run(), name="remember")
-        self._background.add(task)
-        task.add_done_callback(self._background.discard)
+        self._queue_llm_job("memory update", run)
+
+    def capture_lead(self, transcript: str, session_id: str, visitor_id: str | None = None) -> None:
+        """After a conversation: the lead in it, if any (leads.py), saved for the owner (background).
+        The log says only whether there was one: names and contact details stay out of the logs."""
+        async def run() -> None:
+            try:
+                text = await self.llm.complete(lead_request(transcript, self.persona.company), max_tokens=320)
+                lead = parse_lead(text)
+                if is_lead(lead):
+                    self.lead_store.save(lead, session_id, visitor_id)
+                    logger.info(f"session {session_id}: lead saved (interest {lead['interest'] or 'unknown'}, "
+                                f"contact {'yes' if lead['email'] or lead['phone'] else 'no'})")
+                else:
+                    logger.info(f"session {session_id}: no lead in this conversation")
+            except Exception as exc:  # noqa: BLE001 - the conversation is over either way
+                logger.warning(f"lead capture failed: {exc!r}")
+
+        self._queue_llm_job(f"lead capture ({session_id})", run)
+
+    def pending_background(self) -> int:
+        """Memory and lead jobs not finished yet (the e2e data guard waits for 0)."""
+        running = self._llm_runner is not None and not self._llm_runner.done()
+        return len(self._llm_jobs) + (1 if running else 0)
+
+    def _queue_llm_job(self, name: str, job) -> None:
+        self._llm_jobs.append((name, job, 0))
+        if self._llm_runner is None or self._llm_runner.done():
+            self._llm_runner = asyncio.get_running_loop().create_task(self._run_llm_jobs(), name="llm-background")
+            self._background.add(self._llm_runner)
+            self._llm_runner.add_done_callback(self._background.discard)
+
+    async def _run_llm_jobs(self) -> None:
+        """Background LLM jobs, one at a time, only while no conversation needs the LLM."""
+        while self._llm_jobs:
+            quiet, step = 0.0, min(0.25, BACKGROUND_QUIET_S / 2)
+            while quiet < BACKGROUND_QUIET_S:
+                await asyncio.sleep(step)
+                quiet = 0.0 if self.conversation_busy() else quiet + step
+            name, job, tries = self._llm_jobs.pop(0)
+            task = asyncio.get_running_loop().create_task(job(), name=name)
+            while not task.done():
+                await asyncio.wait({task}, timeout=0.1)
+                if not task.done() and self.conversation_busy():
+                    task.cancel()                   # closes its request: the LLM stops at once
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                    if tries + 1 < BACKGROUND_TRIES:
+                        self._llm_jobs.append((name, job, tries + 1))
+                        logger.info(f"{name}: paused, a conversation needs the LLM (retried later)")
+                    else:
+                        logger.warning(f"{name}: given up after {BACKGROUND_TRIES} tries")
+                    break
 
     @property
     def voice_ready(self) -> bool:
@@ -225,6 +320,12 @@ class Services:
         """All of the reply's audio has gone to the worker: it renders the closing tail after it."""
         if self.avatar_ready:
             self.avatar.send_json({"type": "speech_end", "turn_id": turn_id, "total_ms": round(total_ms)})
+
+    def avatar_start_gap(self, gap: float) -> None:
+        """How many loop frames the first lip-synced frame was ahead of the idle frame on screen (the
+        page measures it): the worker starts the next reply that much closer (worker.start_bias)."""
+        if self.avatar is not None and self.avatar.connected:
+            self.avatar.send_json({"type": "start_gap", "gap": gap})
 
     def avatar_playback(self, turn_id: int, event: str, played_ms: float = 0.0) -> None:
         if self.avatar_ready:

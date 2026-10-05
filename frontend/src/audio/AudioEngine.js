@@ -2,6 +2,7 @@
 import micWorkletUrl from './mic-worklet.js?url'
 import playerWorkletUrl from './player-worklet.js?url'
 import { MIC_SAMPLE_RATE, TTS_SAMPLE_RATE } from '../lib/protocol.js'
+import { preferredMic } from './microphones.js'
 
 export class AudioEngine extends EventTarget {
   constructor() {
@@ -55,8 +56,10 @@ export class AudioEngine extends EventTarget {
     ctx.resume().catch(() => {})                    // inside the click
     try {
       try {
+        const deviceId = preferredMic()
         this.stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1,
+            ...(deviceId ? { deviceId: { ideal: deviceId } } : {}) },     // the one chosen in this browser, if still there
         })
       } catch (err) {
         throw new MicError(err?.name || 'Error', err?.message)

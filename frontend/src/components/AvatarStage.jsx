@@ -17,6 +17,7 @@ import { FLAG_TAIL, KIND_IDLE_VIDEO, KIND_VIDEO, parsePacket } from '../lib/prot
 //   frame for three screen refreshes, the next frame is blended in as its time approaches, so motion
 //   moves smoothly instead of in steps (owner: "needs more smooth"; off with ?nosmooth).
 const SMOOTH = typeof location === 'undefined' || !new URLSearchParams(location.search).has('nosmooth')
+const GRAIN = typeof location === 'undefined' || !new URLSearchParams(location.search).has('nograin')
 const FADE_TO_SPEECH_MS = 120
 const FADE_TO_IDLE_MS = 200
 const TAIL_GRACE_MS = 800        // after the audio ends, wait (holding the last frame) this long for the closing tail
@@ -29,7 +30,7 @@ export default function AvatarStage({ conv, voice }) {
   const tailShiftRef = useRef(new Map())     // turnId -> ms the closing tail is played later than its pts
   const fpsRef = useRef(20)
   const rejectUpToRef = useRef(0)
-  const statsRef = useRef({ idle: 0, speech: 0, drawnSpeech: 0, late: 0, avOffsets: [], arrivals: [], clock: null,
+  const statsRef = useRef({ idle: 0, speech: 0, drawnSpeech: 0, late: 0, avOffsets: [], arrivals: [], clock: null, startGaps: [],
     arrivedLate: 0, arrivedTimed: 0, recentArrivals: [], decodeMs: [], tails: 0, idleHolds: 0 })
   const [size, setSize] = useState(null)
 
@@ -79,7 +80,7 @@ export default function AvatarStage({ conv, voice }) {
     })
     window.__avatarStats = statsRef.current // test hook
     return () => { offJson(); offBinary() }
-  }, [conv, voice])
+  }, [conv.onJson, conv.onBinary, voice.engineRef])   // stable: conv and voice are new objects every render
 
   useEffect(() => {
     let raf = 0
@@ -167,8 +168,19 @@ export default function AvatarStage({ conv, voice }) {
         if (SMOOTH && frame && idle.next) { next = idle.next; alpha = idle.alpha }
         if (!frame && lastSrc === 'speech') { src = 'speech'; frame = null }   // hold the last speech frame
       }
+      // a closed ImageBitmap has no size: never draw one (the picture holds for a frame instead of the
+      // draw throwing); counted, so a test notices if it happens again
+      if (frame && !frame.width) { st.detached = (st.detached ?? 0) + 1; frame = null }
+      if (next && !next.width) { st.detached = (st.detached ?? 0) + 1; next = null }
       if (frame) {
         if (canvas.width !== frame.width) { canvas.width = frame.width; canvas.height = frame.height }
+        if (lastSrc === 'idle' && src === 'speech' && lastSpeechIdx !== null && idle.shownIdx != null) {
+          // how far the first lip-synced frame is from the idle frame on screen (loop frames): with the
+          // livelier v3 head motion a few frames apart is a visible jump of the head
+          const gap = Math.round((lastSpeechIdx - idle.shownIdx) * 10) / 10
+          st.startGaps.push(gap)
+          conv.connRef.current?.sendJson({ type: 'avatar_start', gap })   // the worker learns the offset
+        }
         if (lastSrc && src !== lastSrc) {
           // cross-fade from what is on screen now
           const snap = new OffscreenCanvas(canvas.width, canvas.height)
@@ -191,6 +203,7 @@ export default function AvatarStage({ conv, voice }) {
             fade = null
           }
         }
+        if (GRAIN) drawGrain(ctx, canvas.width, canvas.height, now)
         lastSrc = src
         if (window.__avatarTrace) traceFrame(window.__avatarTrace, canvas, src, turn ?? 0, ended)
       }
@@ -204,19 +217,40 @@ export default function AvatarStage({ conv, voice }) {
     }
     raf = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(raf)
-  }, [voice])
+    // not [voice]: voice is a new object every render, and each restart of this loop forgot the picture on
+    // screen (lastSrc) and skipped the cross-fade into speech - a hard cut when she started talking
+  }, [voice.engineRef])
 
   const available = conv.session?.avatar_available
-  const canTalk = conv.status === 'open' && conv.session?.voice_available !== false
+  const canTalk = conv.status === 'open' && conv.session?.voice_available !== false && !conv.waiting
   return (
     <section className="stage" aria-label="Avatar">
       {available ? (
         <canvas ref={canvasRef} data-testid="avatar-canvas" width={size?.[0] ?? 512} height={size?.[1] ?? 512} />
-      ) : (
+      ) : conv.session ? (
         <div className="stage-placeholder">Avatar disabled (start with profile “avatar”)</div>
+      ) : null}
+      {conv.waiting && (
+        <div className="stage-waiting" role="status" data-testid="waiting">
+          <strong>{conv.session?.persona ?? 'She'} is talking with another customer right now.</strong>
+          <span>You're number {conv.waiting} in line. This page connects you automatically - please stay.</span>
+        </div>
+      )}
+      {conv.status === 'ended (inactive)' && (
+        <div className="stage-waiting" role="status" data-testid="ended-inactive">
+          <strong>The conversation ended after a while without activity.</strong>
+          <button type="button" onClick={() => location.reload()}>Talk again</button>
+        </div>
       )}
       {canTalk && (
         <div className="stage-voice">
+          {voice.micHint && (
+            <p className="stage-hint" data-testid="mic-hint">
+              Your Bluetooth headset's microphone makes voices sound like a phone call.{' '}
+              <button type="button" onClick={() => voice.useMic(voice.micHint.deviceId)}>Use {voice.micHint.label}</button>{' '}
+              <button type="button" className="secondary" onClick={voice.dismissMicHint}>Keep</button>
+            </p>
+          )}
           {voice.error && <p className="stage-error" role="alert" data-testid="stage-error">{voice.error}</p>}
           {voice.active ? (
             <span className={`listening ${voice.speechDetected ? 'hot' : ''}`} data-testid="listening">
@@ -241,7 +275,11 @@ function continueIdleAfter(idle, idx, now) {
   idle.pos = idx + 1
   idle.at = now
   while (idle.buf.length && idle.buf[0].idx < idle.staleBelow) releaseIdle(idle, idle.buf.shift())
-  if (idle.shown) { idle.shown.close(); idle.shown = null }   // stale: never shown again
+  // stale: never shown again - but if it is still queued (a reply that started a little behind the idle
+  // on screen and was cut short) it is released with the queue, or it would be drawn after close()
+  // ("drawImage: the image source is detached", 7x in a 10-minute soak)
+  if (idle.shown && !idle.buf.some((f) => f.bmp === idle.shown)) idle.shown.close()
+  idle.shown = null
 }
 
 // Close an idle frame unless it is the one on screen (that one is closed when it is replaced).
@@ -270,6 +308,7 @@ function nextIdleFrame(idle, now, fps, st) {
   for (const old of buf.splice(0, i)) releaseIdle(idle, old)
   if (idle.shown && idle.shown !== buf[0].bmp) idle.shown.close()
   idle.shown = buf[0].bmp
+  idle.shownIdx = idle.pos           // the loop position on screen (speech joins it: startGaps)
   if (buf.length > 1 && buf[1].idx - buf[0].idx <= 3) {      // in-between position towards the next frame
     idle.next = buf[1].bmp
     idle.alpha = Math.min(1, Math.max(0, (idle.pos - buf[0].idx) / (buf[1].idx - buf[0].idx)))
@@ -323,4 +362,46 @@ function dropTurnsUpTo(map, turnId) {
   for (const [id, list] of map) {
     if (id <= turnId) { list.forEach((f) => f.bmp.close()); map.delete(id) }
   }
+}
+
+// Camera grain: a real camera's picture is never perfectly clean and still - faint sensor noise changes
+// every frame. Without it the background is a frozen, too-clean image, one of the cues that makes the
+// avatar look synthetic (owner: "must look 100% realistic"). Painted into the avatar canvas at low
+// opacity, a new noise pattern ~25 times a second; off with ?nograin. (A separate canvas with a CSS
+// blend mode made the browser re-composite everything every frame: 6.9 % of the lip-synced frames
+// were drawn late in a soak, 0.2 % without it.)
+let grainTiles = null
+let grainOffset = [0, 0]
+let grainAt = 0
+function drawGrain(ctx, w, h, now) {
+  if (!grainTiles) grainTiles = Array.from({ length: 4 }, () => noiseTile(128))
+  if (now - grainAt > 40) {
+    grainAt = now
+    grainOffset = [Math.floor(Math.random() * 128), Math.floor(Math.random() * 128),
+      grainTiles[Math.floor(Math.random() * grainTiles.length)]]
+  }
+  const [dx, dy, tile] = grainOffset
+  if (!tile) return
+  ctx.save()
+  ctx.globalAlpha = 0.06
+  ctx.globalCompositeOperation = 'overlay'
+  ctx.fillStyle = ctx.createPattern(tile, 'repeat')
+  ctx.translate(-dx, -dy)
+  ctx.fillRect(0, 0, w + dx, h + dy)
+  ctx.restore()
+}
+
+// Grey sensor-like noise (luminance only, roughly Gaussian) on a mid-grey base, for the overlay blend.
+function noiseTile(size) {
+  const c = document.createElement('canvas')
+  c.width = c.height = size
+  const ctx = c.getContext('2d')
+  const img = ctx.createImageData(size, size)
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = 128 + ((Math.random() + Math.random() + Math.random() - 1.5) * 70)
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v
+    img.data[i + 3] = 255
+  }
+  ctx.putImageData(img, 0, 0)
+  return c
 }

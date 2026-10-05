@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 
 import cv2
+import numpy as np
 import torch
 from loguru import logger
 
@@ -44,6 +45,23 @@ def variant_name(expression: str, gesture: str) -> str:
     return f"{expression}__{gesture}"
 
 
+# Rendered frames are kept JPEG-compressed (visually lossless) until their loop is prepared: raw, the
+# v3 build (6 loops + 11 000 gesture frames, 0.8 MB each) needed ~9 GB of RAM and was killed on this
+# 16 GB PC; compressed ~1.4 GB, and only one loop is decoded at a time.
+KEEP_QUALITY = 97
+
+
+def keep(img_bgr) -> bytes:
+    return cv2.imencode(".jpg", img_bgr, [cv2.IMWRITE_JPEG_QUALITY, KEEP_QUALITY])[1].tobytes()
+
+
+def unpack(frame):
+    """A kept frame (bytes) as BGR; frames that are already arrays pass through."""
+    if isinstance(frame, bytes | bytearray):
+        return cv2.imdecode(np.frombuffer(frame, np.uint8), cv2.IMREAD_COLOR)
+    return frame
+
+
 def render_frames(photo: Path, fps: int, seconds: float, names: list[str], size: int,
                   gestures: dict[str, tuple[str, ...]], pingpong: bool = False) -> tuple[dict, dict, dict]:
     """Base loops (all frames) and gesture variants (only the frames inside gesture windows)."""
@@ -60,7 +78,7 @@ def render_frames(photo: Path, fps: int, seconds: float, names: list[str], size:
     rendered = 0
     for name in names:
         t1 = time.perf_counter()
-        loops[name] = [bgr(rig.render(src, p)) for p in loop_params(curves, name)]
+        loops[name] = [keep(bgr(rig.render(src, p))) for p in loop_params(curves, name)]
         rendered += len(loops[name])
         timings[f"render_{name}_s"] = round(time.perf_counter() - t1, 2)
         logger.info(f"rendered loop {name}: {len(loops[name])} frames in {timings[f'render_{name}_s']}s")
@@ -68,7 +86,7 @@ def render_frames(photo: Path, fps: int, seconds: float, names: list[str], size:
         for expression in expressions:
             t1 = time.perf_counter()
             params = gesture_params(curves, expression, gesture, fps, gap(pingpong))
-            variants[(expression, gesture)] = {f: bgr(rig.render(src, p)) for f, p in params.items()}
+            variants[(expression, gesture)] = {f: keep(bgr(rig.render(src, p))) for f, p in params.items()}
             rendered += len(params)
             logger.info(f"rendered {variant_name(expression, gesture)}: {len(params)} frames "
                         f"in {time.perf_counter() - t1:.1f}s")
@@ -86,7 +104,7 @@ def video_params(expression: str) -> RigParams:
     stay), only the expression's offsets are added."""
     e = EXPRESSIONS[expression]
     gx, gy = e.get("gaze", (0.0, 0.0))
-    return RigParams(pitch=e.get("pitch", 0.0), yaw=e.get("yaw", 0.0), eye_open=e.get("eye", 1.0),
+    return RigParams(pitch=e.get("pitch", 0.0), yaw=e.get("yaw", 0.0), roll=e.get("roll", 0.0), eye_open=e.get("eye", 1.0),
                      gaze_x=gx, gaze_y=gy, smile=e["smile"], eyebrow=e["eyebrow"])
 
 
@@ -220,7 +238,7 @@ def main() -> None:
         loops, variants, timings = render_frames(args.photo, args.fps, args.seconds, names, args.size, to_render,
                                                  args.pingpong)
     for name, frames in loops.items():  # preview: a mid-loop frame
-        cv2.imwrite(str(out / "preview" / f"{name}.jpg"), frames[len(frames) // 3])
+        cv2.imwrite(str(out / "preview" / f"{name}.jpg"), unpack(frames[len(frames) // 3]))
 
     from engine import Loop, MuseTalkEngine
     from face_bbox import FaceBoxer
@@ -230,21 +248,27 @@ def main() -> None:
     boxer = FaceBoxer()
     timings["musetalk_load_s"] = round(time.perf_counter() - t0, 2)
     prepared: dict[str, Loop] = {}
-    for name, frames in loops.items():
+    n_loop = len(next(iter(loops.values())))       # (the frames are freed while preparing)
+    for name in list(loops):
         t1 = time.perf_counter()
+        frames = [unpack(f) for f in loops.pop(name)]
         prepared[name] = engine.prepare_loop(name, frames, boxer, jpeg_quality=args.jpeg, pingpong=args.pingpong)
+        del frames
         prepared[name].save(out / "loops" / name)
         timings[f"prepare_{name}_s"] = round(time.perf_counter() - t1, 2)
     t1 = time.perf_counter()
-    for (expression, gesture), frames in variants.items():
+    for (expression, gesture) in list(variants):
+        frames = {f: unpack(img) for f, img in variants.pop((expression, gesture)).items()}
         base = prepared.get(expression) or Loop.load(out / "loops" / expression)
         name = variant_name(expression, gesture)
         engine.prepare_delta(base, name, frames, boxer, jpeg_quality=args.jpeg).save(out / "loops" / name)
+        del frames
     timings["prepare_gestures_s"] = round(time.perf_counter() - t1, 1)
 
-    n_forward = int(args.seconds * args.fps) if video_info is None else len(next(iter(loops.values())))
+    n_forward = int(args.seconds * args.fps) if video_info is None else n_loop
     if not (args.gestures_only or update):
         meta = {"id": args.id, "photo": str(args.photo) if args.photo else None, "fps": args.fps, "size": args.size,
+                "motion": 3,     # motion.py v3: lively head (short moves, micro-motion, follows the eyes), stronger faces
                 "loops": names, "frames_per_loop": 2 * n_forward if args.pingpong else n_forward,
                 "pingpong": args.pingpong, "timings": timings}
         if video_info is not None:

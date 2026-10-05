@@ -33,4 +33,4 @@ ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 # workers run from their own folder (separate venvs): their sibling modules are first-party
-known-first-party = ["app", "catchup", "common", "engine", "gestures", "motion", "face_rig", "face_bbox", "worker", "lipsync", "body_motion", "video_source"]
+known-first-party = ["app", "catchup", "common", "engine", "gestures", "motion", "face_rig", "face_bbox", "worker", "lipsync", "body_motion", "video_source", "speech_body"]

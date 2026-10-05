@@ -338,9 +338,11 @@ class MuseTalkEngine:
         img = (img / 2 + 0.5).clamp(0, 1).mul(255).round().to(torch.uint8)
         return idx, img.permute(0, 2, 3, 1).cpu().numpy()[..., ::-1]   # RGB → BGR
 
-    def compose(self, loop: Loop, i: int, face_bottom: np.ndarray) -> np.ndarray:
-        """CPU stage: paste the generated lower face into loop frame i (MuseTalk blending)."""
-        frame = loop.frame(i)
+    def compose(self, loop: Loop, i: int, face_bottom: np.ndarray, background: np.ndarray | None = None) -> np.ndarray:
+        """CPU stage: paste the generated lower face into loop frame i (MuseTalk blending).
+        ``background``: another picture of frame i to paste into (two expressions blended) - one paste,
+        so the mouth cannot appear twice."""
+        frame = loop.frame(i) if background is None else background.copy()
         x1, y1, x2, y2 = loop.coords[i]
         crop = cv2.resize(frame[y1:y2, x1:x2], (256, 256), interpolation=cv2.INTER_AREA)
         h = face_bottom.shape[0]

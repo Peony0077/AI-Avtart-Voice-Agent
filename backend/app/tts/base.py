@@ -45,8 +45,48 @@ def trim_silence(result: TTSResult, pause_ms: float, lead_ms: float = 20.0, rele
     pause = np.zeros(int(pause_ms * sr / 1000), dtype=audio.dtype)
     shift = start / sr
     words = [(w, max(0.0, s - shift), max(0.0, e - shift)) for w, s, e in result.words]
-    return TTSResult(audio=np.concatenate([audio[start:end], pause]), sample_rate=sr, words=words,
-                     synth_ms=result.synth_ms)
+    body, words = cap_pauses(audio[start:end], sr, words, threshold=max(1e-4, threshold * peak))
+    return TTSResult(audio=np.concatenate([body, pause]), sample_rate=sr, words=words, synth_ms=result.synth_ms)
+
+
+def cap_pauses(audio: np.ndarray, sr: int, words: list, max_ms: float = 320.0, threshold: float = 0.01,
+               win_ms: float = 10.0) -> tuple[np.ndarray, list]:
+    """Shorten silences inside a clause to ``max_ms``. Kokoro pauses up to ~520 ms at a comma (at
+    speed 0.95: "...their surroundings, thanks to special cells ..."), which sounds halting; people
+    pause ~200-400 ms there. The excess is cut from the middle of the silence (near-silent samples, so
+    the cut is inaudible); word timestamps after it move up."""
+    win = max(1, int(win_ms * sr / 1000))
+    n = len(audio) // win
+    if n < 3:
+        return audio, words
+    quiet = np.abs(audio[: n * win]).reshape(n, win).max(axis=1) <= threshold
+    keep = int(max_ms / win_ms)
+    cuts = []                                      # (start sample, length) to remove
+    k = 0
+    while k < n:
+        if not quiet[k]:
+            k += 1
+            continue
+        j = k
+        while j < n and quiet[j]:
+            j += 1
+        if 0 < k and j < n and j - k > keep:       # inside the clause, not at its ends
+            excess = j - k - keep
+            cuts.append(((k + keep // 2) * win, excess * win))
+        k = j
+    if not cuts:
+        return audio, words
+    pieces, pos = [], 0
+    for start, length in cuts:
+        pieces.append(audio[pos:start])
+        pos = start + length
+    pieces.append(audio[pos:])
+
+    def moved(t: float) -> float:
+        removed = sum(length for start, length in cuts if start < t * sr)
+        return max(0.0, t - removed / sr)
+
+    return np.concatenate(pieces), [(w, moved(s), moved(e)) for w, s, e in words]
 
 
 class TTSEngine(Protocol):

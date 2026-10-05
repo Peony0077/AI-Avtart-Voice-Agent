@@ -5,6 +5,11 @@ and voice in the page (stored in data/persona.json, applied to the next reply). 
 default; HeyGen's LiveAvatar keeps "a single accumulated summary" of earlier sessions too) a short
 summary of what the user said about themselves is kept in data/memory.json, on this PC only, and
 given to the LLM in the next session; the page's "Forget me" erases it.
+
+Business (owner, 2026-10-05: "the avatar agent should lead generation"): the company, what it offers
+and the next step customers should take (book a call, get a quote, ...), for the lead-generation
+conversation (llm/prompt.py) and the leads (leads.py). Customers on the customer link each have their
+own memory (VisitorMemories), keyed by a random id their browser keeps.
 """
 from __future__ import annotations
 
@@ -20,6 +25,9 @@ MAX_NAME = 40
 MAX_PERSONALITY = 600
 MAX_GREETING = 200
 MAX_MEMORY_WORDS = 90
+MAX_COMPANY = 80
+MAX_OFFER = 800
+MAX_NEXT_STEP = 200
 
 
 @dataclass
@@ -29,12 +37,20 @@ class Persona:
     greeting: str = ""
     voice: str = ""
     memory: bool = True
+    company: str = ""          # the business she represents
+    offer: str = ""            # what it offers, in the owner's words
+    next_step: str = ""        # what a customer should do next ("book a free 15-minute call")
+    lead_gen: bool = True      # guide customers towards the next step and take their contact details
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     def greeting_text(self) -> str:
-        return self.greeting.strip() or f"Hi, I'm {self.name}! How can I help you today?"
+        if self.greeting.strip():
+            return self.greeting.strip()
+        if self.company:
+            return f"Hi there! I'm {self.name} from {self.company}. What brings you here today?"
+        return f"Hi there! I'm {self.name}. Thanks for stopping by! How can I help you today?"
 
 
 class PersonaStore:
@@ -75,6 +91,11 @@ class PersonaStore:
             changes["voice"] = str(data["voice"])
         if "memory" in data:
             changes["memory"] = bool(data["memory"])
+        for key, limit in (("company", MAX_COMPANY), ("offer", MAX_OFFER), ("next_step", MAX_NEXT_STEP)):
+            if key in data:
+                changes[key] = clean(data[key], limit)
+        if "lead_gen" in data:
+            changes["lead_gen"] = bool(data["lead_gen"])
         return replace(current, **changes)
 
 
@@ -108,6 +129,25 @@ class MemoryStore:
     def clear(self) -> None:
         self.generation += 1
         self.path.unlink(missing_ok=True)
+
+
+_VISITOR_ID = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+
+
+class VisitorMemories:
+    """One MemoryStore per customer (data/visitors/<id>.json): customers must never be greeted with
+    another customer's name. The stores are kept, so each one's "Forget me" generation stays valid."""
+
+    def __init__(self, folder: Path) -> None:
+        self.folder = folder
+        self._stores: dict[str, MemoryStore] = {}
+
+    def store(self, visitor_id: str) -> MemoryStore | None:
+        if not _VISITOR_ID.match(visitor_id or ""):
+            return None
+        if visitor_id not in self._stores:
+            self._stores[visitor_id] = MemoryStore(self.folder / f"{visitor_id}.json")
+        return self._stores[visitor_id]
 
 
 def memory_request(earlier: str | None, user_said: str) -> list[dict]:

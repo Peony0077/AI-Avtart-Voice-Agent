@@ -76,12 +76,15 @@ class SpeechOutput:
             if hasattr(self.tts, "stream"):
                 seq = await self._stream_clause(clause, seq)
                 continue
+            spoken = normalize_for_speech(clause)
+            if not any(ch.isalnum() for ch in spoken):
+                continue                                  # only a list number ("2."): nothing to say
             t_req = time.perf_counter()
             async with self.gpu_lock:
                 if self.turn.is_cancelled:
                     break
                 t_lock = time.perf_counter()
-                result = await asyncio.to_thread(self.tts.synthesize, normalize_for_speech(clause))
+                result = await asyncio.to_thread(self.tts.synthesize, spoken)
             # the engine's ~0.3 s + ~0.5 s padding made ~0.8 s gaps between sentences: natural pause instead
             result = trim_silence(result, pause_after(clause))
             if seq == 0:

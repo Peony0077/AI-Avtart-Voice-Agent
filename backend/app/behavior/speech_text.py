@@ -72,8 +72,23 @@ _SPEECH_RULES: list[tuple[re.Pattern, object]] = [
      lambda m: f"{m[1]} {_UNITS[m[2]]}"),
 ]
 
+# Numbered lists (the model writes them despite the prompt): the chunker cut "2." and "3." into
+# clauses of their own, spoken "Two." / "Three." with pauses around them, and a clause ending in a
+# line break and "1." was spoken "... One." with a long pause (890 ms of silence in the e2e reply).
+# Spoken, the items just follow each other; the chat still shows the list.
+_LONE_MARK = re.compile(r"^\s*\d{1,2}[.)]\s*$")
+_TRAIL_MARK = re.compile(r"\s*\n\s*\d{1,2}[.)]\s*$")
+_LIST_MARK = re.compile(r"(^|\n)\s*(?:\d{1,2}[.)]|[-•])\s+")
+
 
 def normalize_for_speech(text: str) -> str:
+    """What TTS gets for a clause ('' = nothing to say)."""
+    if _LONE_MARK.match(text):
+        return ""
+    text = _TRAIL_MARK.sub("", text)
+    text = _LIST_MARK.sub(r"\1", text).replace("\n", " ")
     for pattern, repl in _SPEECH_RULES:
         text = pattern.sub(repl, text)
     return collapse_spaces(text)
+
+

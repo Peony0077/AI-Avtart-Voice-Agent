@@ -15,7 +15,8 @@ def test_persona_settings_are_validated_and_stored(tmp_path):
     assert store.load() == p
     q = PersonaStore.merge(p, {"name": "", "voice": "not_a_voice"}, voices=["af_heart"])
     assert (q.name, q.voice) == ("Mia", "bf_emma")                        # empty name / unknown voice ignored
-    assert Persona(name="Ava").greeting_text().startswith("Hi, I'm Ava")
+    assert Persona(name="Ava").greeting_text().startswith("Hi there! I'm Ava")
+    assert "from Acme Solar" in Persona(name="Ava", company="Acme Solar").greeting_text()
 
 
 def test_memory_is_kept_short_and_can_be_forgotten(tmp_path):
@@ -62,18 +63,26 @@ def test_forget_me_wins_over_an_update_that_was_already_running(tmp_path):
     assert mem.load() == "The user is Kim."
 
 
-async def test_remember_drops_the_words_of_a_session_from_before_forget_me(tmp_path):
-    import asyncio
-
+def background_services(llm, store, monkeypatch):
+    """A Services with only what the background LLM jobs use (no models)."""
+    import app.services as services_mod
     from app.services import Services
+    monkeypatch.setattr(services_mod, "BACKGROUND_QUIET_S", 0.05)
+    svc = Services.__new__(Services)
+    svc.llm, svc.memory_store, svc._background = llm, store, set()
+    svc._llm_jobs, svc._llm_runner, svc.conversation_busy = [], None, lambda: False
+    return svc
+
+
+async def test_remember_drops_the_words_of_a_session_from_before_forget_me(tmp_path, monkeypatch):
+    import asyncio
 
     class SlowLLM:
         async def complete(self, messages, max_tokens=0):
             await asyncio.sleep(0.05)
             return "The user is Sam."
 
-    svc = Services.__new__(Services)                         # only what remember() uses
-    svc.llm, svc.memory_store, svc._background = SlowLLM(), MemoryStore(tmp_path / "memory.json"), set()
+    svc = background_services(SlowLLM(), MemoryStore(tmp_path / "memory.json"), monkeypatch)
     began = svc.memory_store.generation                      # a tab opened before the erase
     svc.memory_store.clear()
     svc.remember("- I'm Sam.", began)
@@ -98,3 +107,65 @@ def test_the_whole_session_is_remembered_but_not_what_came_before_forget_me():
     assert mem.user_said() == ""
     mem.add("I live in Osaka.", "Nice!")
     assert mem.user_said() == "- I live in Osaka."
+
+
+def test_business_settings_are_validated_and_reach_the_prompt():
+    from app.llm.prompt import lead_rules
+    p = PersonaStore.merge(Persona(name="Ava"), {"company": " Acme Solar ", "offer": "Home solar panels. " * 100,
+                                                 "next_step": "book a free roof check", "lead_gen": False}, voices=None)
+    assert p.company == "Acme Solar" and len(p.offer) == 800 and p.lead_gen is False
+    prompt = system_prompt("Ava", company="Acme Solar", lead=lead_rules("Acme Solar", "Home solar panels.", "book a free roof check"))
+    assert "assistant for Acme Solar" in prompt and "book a free roof check" in prompt and "Home solar panels." in prompt
+    assert "United States or Canada" in prompt and "American spelling" in prompt
+    assert "a short call with our team" in lead_rules()                  # a next step even when none is set
+    assert "Your goal" not in system_prompt("Ava")                        # lead generation off: no sales rules
+
+
+def test_each_customer_has_their_own_memory(tmp_path):
+    from app.persona import VisitorMemories
+    v = VisitorMemories(tmp_path / "visitors")
+    a, b = v.store("visitor-aaaa-1111"), v.store("visitor-bbbb-2222")
+    a.save("The user is Sam.")
+    assert b.load() is None and a.load() == "The user is Sam."
+    assert v.store("visitor-aaaa-1111") is a                                 # the same store (its Forget-me counter)
+    assert v.store("../../etc/passwd") is None and v.store("") is None      # only plain ids
+
+
+def test_time_questions_get_the_customers_own_time_the_american_way():
+    from app.llm.prompt import time_hint
+    now = 1791158400.0                                        # 2026-10-05 00:00 UTC (a Monday)
+    hint = time_hint("What time is it?", now=now, utc_offset_min=-4 * 60)   # New York (EDT)
+    assert "Sunday, October 4, 2026, 8:00 PM" in hint and "where the customer is" in hint
+    assert time_hint("Tell me a joke.", now=now, utc_offset_min=0) == ""
+
+
+async def test_background_llm_jobs_give_way_to_a_conversation(tmp_path, monkeypatch):
+    """Memory and lead extraction wait while a conversation uses the LLM, stop when one starts, and
+    run again later (the next reply must never wait behind them)."""
+    import asyncio
+
+    calls = {"started": 0, "finished": 0}
+
+    class LLM:
+        async def complete(self, messages, max_tokens=0):
+            calls["started"] += 1
+            await asyncio.sleep(0.3)
+            calls["finished"] += 1
+            return "The user is Sam."
+
+    store = MemoryStore(tmp_path / "memory.json")
+    svc = background_services(LLM(), store, monkeypatch)
+    busy = {"now": True}
+    svc.conversation_busy = lambda: busy["now"]
+    svc.remember("- I'm Sam.")
+    await asyncio.sleep(0.3)
+    assert calls["started"] == 0                              # a conversation is on: it waits
+    busy["now"] = False
+    await asyncio.sleep(0.2)
+    assert calls["started"] == 1                              # quiet: it starts ...
+    busy["now"] = True
+    await asyncio.sleep(0.2)
+    assert calls["finished"] == 0                             # ... and stops when a conversation needs the LLM
+    busy["now"] = False
+    await asyncio.gather(*svc._background)
+    assert calls["started"] == 2 and calls["finished"] == 1 and store.load() == "The user is Sam."

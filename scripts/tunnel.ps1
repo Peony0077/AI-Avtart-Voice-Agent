@@ -23,6 +23,9 @@ if (-not (Test-Path $exe)) {
 }
 $token = -join ((48..57) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ })
 $env:AVATAR_ACCESS_TOKEN = $token
+# the customer link: only the conversation (no settings or leads), each customer with their own memory
+$customer = -join ((48..57) + (97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ })
+$env:AVATAR_CUSTOMER_TOKEN = $customer
 & (Join-Path $root 'scripts\run.ps1') -Profile $Profile -Port $Port | Out-Host
 $log = Join-Path $root 'logs\cloudflared.log'
 $p = Start-Process $exe -ArgumentList @('tunnel', '--no-autoupdate', '--url', "http://127.0.0.1:$Port") -PassThru -WindowStyle Hidden -RedirectStandardError $log
@@ -34,8 +37,10 @@ for ($i = 0; $i -lt 60 -and -not $url; $i++) {
 }
 if (-not $url) { Stop-Process -Id $p.Id -Force; throw "tunnel did not start; see $log" }
 "$url/?token=$token" | Out-File (Join-Path $root 'logs\tunnel_url.txt') -Encoding ascii
+"$url/?token=$customer" | Out-File (Join-Path $root 'logs\customer_url.txt') -Encoding ascii
 Write-Host ''
-Write-Host "Open on your PC:  $url/?token=$token" -ForegroundColor Green
+Write-Host "Owner link (settings, leads):       $url/?token=$token" -ForegroundColor Green
+Write-Host "Customer link (conversation only):  $url/?token=$customer" -ForegroundColor Green
 Write-Host '(use headphones; allow the microphone when the browser asks)'
 if ($Detach) { Write-Host "tunnel pid $($p.Id) runs in the background; stop everything with scripts\run.ps1 -Stop"; exit 0 }
 Write-Host "tunnel pid $($p.Id) - press Ctrl+C to stop"
