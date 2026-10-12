@@ -22,7 +22,9 @@ export default function App() {
   const [draft, setDraft] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [leadsOpen, setLeadsOpen] = useState(false)
-  const owner = conv.role === 'owner'          // the customer link shows only the conversation
+  // the customer link shows only the conversation; the owner's tools appear once the session says
+  // "owner" (role is null until then: a customer waiting in line is not shown them)
+  const owner = conv.role === 'owner'
   const listRef = useRef(null)
   const busy = conv.state === 'THINKING' || conv.state === 'SPEAKING'
   // "Listening" only while the microphone is really on: the badge said Listening with the microphone
@@ -53,7 +55,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app ${owner ? 'owner' : 'customer'}`}>
+    <div className={`app ${conv.role ?? 'pending'}`}>
       <header className="topbar">
         <strong>{conv.session?.persona ?? 'AI Avatar'}</strong>
         <span className={`badge state-${badge.cls}`} data-testid="state" data-state={conv.state}>{badge.label}</span>
@@ -109,8 +111,9 @@ export default function App() {
           <ol className="messages" ref={listRef} data-testid="messages">
             {conv.messages.map((m, i) => (
               <li key={i} className={`msg ${m.role}`} data-role={m.role} data-turn={m.turnId}>
-                <span className="text">{m.text || (m.role === 'assistant' ? '…' : '')}</span>
+                <span className="text">{m.text || (m.role === 'assistant' && !m.error ? '…' : '')}</span>
                 {m.interrupted && <span className="tag">interrupted</span>}
+                {m.error && <span className="error" role="alert" data-testid="turn-error">{m.error}</span>}
                 {m.citations?.length > 0 && (
                   <ul className="sources" data-testid="sources">
                     {m.citations.map((c) => (

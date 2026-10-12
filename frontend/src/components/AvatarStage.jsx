@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { H264Stream } from '../lib/h264.js'
-import { FLAG_KEY, FLAG_TAIL, KIND_IDLE_H264, KIND_IDLE_VIDEO, KIND_VIDEO, KIND_VIDEO_H264, parsePacket } from '../lib/protocol.js'
+import { FLAG_KEY, FLAG_TAIL, KIND_IDLE_H264, KIND_IDLE_VIDEO, KIND_VIDEO, KIND_VIDEO_H264, packetKind,
+  parsePacket } from '../lib/protocol.js'
 
 // Renders the avatar video.
 // - Speech frames are shown by the audio clock: the frame whose pts (ms on the turn's audio timeline)
@@ -30,6 +31,10 @@ const TAIL_GRACE_MS = 800        // after the audio ends, wait (holding the last
 const MAX_START_HOLD_MS = 400
 const REMOTE_START_HOLD_MS = 150
 const LOCAL_PAGE = typeof location === 'undefined' || ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)
+// A reply's frames are ImageBitmaps (~1 MB each at 512x512, 4 MB at 1024x1024): bounded, so frames of a
+// reply whose audio never plays (or never ends) cannot pile up for the whole session.
+const MAX_TURN_SECONDS = 20     // frames kept per reply, as seconds of video
+const KEEP_TURN_FRAMES = 2      // replies whose frames are kept besides the one being heard (the newest)
 const FORCED_HOLD_MS = (() => {         // ?hold=300: begin with this hold (tests, a known slow network)
   const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('hold')
   const ms = v === null ? NaN : Number(v)
@@ -46,7 +51,7 @@ function nextStartHold(hold, worst) {
 
 export default function AvatarStage({ conv, voice }) {
   const canvasRef = useRef(null)
-  const idleRef = useRef({ buf: [], pos: null, at: 0, staleBelow: -1, shown: null })
+  const idleRef = useRef({ buf: [], pos: null, at: 0, staleBelow: -1, shown: null, staleRun: 0, restarted: false })
   const speechRef = useRef(new Map())        // turnId -> [{pts, idx, bmp}] sorted by pts
   const doneTurnsRef = useRef(new Set())     // turns whose frames (and closing tail) have been shown
   const tailShiftRef = useRef(new Map())     // turnId -> ms the closing tail is played later than its pts
@@ -77,10 +82,23 @@ export default function AvatarStage({ conv, voice }) {
 
   useEffect(() => {
     const offJson = conv.onJson((msg) => {
-      if (msg.type === 'session' && msg.avatar?.size) setSize(msg.avatar.size)
-      if (msg.type === 'session' && msg.avatar?.fps) fpsRef.current = msg.avatar.fps
+      // 'avatar': the avatar worker (re)connected during the session - its size, fps and frame numbers
+      if ((msg.type === 'session' || msg.type === 'avatar') && msg.avatar?.size) setSize(msg.avatar.size)
+      if ((msg.type === 'session' || msg.type === 'avatar') && msg.avatar?.fps) fpsRef.current = msg.avatar.fps
+      if (msg.type === 'avatar') {
+        resetIdle(idleRef.current)
+        h264Ref.current.idle?.close()
+        h264Ref.current.idle = null
+      }
       if (msg.type === 'session') {                 // a new session: turn ids start again
+        resetIdle(idleRef.current)                  // and the idle frame numbers may too (another worker)
         Object.assign(jitterRef.current, { turn: 0, worst: null, done: 0 })
+        rejectUpToRef.current = 0
+        doneTurnsRef.current.clear()
+        tailShiftRef.current.clear()
+        dropTurnsUpTo(speechRef.current, Infinity)
+        for (const d of h264Ref.current.turns.values()) d.close()
+        h264Ref.current.turns.clear()
         setStartHold(FORCED_HOLD_MS ?? (LOCAL_PAGE ? 0 : Math.max(REMOTE_START_HOLD_MS, jitterRef.current.hold)))
       }
       if (msg.type === 'interrupt') {
@@ -93,7 +111,17 @@ export default function AvatarStage({ conv, voice }) {
     const addIdle = (idx, bmp) => {
       statsRef.current.idle++
       const idle = idleRef.current
-      if (idx < idle.staleBelow || idle.buf.some((f) => f.idx === idx)) { bmp.close(); return }
+      if (idx < idle.staleBelow || (idle.pos !== null && idx < idle.pos - 2 * fpsRef.current)) {
+        // Stale (from before the reply that just ended) - or a restarted avatar worker, which numbers its
+        // frames from 0 again: every frame was dropped and the idle video froze until the next reply
+        // ended. Stragglers are at most ~1 s of video (the server drops more, outbox.py); a longer run of
+        // "stale" frames is a new numbering, and the idle video starts over with it.
+        if (++idle.staleRun < 2 * fpsRef.current) { bmp.close(); return }
+        resetIdle(idle)
+        statsRef.current.idleRestarts = (statsRef.current.idleRestarts ?? 0) + 1
+      }
+      idle.staleRun = 0
+      if (idle.buf.some((f) => f.idx === idx)) { bmp.close(); return }
       idle.buf.push({ idx, bmp })
       idle.buf.sort((a, b) => a.idx - b.idx)
       while (idle.buf.length > 40) releaseIdle(idle, idle.buf.shift())
@@ -122,9 +150,15 @@ export default function AvatarStage({ conv, voice }) {
         st.decodeMs.push(decodeMs)
         if (st.decodeMs.length > 2000) st.decodeMs.shift()
         const list = speechRef.current.get(p.turnId) ?? []
+        if (list.length >= MAX_TURN_SECONDS * fpsRef.current) {    // enough waiting (its audio does not play)
+          st.capped = (st.capped ?? 0) + 1
+          bmp.close()
+          return
+        }
         list.push({ pts: p.ptsMs, idx: p.seq, tail: !!(p.flags & FLAG_TAIL), bmp })
         list.sort((a, b) => a.pts - b.pts)
         speechRef.current.set(p.turnId, list)
+        dropOldTurns(speechRef.current, voice.engineRef.current?.playingTurn)
       }
     }
     // H.264: one decoder for the idle video, one per reply (each reply is its own stream)
@@ -136,7 +170,8 @@ export default function AvatarStage({ conv, voice }) {
       if (p.kind === KIND_IDLE_H264) {
         if (!h264.idle || h264.idle.broken) {
           h264.idle?.close()
-          h264.idle = new H264Stream((m, bmp) => addIdle(m.idx, bmp), () => { st.h264Errors = (st.h264Errors ?? 0) + 1 })
+          h264.idle = new H264Stream((m, bmp) => addIdle(m.idx, bmp), () => { st.h264Errors = (st.h264Errors ?? 0) + 1 },
+            fpsRef.current)
         }
         if (!h264.idle.feed(p.payload, key, { idx: p.seq })) st.h264Waiting = (st.h264Waiting ?? 0) + 1
         return
@@ -147,7 +182,7 @@ export default function AvatarStage({ conv, voice }) {
         dec?.close()
         for (const [id, d] of h264.turns) if (id < p.turnId) { d.close(); h264.turns.delete(id) }   // older replies
         dec = new H264Stream((m, bmp) => addSpeech(m, bmp, performance.now() - m.fed),
-          () => { st.h264Errors = (st.h264Errors ?? 0) + 1 })
+          () => { st.h264Errors = (st.h264Errors ?? 0) + 1 }, fpsRef.current)
         h264.turns.set(p.turnId, dec)
       }
       if (!dec.feed(p.payload, key, { turnId: p.turnId, ptsMs: p.ptsMs, seq: p.seq, flags: p.flags, fed: performance.now() })) {
@@ -155,9 +190,10 @@ export default function AvatarStage({ conv, voice }) {
       }
     }
     const offBinary = conv.onBinary(async (buffer) => {
-      const p = parsePacket(buffer)
+      const kind = packetKind(buffer)
+      if (kind !== KIND_IDLE_H264 && kind !== KIND_VIDEO_H264 && kind !== KIND_IDLE_VIDEO && kind !== KIND_VIDEO) return
+      const p = parsePacket(buffer)                   // (audio is not copied for nothing)
       if (p.kind === KIND_IDLE_H264 || p.kind === KIND_VIDEO_H264) { onH264(p); return }
-      if (p.kind !== KIND_IDLE_VIDEO && p.kind !== KIND_VIDEO) return
       if (p.kind === KIND_VIDEO && (p.turnId <= rejectUpToRef.current || doneTurnsRef.current.has(p.turnId))) return
       statsRef.current.codec = 'jpeg'
       const tDecode = performance.now()
@@ -192,7 +228,7 @@ export default function AvatarStage({ conv, voice }) {
     let raf = 0
     let lastSrc = null
     let lastSpeechIdx = null
-    let fade = null                             // { snap: OffscreenCanvas, t0, dur }
+    let fade = null                             // { snap: canvas, t0, dur }
     const draw = () => {
       raf = requestAnimationFrame(draw)
       const canvas = canvasRef.current
@@ -201,6 +237,10 @@ export default function AvatarStage({ conv, voice }) {
       const now = performance.now()
       const st = statsRef.current
       const idle = idleRef.current
+      if (idle.restarted) {                       // new idle numbering: the last reply's frame number means nothing
+        idle.restarted = false
+        lastSpeechIdx = null
+      }
       const frameMs = 1000 / fpsRef.current
       let frame = null
       let next = null                           // the following frame, blended in by `alpha`
@@ -216,7 +256,7 @@ export default function AvatarStage({ conv, voice }) {
           // the mouth closing), held on the last spoken frame until then
           if (!tailShiftRef.current.has(turn)) {
             const firstTail = list.find((x) => x.tail)
-            if (firstTail) tailShiftRef.current.set(turn, Math.max(0, audible - firstTail.pts))
+            if (firstTail) keepRecent(tailShiftRef.current.set(turn, Math.max(0, audible - firstTail.pts)))
           }
           audible -= tailShiftRef.current.get(turn) ?? 0
         }
@@ -250,7 +290,7 @@ export default function AvatarStage({ conv, voice }) {
             // yet the closing tail, which comes after the end of the audio)
             if (ended && list.length === 1 && audible > f.pts + frameMs + (f.tail ? 0 : TAIL_GRACE_MS)) {
               // the reply and its closing tail are over: the idle video continues on the next frame
-              doneTurnsRef.current.add(turn)
+              keepRecent(doneTurnsRef.current.add(turn))
               settleTurn(turn)
               st.tails++
               continueIdleAfter(idle, f.idx, now)
@@ -280,31 +320,41 @@ export default function AvatarStage({ conv, voice }) {
       if (frame && !frame.width) { st.detached = (st.detached ?? 0) + 1; frame = null }
       if (next && !next.width) { st.detached = (st.detached ?? 0) + 1; next = null }
       if (frame) {
-        if (canvas.width !== frame.width) { canvas.width = frame.width; canvas.height = frame.height }
         if (lastSrc === 'idle' && src === 'speech' && lastSpeechIdx !== null && idle.shownIdx != null) {
           // how far the first lip-synced frame is from the idle frame on screen (loop frames): with the
           // livelier v3 head motion a few frames apart is a visible jump of the head
           const gap = Math.round((lastSpeechIdx - idle.shownIdx) * 10) / 10
           st.startGaps.push(gap)
+          if (st.startGaps.length > 200) st.startGaps.shift()
           conv.connRef.current?.sendJson({ type: 'avatar_start', gap })   // the worker learns the offset
         }
         if (lastSrc && src !== lastSrc) {
-          // cross-fade from what is on screen now
-          const snap = new OffscreenCanvas(canvas.width, canvas.height)
+          // cross-fade from what is on screen now (copied before a resize below clears the canvas)
+          const snap = newCanvas(canvas.width, canvas.height)
           snap.getContext('2d').drawImage(canvas, 0, 0)
           fade = { snap, t0: now, dur: src === 'speech' ? FADE_TO_SPEECH_MS : FADE_TO_IDLE_MS }
         }
-        ctx.drawImage(frame, 0, 0)
+        // the canvas has the frame's own resolution (CSS scales it to the stage); anything of another
+        // size (a blended frame, the fade snapshot) is scaled to it with the best filter
+        if (canvas.width !== frame.width || canvas.height !== frame.height) {
+          canvas.width = frame.width
+          canvas.height = frame.height
+        }
+        const w = canvas.width
+        const h = canvas.height
+        ctx.imageSmoothingEnabled = true
+        ctx.imageSmoothingQuality = 'high'          // (a resize resets the context: set every frame)
+        ctx.drawImage(frame, 0, 0, w, h)
         if (next && alpha > 0.02) {
           ctx.globalAlpha = alpha
-          ctx.drawImage(next, 0, 0)
+          ctx.drawImage(next, 0, 0, w, h)
           ctx.globalAlpha = 1
         }
         if (fade) {
           const a = (now - fade.t0) / fade.dur
           if (a < 1) {
             ctx.globalAlpha = 1 - a
-            ctx.drawImage(fade.snap, 0, 0)
+            ctx.drawImage(fade.snap, 0, 0, w, h)
             ctx.globalAlpha = 1
           } else {
             fade = null
@@ -376,6 +426,17 @@ export default function AvatarStage({ conv, voice }) {
   )
 }
 
+// Idle playback starts over (a new session, or a restarted worker numbering its frames from 0): the
+// buffer is dropped and nothing is stale any more; the frame on screen stays until the next one replaces it.
+function resetIdle(idle) {
+  for (const f of idle.buf) releaseIdle(idle, f)
+  idle.buf = []
+  idle.pos = null
+  idle.staleBelow = -1
+  idle.staleRun = 0
+  idle.restarted = true
+}
+
 // After speech: idle playback resumes at the frame after `idx`; older idle frames are stale.
 function continueIdleAfter(idle, idx, now) {
   idle.staleBelow = idx + 1
@@ -429,7 +490,7 @@ function nextIdleFrame(idle, now, fps, st) {
 let traceCanvas = null
 let tracePrev = null
 function traceFrame(trace, canvas, src, turn, ended) {
-  if (!traceCanvas) traceCanvas = new OffscreenCanvas(128, 128)
+  if (!traceCanvas) traceCanvas = newCanvas(128, 128)
   const tctx = traceCanvas.getContext('2d', { willReadFrequently: true })
   tctx.drawImage(canvas, 0, 0, 128, 128)
   const px = tctx.getImageData(0, 0, 128, 128).data
@@ -471,28 +532,62 @@ function dropTurnsUpTo(map, turnId) {
   }
 }
 
+// Frames are kept for the reply being heard and the newest KEEP_TURN_FRAMES replies: a reply whose audio
+// never played or never ended was otherwise freed only when the page closed.
+function dropOldTurns(map, playing) {
+  if (map.size <= KEEP_TURN_FRAMES) return
+  const old = [...map.keys()].sort((a, b) => a - b).slice(0, -KEEP_TURN_FRAMES)
+  for (const id of old) {
+    if (id === playing) continue
+    map.get(id).forEach((f) => f.bmp.close())
+    map.delete(id)
+  }
+}
+
+// per-turn sets and maps: the recent turns only (a long session added one entry per reply)
+function keepRecent(coll) {
+  if (coll.size > 32) coll.delete(coll.keys().next().value)
+}
+
+// OffscreenCanvas where there is one (not in Safari before 16.4: the fade into speech threw there)
+function newCanvas(w, h) {
+  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h)
+  const c = document.createElement('canvas')
+  c.width = w
+  c.height = h
+  return c
+}
+
 // Camera grain: a real camera's picture is never perfectly clean and still - faint sensor noise changes
 // every frame. Without it the background is a frozen, too-clean image, one of the cues that makes the
 // avatar look synthetic (owner: "must look 100% realistic"). Painted into the avatar canvas at low
 // opacity, a new noise pattern ~25 times a second; off with ?nograin. (A separate canvas with a CSS
 // blend mode made the browser re-composite everything every frame: 6.9 % of the lip-synced frames
-// were drawn late in a soak, 0.2 % without it.)
+// were drawn late in a soak, 0.2 % without it.) The patterns are made once per tile (not every frame).
 let grainTiles = null
-let grainOffset = [0, 0]
+let grainPatterns = []
+let grainCtx = null
+let grainOffset = [0, 0, -1]
 let grainAt = 0
 function drawGrain(ctx, w, h, now) {
   if (!grainTiles) grainTiles = Array.from({ length: 4 }, () => noiseTile(128))
+  if (ctx !== grainCtx) {                       // patterns belong to a context (a new canvas: made again)
+    grainCtx = ctx
+    grainPatterns = []
+  }
   if (now - grainAt > 40) {
     grainAt = now
     grainOffset = [Math.floor(Math.random() * 128), Math.floor(Math.random() * 128),
-      grainTiles[Math.floor(Math.random() * grainTiles.length)]]
+      Math.floor(Math.random() * grainTiles.length)]
   }
-  const [dx, dy, tile] = grainOffset
-  if (!tile) return
+  const [dx, dy, i] = grainOffset
+  if (i < 0) return
+  grainPatterns[i] ??= ctx.createPattern(grainTiles[i], 'repeat')
+  if (!grainPatterns[i]) return
   ctx.save()
   ctx.globalAlpha = 0.06
   ctx.globalCompositeOperation = 'overlay'
-  ctx.fillStyle = ctx.createPattern(tile, 'repeat')
+  ctx.fillStyle = grainPatterns[i]
   ctx.translate(-dx, -dy)
   ctx.fillRect(0, 0, w + dx, h + dy)
   ctx.restore()

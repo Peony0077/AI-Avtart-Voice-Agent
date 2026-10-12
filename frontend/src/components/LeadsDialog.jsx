@@ -21,17 +21,28 @@ export default function LeadsDialog({ open, onClose, conv }) {
 
   const rows = conv.leads?.leads ?? []
   const download = () => {
-    const blob = new Blob([conv.leads.csv], { type: 'text/csv' })
+    const blob = new Blob(['\ufeff', conv.leads.csv], { type: 'text/csv;charset=utf-8' })   // BOM: Excel reads UTF-8
+    const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
+    a.href = url
     a.download = `leads-${new Date().toISOString().slice(0, 10)}.csv`
+    // in the dialog, not document.body: some browsers ignore a click on a link outside the page, and the
+    // body is inert behind a modal dialog
+    ref.current.append(a)
     a.click()
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+  // light dismiss where <dialog closedby> is not supported (e.g. Safari): a click outside the box
+  const onClick = (e) => {
+    if (e.target !== ref.current) return
+    const r = ref.current.getBoundingClientRect()
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) onClose()
   }
 
   return (
     <dialog ref={ref} className="settings leads" closedby="any" aria-labelledby="leads-title" onClose={onClose}
-      data-testid="leads">
+      onClick={onClick} data-testid="leads">
       <h2 id="leads-title">Leads</h2>
       {!conv.leads ? <p className="muted">Loading…</p> : rows.length === 0 ? (
         <p className="muted" data-testid="leads-empty">No leads yet. After a customer's conversation, what they said about
@@ -41,8 +52,9 @@ export default function LeadsDialog({ open, onClose, conv }) {
           <table data-testid="leads-table">
             <thead><tr>{COLUMNS.map(([, h]) => <th key={h}>{h}</th>)}</tr></thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.session}>{COLUMNS.map(([k]) => <td key={k}>{r[k]}</td>)}</tr>
+              {rows.map((r, i) => (
+                // not r.session alone: one session can leave more than one lead
+                <tr key={`${i}-${r.session}`}>{COLUMNS.map(([k]) => <td key={k}>{r[k]}</td>)}</tr>
               ))}
             </tbody>
           </table>

@@ -18,13 +18,24 @@ export function visitorId() {
   try {
     let id = localStorage.getItem('avatarVisitor')
     if (!id) {
-      id = crypto.randomUUID()
+      id = randomId()
       localStorage.setItem('avatarVisitor', id)
     }
     return id
   } catch {
     return ''
   }
+}
+
+// crypto.randomUUID exists only on a secure page (https, localhost): on plain http (a LAN address) the
+// id was '' - no memory of the customer, and a reconnect waited in line behind itself
+function randomId() {
+  if (crypto.randomUUID) return crypto.randomUUID()
+  const b = crypto.getRandomValues(new Uint8Array(16))
+  b[6] = (b[6] & 0x0f) | 0x40                      // the shape of a version-4 UUID
+  b[8] = (b[8] & 0x3f) | 0x80
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
 }
 
 export function wsUrl(path = '/ws') {
@@ -46,9 +57,11 @@ export class Connection extends EventTarget {
     this.retry = 0
     this.closedByUser = false
     this.status = 'idle'
+    this.timer = 0
   }
 
   connect() {
+    clearTimeout(this.timer)
     this.closedByUser = false
     this._setStatus('connecting')
     const ws = new WebSocket(this.url)
@@ -75,9 +88,13 @@ export class Connection extends EventTarget {
           : ev.code === 4003 ? 'access denied (token)' : 'closed')
         return
       }
-      const delay = Math.min(8000, 500 * 2 ** this.retry++)
-      this._setStatus(`reconnecting in ${Math.round(delay / 1000)}s`)
-      setTimeout(() => this.connect(), delay)
+      // 1013: the line of waiting customers is full (api/ws.py MAX_WAITING) - try again a little later;
+      // 1012: the server is restarting
+      const delay = ev.code === 1013 ? 15000 : Math.min(8000, 500 * 2 ** this.retry++)
+      const why = ev.code === 1013 ? 'many people are waiting - trying again' : ev.code === 1012 ? 'server restarting - reconnecting'
+        : 'reconnecting'
+      this._setStatus(`${why} in ${Math.round(delay / 1000)}s`)
+      this.timer = setTimeout(() => this.connect(), delay)
     }
   }
 
@@ -101,9 +118,17 @@ export class Connection extends EventTarget {
     }
   }
 
+  // For good: no reconnect - also not one already waiting for its backoff (a Connection closed then
+  // reconnected anyway) - and no more events from its socket.
   close() {
     this.closedByUser = true
-    this.ws?.close()
+    clearTimeout(this.timer)
+    const ws = this.ws
+    if (ws) {
+      ws.onopen = ws.onmessage = ws.onclose = null
+      ws.close()
+    }
+    this._setStatus('closed')
   }
 
   _setStatus(status) {

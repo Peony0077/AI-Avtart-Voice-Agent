@@ -3,7 +3,7 @@ import { AudioEngine } from '../audio/AudioEngine.js'
 import { betterThanBluetooth, setPreferredMic } from '../audio/microphones.js'
 import { pcm16ToFloat } from '../audio/AudioEngine.js'
 import { decodeOpus } from './opus.js'
-import { KIND_AUDIO, KIND_AUDIO_OPUS, parsePacket } from './protocol.js'
+import { KIND_AUDIO, KIND_AUDIO_OPUS, packetKind, parsePacket } from './protocol.js'
 
 // Voice: server audio → player (also for typed messages: the "speaker"), playback acks → server,
 // and optionally the microphone → server (binary PCM16 16 kHz).
@@ -47,6 +47,7 @@ export function useVoice(conv) {
     }
     // a decoded clause to the player (or held: the reply's start hold)
     const deliver = (turnId, samples) => {
+      if (mutedRef.current) return                       // muted: audio already on its way is not played
       if (turnId <= rejectUpToRef.current || turnId !== turnRef.current) {   // interrupted while decoding
         statsRef.current.blockedStale++
         return
@@ -77,6 +78,7 @@ export function useVoice(conv) {
         case 'interrupt':
           rejectUpToRef.current = Math.max(rejectUpToRef.current, msg.turn_id)
           statsRef.current.interrupts.push({ turnId: msg.turn_id, reason: msg.reason, receivedAt: performance.now() })
+          if (statsRef.current.interrupts.length > 50) statsRef.current.interrupts.shift()
           if (holdRef.current && holdRef.current.turnId <= msg.turn_id) dropHold()
           engine?.flush()
           break
@@ -91,9 +93,13 @@ export function useVoice(conv) {
           break
         case 'session':
           dropHold()
-          lastTurnRef.current = 0                   // turn ids start again
+          // turn ids start again: what the old session interrupted or played says nothing about the new one
+          lastTurnRef.current = 0
+          turnRef.current = 0
+          rejectUpToRef.current = 0
+          engine?.resetTurns()
           // (re)connected: restore speaker and microphone on the server
-          if (engine && !mutedRef.current) send({ type: 'speaker', enabled: true })
+          if (engine) send({ type: 'speaker', enabled: !mutedRef.current })   // Mute holds over a reconnect
           if (engine?.micOn) send({ type: 'voice', enabled: true, mic: engine.micInfo })
           break
         default:
@@ -101,13 +107,14 @@ export function useVoice(conv) {
       }
     })
     const offBinary = conv.onBinary((buffer) => {
+      const kind = packetKind(buffer)
+      if (kind !== KIND_AUDIO && kind !== KIND_AUDIO_OPUS) return        // video: not copied for nothing
       const packet = parsePacket(buffer)
-      if (packet.kind !== KIND_AUDIO && packet.kind !== KIND_AUDIO_OPUS) return
       if (packet.turnId <= rejectUpToRef.current || packet.turnId !== turnRef.current) {
         statsRef.current.blockedStale++
         return
       }
-      statsRef.current.pushes[packet.turnId] = (statsRef.current.pushes[packet.turnId] ?? 0) + 1
+      countFor(statsRef.current.pushes, packet.turnId, (statsRef.current.pushes[packet.turnId] ?? 0) + 1)
       // decoding starts at once; the clauses reach the player in the order they came
       const samples = packet.kind === KIND_AUDIO_OPUS ? decodeOpus(packet.payload) : pcm16ToFloat(packet.payload)
       inOrder(async () => deliver(packet.turnId, await samples))
@@ -127,6 +134,14 @@ export function useVoice(conv) {
     return () => clearInterval(id)
   }, [active])
 
+  // the page goes away: microphone and AudioContexts off (they kept the microphone in use)
+  useEffect(() => () => {
+    clearTimeout(silentTimerRef.current)
+    const e = engineRef.current
+    engineRef.current = null
+    e?.stop().catch(() => {})
+  }, [])
+
   // Create the audio engine. Must run inside a click/submit handler, before any await.
   const engine = () => {
     if (engineRef.current) return engineRef.current
@@ -140,7 +155,7 @@ export function useVoice(conv) {
       if (m.type === 'started' || m.type === 'progress' || m.type === 'ended') {
         send({ type: 'playback', turn_id: m.turnId, event: m.type, played_ms: Math.round(m.playedMs ?? 0),
           gap_ms: Math.round(m.gapMs ?? 0), client_time: Date.now() })
-        if (m.type === 'ended') statsRef.current.gaps[m.turnId] = Math.round(m.gapMs ?? 0)
+        if (m.type === 'ended') countFor(statsRef.current.gaps, m.turnId, Math.round(m.gapMs ?? 0))
       }
     })
     engineRef.current = e
@@ -219,19 +234,23 @@ export function useVoice(conv) {
   }, [conv])
 
   // Another microphone (Settings, or the Bluetooth hint): restart capture with it; permission is
-  // already granted, so no prompt.
+  // already granted, so no prompt. Called from the click: the new AudioContext is made before any await
+  // (AudioEngine.restartMic). A failed restart leaves the microphone off - on the server too, which
+  // otherwise kept "listening" to a microphone that sent nothing.
   const restartMic = useCallback(async () => {
     const e = engineRef.current
     if (!e?.micOn) return
-    await e.stopMic()
     try {
-      await e.startMic((pcm) => conv.connRef.current?.sendBinary(pcm))
+      await e.restartMic((pcm) => conv.connRef.current?.sendBinary(pcm))
       send({ type: 'voice', enabled: true, mic: e.micInfo })
       setMicHint(await betterThanBluetooth(e.micInfo?.device))
     } catch (err) {
       setError(err.message ?? String(err))
       report('voice_restart', err)
+      send({ type: 'voice', enabled: false })
       setActive(false)
+      setSpeechDetected(false)
+      clearTimeout(silentTimerRef.current)
     }
   }, [conv])
 
@@ -243,4 +262,11 @@ export function useVoice(conv) {
 
   return { active, starting, speaker, muted, level, speechDetected, error, start, stop, ensureSpeaker, toggleMute,
     engineRef, startHoldRef, micHint, useMic, restartMic, dismissMicHint: () => setMicHint(null) }
+}
+
+// per-turn diagnostics (test hooks): the recent turns only, a long session added one entry per reply
+function countFor(byTurn, turnId, value) {
+  byTurn[turnId] = value
+  const keys = Object.keys(byTurn)
+  if (keys.length > 50) delete byTurn[keys[0]]          // integer keys iterate in ascending order: the oldest
 }

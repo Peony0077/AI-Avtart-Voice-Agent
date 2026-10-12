@@ -13,6 +13,12 @@ export const FLAG_KEY = 2              // H.264 keyframe
 export const TTS_SAMPLE_RATE = 24000
 export const MIC_SAMPLE_RATE = 16000
 
+// The kind alone, without copying the payload: every handler sees every packet (video ~ 10-60 KB each),
+// and parsePacket copied each one in each handler just to find it was not theirs.
+export function packetKind(buffer) {
+  return buffer.byteLength >= HEADER_BYTES ? new Uint8Array(buffer, 0, 1)[0] : 0
+}
+
 export function parsePacket(buffer) {
   const view = new DataView(buffer)
   return {

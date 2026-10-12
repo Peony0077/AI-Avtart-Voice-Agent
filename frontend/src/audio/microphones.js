@@ -5,8 +5,11 @@
 
 const KEY = 'avatarMic'
 
+// Not every "Headset": a wired or USB headset ("Headset Microphone (Realtek)", "USB Headset") has a
+// full-band microphone - only the Bluetooth signs count (Windows: "(Bluetooth)", "Hands-Free AG Audio";
+// Linux: bluez; AirPods and other wireless buds).
 export function isBluetoothMic(label = '') {
-  return /bluetooth|hands-?free|headset|airpods|buds|\bbt\b/i.test(label)
+  return /bluetooth|bluez|hands-?free|\b(hfp|hsp)\b|airpods|buds|\bbt\b/i.test(label)
 }
 
 export function preferredMic() {

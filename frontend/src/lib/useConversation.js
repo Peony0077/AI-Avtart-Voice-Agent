@@ -18,6 +18,7 @@ export function useConversation() {
   const [waiting, setWaiting] = useState(null)   // position in line, while another conversation is on
   const [leads, setLeads] = useState(null)       // {leads, csv} (owner link)
   const handlersRef = useRef({ binary: [], json: [] })
+  const roleRef = useRef(null)
 
   const upsertAssistant = useCallback((turnId, fn) => {
     setMessages((prev) => {
@@ -33,28 +34,42 @@ export function useConversation() {
     const conn = new Connection()
     connRef.current = conn
     window.__avatarConn = conn // test hook (Playwright)
-    conn.addEventListener('status', (e) => setStatus(e.detail))
+    // removed with the connection: a closed Connection's late events (its socket closing) set the status
+    // of the page's new one (React StrictMode mounts twice)
+    const off = new AbortController()
+    const on = (type, fn) => conn.addEventListener(type, fn, { signal: off.signal })
+    const showNotice = (text, ms = 4000) => {
+      setNotice(text)
+      clearTimeout(noticeTimer.current)
+      noticeTimer.current = setTimeout(() => setNotice(null), ms)
+    }
+    on('status', (e) => setStatus(e.detail))
     // the customer's time zone (minutes east of UTC): "what time is it" is answered in their time
-    // and the video it can decode: H.264 (~1 Mbit/s) where WebCodecs has it, else JPEG frames (6.7 Mbit/s)
-    conn.addEventListener('open', async () => {
-      const h264 = await h264Support
+    // and the video it can decode: H.264 (~1 Mbit/s) where WebCodecs has it, else JPEG frames (6.7 Mbit/s);
+    // the voice as Opus only where this browser really decodes it (opus.js), else PCM
+    on('open', async () => {
+      const [h264, opus] = await Promise.all([h264Support, opusSupport])
       conn.sendJson({ type: 'hello', voice_out: window.__voiceOut ?? false,
         utc_offset_min: -new Date().getTimezoneOffset(), time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        video: h264 ? ['h264', 'jpeg'] : ['jpeg'], audio: opusSupport ? ['opus', 'pcm'] : ['pcm'], ack: true })
+        video: h264 ? ['h264', 'jpeg'] : ['jpeg'], audio: opus ? ['opus', 'pcm'] : ['pcm'], ack: true })
       if (document.hidden) sendVisible()
     })
     // a hidden page gets no video (backend session._set_visible): it piled up unread and the connection
     // was closed every 40 s while the tab was in the background
     const sendVisible = () => conn.sendJson({ type: 'visible', visible: !document.hidden })
     document.addEventListener('visibilitychange', sendVisible)
-    conn.addEventListener('binary', (e) => handlersRef.current.binary.forEach((h) => h(e.detail)))
-    conn.addEventListener('json', (e) => {
+    on('binary', (e) => handlersRef.current.binary.forEach((h) => h(e.detail)))
+    on('json', (e) => {
       const msg = e.detail
       handlersRef.current.json.forEach((h) => h(msg))
       switch (msg.type) {
         case 'session':
+          roleRef.current = msg.role
           setSession(msg)
           setWaiting(null)
+          // a reconnect starts a new session whose turn ids start again at 1: the earlier messages stay,
+          // detached from the ids (the first new reply was appended to the old turn 1's bubble)
+          setMessages((prev) => (prev.some((m) => m.turnId != null) ? prev.map((m) => ({ ...m, turnId: null })) : prev))
           break
         case 'waiting':
           setWaiting(msg.position)       // in line behind another conversation (one avatar, one GPU)
@@ -94,12 +109,18 @@ export function useConversation() {
           break
         case 'transcript':
           // speech was heard but nothing usable came out (noise, a cough, or too unclear)
-          if (msg.final && !msg.text && (msg.duration_ms ?? 0) >= 500) {
-            setNotice("Sorry, I didn't catch that. Please say it again.")
-            clearTimeout(noticeTimer.current)
-            noticeTimer.current = setTimeout(() => setNotice(null), 4000)
-          }
+          if (msg.final && !msg.text && (msg.duration_ms ?? 0) >= 500) showNotice("Sorry, I didn't catch that. Please say it again.")
           break
+        case 'error': {
+          // a reply that failed, speech recognition that failed, a reply's voice that failed: said in the
+          // page (it was ignored - a reply's "…" bubble waited forever). The owner sees the server's reason.
+          const text = roleRef.current === 'owner' ? msg.message || 'Something went wrong.'
+            : msg.code === 'voice_failed' ? 'The voice failed for this reply.'
+              : 'Sorry, something went wrong. Please try again.'
+          if (msg.turn_id != null) upsertAssistant(msg.turn_id, (m) => ({ ...m, error: text, done: true }))
+          else showNotice(text, 8000)
+          break
+        }
         case 'metrics':
           setMetrics((prev) => [...prev.slice(-19), msg])
           break
@@ -110,7 +131,9 @@ export function useConversation() {
     conn.connect()
     return () => {
       document.removeEventListener('visibilitychange', sendVisible)
+      off.abort()
       conn.close()
+      clearTimeout(noticeTimer.current)
     }
   }, [upsertAssistant])
 
@@ -129,7 +152,9 @@ export function useConversation() {
     return () => { handlersRef.current.binary = handlersRef.current.binary.filter((x) => x !== h) }
   }, [])
 
+  // no owner tools until the session says so: a customer waiting in line (no session yet) saw Settings
+  // and Leads, whose dialogs then stayed on "Loading…"
   return { connRef, status, state, messages, behavior, metrics, session, notice, sendText, interrupt, onJson, onBinary,
     persona, loadPersona, savePersona, forgetMemory, waiting, leads, loadLeads,
-    role: session?.role ?? 'owner' }
+    role: session?.role ?? null }
 }

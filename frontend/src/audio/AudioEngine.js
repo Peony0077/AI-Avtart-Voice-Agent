@@ -22,7 +22,9 @@ export class AudioEngine extends EventTarget {
     this.playedMs = 0
     this.playingTurn = 0
     this.turnStartCtx = new Map()
+    this.turnGaps = new Map()       // turnId -> { done: s, spans: [[fromCtx, toCtx]] } (the player ran dry)
     this.endedTurns = new Set()
+    this._gen = 0                   // flush generation: audio queued before a flush is dropped
   }
 
   // Must be called from a user gesture (click) so the AudioContexts may start.
@@ -33,18 +35,40 @@ export class AudioEngine extends EventTarget {
 
   // Assistant audio only (typed messages are spoken too). Call from a user gesture: the
   // AudioContext is created synchronously, before the first await, so the browser lets it run.
+  // A start that failed (the worklet did not load) is undone completely, so the next call tries again:
+  // kept half-made, every later reply was silent until the page was reloaded.
   async startPlayback() {
-    if (this.playCtx) return
-    this.playCtx = new AudioContext({ sampleRate: TTS_SAMPLE_RATE, latencyHint: 'interactive' })
+    if (this.playCtx) return this._playbackReady
+    const ctx = new AudioContext({ sampleRate: TTS_SAMPLE_RATE, latencyHint: 'interactive' })
+    this.playCtx = ctx
     const ready = (async () => {
-      await this.playCtx.audioWorklet.addModule(playerWorkletUrl)
-      this.player = new AudioWorkletNode(this.playCtx, 'pcm-player', { outputChannelCount: [1] })
-      this.player.connect(this.playCtx.destination)
-      this.player.port.onmessage = (e) => this._onPlayer(e.data)
-      await this.playCtx.resume()
+      try {
+        await ctx.audioWorklet.addModule(playerWorkletUrl)
+        if (this.playCtx !== ctx) return                  // stopped meanwhile
+        const player = new AudioWorkletNode(ctx, 'pcm-player', { outputChannelCount: [1] })
+        player.connect(ctx.destination)
+        player.port.onmessage = (e) => this._onPlayer(e.data)
+        this.player = player
+        await ctx.resume()
+      } catch (err) {
+        if (this.playCtx === ctx) {
+          this.playCtx = this.player = this._playbackReady = null
+          this._gen++                                      // what waited for it is dropped
+        }
+        ctx.close().catch(() => {})
+        throw err
+      }
     })()
-    this._playbackReady = ready
+    if (this.playCtx === ctx) this._playbackReady = ready   // (not when it already failed: no audioWorklet)
     await ready
+  }
+
+  // Run fn once playback has started (the first typed message: the worklet is still loading), unless a
+  // flush comes first - queued on the promise, Stop or Mute could not remove it and the interrupted
+  // audio still played.
+  _whenReady(fn) {
+    const gen = this._gen
+    this._playbackReady?.then(() => { if (gen === this._gen) fn() }, () => {})
   }
 
   get micOn() {
@@ -56,10 +80,13 @@ export class AudioEngine extends EventTarget {
   // before), Safari leaves the context suspended - the mic never sends a sound - and an unanswered
   // prompt or a blocked microphone left "Start voice" doing nothing visible. Errors are MicError with a
   // message for the user (micErrorMessage).
-  async startMic(onMicFrame) {
-    if (this.stream) return
-    if (!navigator.mediaDevices?.getUserMedia) throw new MicError(window.isSecureContext ? 'NoMediaDevices' : 'NotSecure')
-    let ctx = newMicContext()
+  async startMic(onMicFrame, preCtx = null) {
+    if (this.stream) { preCtx?.close().catch(() => {}); return }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      preCtx?.close().catch(() => {})
+      throw new MicError(window.isSecureContext ? 'NoMediaDevices' : 'NotSecure')
+    }
+    let ctx = preCtx ?? newMicContext()
     ctx.resume().catch(() => {})                    // inside the click
     try {
       try {
@@ -109,16 +136,29 @@ export class AudioEngine extends EventTarget {
   }
 
   async stopMic() {
+    const ctx = this.micCtx
     this.stream?.getTracks().forEach((t) => t.stop())
-    await this.micCtx?.close()
     this.micCtx = this.stream = null
     this.level = 0
+    await ctx?.close().catch(() => {})
   }
 
-  async stop() {
+  // Another microphone: its AudioContext is created here, before the first await (inside the click) -
+  // created after stopping the old one, Safari left it suspended ("The browser did not start the audio").
+  async restartMic(onMicFrame) {
+    const ctx = newMicContext()
+    ctx.resume().catch(() => {})
     await this.stopMic()
-    await this.playCtx?.close()
-    this.playCtx = this.player = null
+    await this.startMic(onMicFrame, ctx)
+  }
+
+  // Everything off (the page goes away): microphone, both AudioContexts.
+  async stop() {
+    const ctx = this.playCtx
+    this.playCtx = this.player = this._playbackReady = null
+    this._gen++
+    await this.stopMic()
+    await ctx?.close().catch(() => {})
   }
 
   // PCM16 mono 24 kHz from the server.
@@ -130,7 +170,7 @@ export class AudioEngine extends EventTarget {
   pushFloat(turnId, samples) {
     if (!this.player) {
       // playback still starting (first typed message): queue until the worklet exists
-      this._playbackReady?.then(() => this.pushFloat(turnId, samples))
+      this._whenReady(() => this.pushFloat(turnId, samples))
       return
     }
     let f32 = samples
@@ -152,20 +192,36 @@ export class AudioEngine extends EventTarget {
 
   endTurn(turnId) {
     if (!this.player) {
-      this._playbackReady?.then(() => this.endTurn(turnId))
+      this._whenReady(() => this.endTurn(turnId))
       return
     }
     this.player.port.postMessage({ type: 'end', turnId })
   }
 
-  flush() {
-    this.player?.port.postMessage({ type: 'flush' })
-    if (this.playingTurn) this.endedTurns.add(this.playingTurn)
+  // A new session (a reconnect): the server numbers its turns from 1 again, so the per-turn
+  // bookkeeping starts over - with the old ids kept, the new replies' audio was taken for old turns.
+  resetTurns() {
+    this._gen++
+    this.player?.port.postMessage({ type: 'reset' })
+    this.turnStartCtx.clear()
+    this.turnGaps.clear()
+    this.endedTurns.clear()
     this.playingTurn = 0
     this.playedMs = 0
   }
 
-  // Position (ms) on a turn's audio timeline that is audible right now, or null.
+  flush() {
+    this._gen++
+    this.player?.port.postMessage({ type: 'flush' })
+    if (this.playingTurn) remember(this.endedTurns, this.playingTurn)
+    this.playingTurn = 0
+    this.playedMs = 0
+  }
+
+  // Position (ms) on a turn's audio timeline that is audible right now, or null: the time since its first
+  // sample, less the gaps the player ran dry (worklet 'dry'/'resumed'). Frame pts and the server's
+  // played_ms are on that timeline - with wall time only, a 300 ms underrun left the lips 300 ms ahead
+  // of the voice for the rest of the reply.
   audibleMs(turnId) {
     const start = this.turnStartCtx.get(turnId)
     if (start === undefined || !this.playCtx) return null
@@ -173,18 +229,51 @@ export class AudioEngine extends EventTarget {
     const nowCtx = ts && ts.contextTime > 0
       ? ts.contextTime + (performance.now() - ts.performanceTime) / 1000
       : this.playCtx.currentTime - (this.playCtx.outputLatency || 0)
-    return (nowCtx - start) * 1000
+    let silent = 0
+    const g = this.turnGaps.get(turnId)
+    if (g) {
+      // a gap is subtracted only as far as it is audible yet (the worklet runs ahead by the output latency)
+      while (g.spans.length && g.spans[0][1] <= nowCtx) {
+        const [from, to] = g.spans.shift()
+        g.done += to - from
+      }
+      silent = g.done
+      for (const [from, to] of g.spans) if (nowCtx > from) silent += Math.min(nowCtx, to) - from
+    }
+    return (nowCtx - start - silent) * 1000
   }
 
   _onPlayer(msg) {
     if (msg.type === 'started') {
       this.playingTurn = msg.turnId
-      this.turnStartCtx.set(msg.turnId, msg.ctxTime)
+      remember(this.turnStartCtx, msg.turnId, msg.ctxTime)
+      remember(this.turnGaps, msg.turnId, { done: 0, spans: [] })
     }
-    if (msg.type === 'ended' || msg.type === 'flushed') this.endedTurns.add(msg.turnId ?? this.playingTurn)
+    if (msg.type === 'dry') this.turnGaps.get(msg.turnId)?.spans.push([msg.ctxTime, Infinity])
+    if (msg.type === 'resumed') {
+      const last = this.turnGaps.get(msg.turnId)?.spans.at(-1)
+      if (last && last[1] === Infinity) last[1] = Math.max(last[0], msg.ctxTime)
+    }
+    if (msg.type === 'ended' || msg.type === 'flushed') {
+      const id = msg.turnId ?? this.playingTurn
+      if (id) remember(this.endedTurns, id)
+    }
     if (msg.playedMs !== undefined) this.playedMs = msg.playedMs
     this.dispatchEvent(new CustomEvent('player', { detail: msg }))
   }
+}
+
+// Per-turn bookkeeping keeps the recent turns only (one entry per reply grew for the whole session).
+const KEEP_TURNS = 16
+function remember(coll, id, value) {
+  if (coll instanceof Map) {
+    coll.delete(id)                   // re-inserted: the newest
+    coll.set(id, value)
+  } else {
+    coll.delete(id)
+    coll.add(id)
+  }
+  if (coll.size > KEEP_TURNS) coll.delete(coll.keys().next().value)
 }
 
 // 16 kHz where the browser takes the option (old Safari throws for it): the browser's own rate otherwise.

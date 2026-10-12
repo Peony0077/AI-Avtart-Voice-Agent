@@ -40,15 +40,17 @@ export default function SettingsDialog({ open, onClose, conv, voice }) {
     }
   }, [p])
 
-  // "Listen": the server sends a short sample of the voice as WAV
-  useEffect(() => conv.onJson((msg) => {
+  // "Listen": the server sends a short sample of the voice as WAV. Keyed on the stable conv.onJson (conv is
+  // a new object every render: it subscribed again on every streamed word)
+  const onJson = conv.onJson
+  useEffect(() => onJson((msg) => {
     if (msg.type !== 'voice_preview') return
     setPreviewing(null)
     if (!msg.wav_b64) return
     audioRef.current?.pause()
     audioRef.current = new Audio(`data:audio/wav;base64,${msg.wav_b64}`)
     audioRef.current.play().catch(() => {})
-  }), [conv])
+  }), [onJson])
 
   const set = (key) => (e) => {
     setSaved(false)
