@@ -888,7 +888,7 @@ Two timing errors, which partly cancelled:
 
 | 25–35 s of continuous speech | MuseTalk's windows | centred (now) |
 |---|---|---|
-| af_heart (Ava's default voice) | +44 ms | −2 ms |
+| af_heart (the default voice) | +44 ms | −2 ms |
 | am_michael | +75 ms | +22 ms |
 | bf_emma | +85 ms | +35 ms |
 | isolated words (af_heart) | +15…+23 ms | −6…−23 ms |
@@ -908,7 +908,7 @@ recognition itself was fine (the voice tests pass through the same tunnel). What
 - **The badge said "Listening" with the microphone off** (it showed the conversation state). Now
   "Ready · mic off" until the microphone is on, then "Listening" / "Hearing you…".
 - **Starting the microphone was easy to miss**: one "Start voice" button in the header. Now also a big
-  "🎤 Tap to talk to Ava" on the avatar, and a "Listening – just speak" pill while it is on.
+  "🎤 Tap to talk to Emma" on the avatar (the persona's name), and a "Listening – just speak" pill while it is on.
 - **The microphone's AudioContext was created after the permission prompt**, outside the tap. Safari
   then keeps it suspended (no sound reaches the server); Chrome tolerates it, and the voice tests
   could not see it because their browser runs with an autoplay exemption. Both AudioContexts and the

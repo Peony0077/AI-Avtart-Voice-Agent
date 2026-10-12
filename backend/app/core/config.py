@@ -116,7 +116,7 @@ class Settings(BaseSettings):
     profile: str = "default"
     model_home: Path = DEFAULT_MODEL_HOME
     log_dir: Path = REPO_ROOT / "logs"
-    persona_name: str = "Ava"
+    persona_name: str = "Emma"   # owner, 2026-10-12: a girl's name Houston likes (#1 there in 2023; was "Ava")
     llm: LLMCfg = LLMCfg()
     stt: STTCfg = STTCfg()
     vad: VADCfg = VADCfg()
