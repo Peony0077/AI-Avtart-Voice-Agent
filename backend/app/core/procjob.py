@@ -1,20 +1,31 @@
-"""Child-process hygiene on Windows.
+"""Child-process hygiene.
 
 * ``JOB``: a Windows Job Object with KILL_ON_JOB_CLOSE. Every helper process (llama-server,
   avatar worker, XTTS worker) is assigned to it, so they die when the backend dies — even when
   the backend is killed hard. (Before this, a force-stopped backend left an orphaned avatar
   worker holding the port and ~3 GB VRAM; the next backend silently connected to the stale one.)
+  On Linux the same is done with the parent-death signal: ``Popen(..., **JOB.popen_kwargs())``.
 * ``free_port``: kill a stale process of ours that still listens on a port before we spawn.
 """
 from __future__ import annotations
 
 import ctypes
 import os
+import signal
 import subprocess
 import sys
 
 import psutil
 from loguru import logger
+
+# Linux: resolved before any fork (no library loading in the child between fork and exec)
+_LIBC = ctypes.CDLL("libc.so.6", use_errno=True) if sys.platform.startswith("linux") else None
+_PR_SET_PDEATHSIG = 1
+
+
+def _die_with_parent() -> None:
+    """Runs in the child before exec: the kernel sends SIGKILL when the backend exits, even after a kill -9."""
+    _LIBC.prctl(_PR_SET_PDEATHSIG, signal.SIGKILL)
 
 
 class _Job:
@@ -51,6 +62,16 @@ class _Job:
             logger.warning(f"job object setup failed: {ctypes.get_last_error()}")
             return
         self.handle = handle
+
+    @staticmethod
+    def popen_kwargs() -> dict:
+        """Extra ``subprocess.Popen`` arguments for a helper process: no console window on Windows,
+        killed together with the backend on Linux."""
+        if sys.platform == "win32":
+            return {"creationflags": subprocess.CREATE_NO_WINDOW}
+        if _LIBC is not None:
+            return {"preexec_fn": _die_with_parent}
+        return {}
 
     def adopt(self, proc: subprocess.Popen) -> None:
         if self.handle is None:

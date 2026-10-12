@@ -13,3 +13,6 @@
 *.mp4 binary
 *.pdf binary
 *.docx binary
+
+# shell scripts keep LF even on a Windows checkout (bash cannot read CRLF)
+*.sh text eol=lf

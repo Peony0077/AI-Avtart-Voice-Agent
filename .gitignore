@@ -69,6 +69,7 @@ hf_cache/
 
 # ---- Third-party runtimes / vendored code fetched by scripts ----------------
 /tools/llama.cpp/
+/tools/cloudflared/
 /avatar/*/vendor/
 *.exe
 *.dll

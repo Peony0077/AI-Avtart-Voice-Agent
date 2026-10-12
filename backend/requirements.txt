@@ -18,8 +18,10 @@ cryptography>=45.0            # scripts/make_cert.py (LAN HTTPS)
 
 # --- voice (Phase 2); spaCy's en_core_web_sm comes from scripts/download_models.py voice ---
 transformers>=5.0             # Whisper STT
+accelerate>=1.10              # transformers loads Whisper with a device_map
 huggingface-hub>=1.0
 silero-vad>=6.0
+onnxruntime>=1.20             # Silero VAD runs as an ONNX model (app/audio/vad.py; TorchScript is the fallback)
 kokoro>=0.9.4
 misaki[en]>=0.9.4
 soundfile>=0.13
