@@ -20,7 +20,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
-os.environ.setdefault("HF_HOME", "E:/AI-models/hf")
+from model_home import hf_home  # noqa: E402  (scripts/model_home.py: the env, .env, else the platform default)
+
+os.environ.setdefault("HF_HOME", hf_home())
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import numpy as np  # noqa: E402

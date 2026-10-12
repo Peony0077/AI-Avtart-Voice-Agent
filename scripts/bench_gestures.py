@@ -1,6 +1,8 @@
 """Which head gesture does the LLM choose? Sends prompts where a gesture is natural (agree -> nod,
 disagree -> shake, curious -> head_tilt, ...) with the real system prompt to the running llama-server
 and reports the tag it writes, tag compliance, and the time to the first spoken text.
+The tag is off in the app by default (llm.behavior_tag: false - the behaviour is then read from the reply's
+words), so this benchmark always turns it on for its own prompts; otherwise it would measure nothing.
 
     .venv\\Scripts\\python scripts\\bench_gestures.py --json docs\\benchmarks\\phase6_gesture_choice.json
 """
@@ -78,7 +80,8 @@ async def main() -> None:
     rows = []
     for _ in range(args.rounds):
         for text, fits in CASES:
-            memory = ConversationMemory(persona=cfg.persona_name, max_turns=cfg.llm.history_turns)
+            # behavior_tag=True: the system prompt with the tag rules, whatever the profile says (see above)
+            memory = ConversationMemory(persona=cfg.persona_name, max_turns=cfg.llm.history_turns, behavior_tag=True)
             r = await ask(llm, memory, text)
             r.update(prompt=text, fits=r["gesture"] in fits, llm_fits=r["llm_gesture"] in fits)
             rows.append(r)

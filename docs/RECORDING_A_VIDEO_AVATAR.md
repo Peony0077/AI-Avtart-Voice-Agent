@@ -39,5 +39,17 @@ Avoid talking, laughing with an open mouth, covering the face, or leaving the fr
 
 ## Then
 
-Copy the video to `data\avatars\<name>\video.mp4` and tell Claude. The build takes about an hour on
-this PC, and the result replaces the photo avatar in `config\profiles\avatar.yaml`.
+Copy the video to `data\avatars\<name>\video.mp4` and build the avatar from it (the avatar venv,
+see the README):
+
+```powershell
+avatar\musetalk\.venv\Scripts\python avatar\musetalk\build_avatar.py --video data\avatars\<name>\video.mp4 --id <name>
+```
+
+(Linux: `avatar/musetalk/.venv/bin/python avatar/musetalk/build_avatar.py --video data/avatars/<name>/video.mp4 --id <name>`.)
+The build takes about an hour on the RTX 3060 (a full photo build with all head gestures and body
+motion: ~80 min), less on a faster GPU. Then set
+`avatar.avatar_id: <name>` in `config\profiles\avatar.yaml` to replace the photo avatar.
+
+The build's face cropper uses InsightFace models that are licensed for non-commercial use only; see
+"Licences and commercial use" in the README before using the avatar for a business.

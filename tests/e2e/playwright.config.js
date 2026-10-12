@@ -1,9 +1,12 @@
 import { defineConfig } from '@playwright/test'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-// The backend must already be running (scripts\run.ps1) and serving frontend/dist.
-// Voice tests feed WAV files as a fake microphone (see fixtures/).
-const fixture = (name) => path.resolve('fixtures', name)
+// The backend must already be running (scripts\run.ps1 or scripts/run.sh) and serving frontend/dist.
+// Voice tests feed WAV files as a fake microphone (see fixtures/), found next to this file whatever
+// folder npx playwright is started from.
+const here = path.dirname(fileURLToPath(import.meta.url))
+const fixture = (name) => path.resolve(here, 'fixtures', name)
 
 export default defineConfig({
   testDir: '.',

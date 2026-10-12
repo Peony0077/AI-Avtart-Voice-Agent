@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import fs from 'node:fs'
-import { captureServerMessages, openAndStartVoice } from './helpers.js'
+import { captureServerMessages, openAndStartVoice, withOwnerToken } from './helpers.js'
 
 // Long-running stability test. Run with:
 //   $env:FAKE_MIC='mic_soak.wav'; $env:FAKE_MIC_LOOP='1'; $env:SOAK_MIN='30'; npx playwright test --project=voice soak
@@ -35,8 +35,8 @@ test(`voice soak for ${minutes} minutes`, async ({ page, request }) => {
   const samples = []
   const end = Date.now() + minutes * 60_000
   while (Date.now() < end) {
-    const gpu = await (await request.get('/health/gpu')).json()
-    const health = await (await request.get('/health')).json()
+    const gpu = await (await request.get(withOwnerToken('/health/gpu'))).json()
+    const health = await (await request.get(withOwnerToken('/health'))).json()
     samples.push({ t: Math.round((Date.now() - (end - minutes * 60_000)) / 1000), vram_used_mib: gpu.vram_used_mib,
       ram_available_mib: gpu.ram_available_mib, backend_rss_mib: gpu.backend_rss_mib, llm_restarts: health.llm_restarts,
       backend_torch_mib: gpu.backend_torch_reserved_mib ?? null, avatar_torch_mib: gpu.avatar_torch_reserved_mib ?? null,

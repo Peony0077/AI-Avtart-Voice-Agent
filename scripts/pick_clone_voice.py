@@ -5,6 +5,8 @@ Kokoro base voice. Which base voice ends up closest is not predictable from the 
 tone-colour distance (measured), so this script tries every English Kokoro voice: synthesise ->
 convert -> score with XTTS-v2's speaker encoder (the same metric as the XTTS clone benchmark), and
 prints the best one for ``tts.voice``. Needs the XTTS venv (voice\\xtts\\setup.ps1). ~1-2 minutes.
+XTTS-v2's weights are licensed for NON-COMMERCIAL use only (CPML): for a commercial setup choose the
+base voice by ear instead (docs/THIRD_PARTY_NOTICES.md).
 
     .venv\\Scripts\\python scripts\\pick_clone_voice.py --ref data\\voices\\me.wav
 """
@@ -20,13 +22,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
-os.environ.setdefault("HF_HOME", "E:/AI-models/hf")
+from model_home import hf_home  # noqa: E402  (scripts/model_home.py: the env, .env, else the platform default)
+
+os.environ.setdefault("HF_HOME", hf_home())
 
 import numpy as np  # noqa: E402
 import soundfile as sf  # noqa: E402
 import torch  # noqa: E402
 from huggingface_hub import snapshot_download  # noqa: E402
 
+from app.core.config import VENV_PYTHON  # noqa: E402
 from app.tts.converted_tts import SOURCE_TEXT, ToneColorConverter, reference_clips  # noqa: E402
 
 TEXT = ("Sure! Octopuses have three hearts, and two of them pump blood to the gills. That's a great "
@@ -62,10 +67,14 @@ def main() -> None:
             sf.write(path, conv.convert(say(v, TEXT), 24000, src, ref, args.tau), 24000)
             wavs.append(path)
             print(f"  converted {v}", flush=True)
-    xtts_py = ROOT / "voice" / "xtts" / ".venv" / "Scripts" / "python.exe"
+    xtts_py = ROOT / "voice" / "xtts" / VENV_PYTHON
     scorer = ROOT / "voice" / "xtts" / "bench_clone.py"
     res = subprocess.run([str(xtts_py), str(scorer), "--ref", str(args.ref.resolve()), "--score", *map(str, wavs)],
-                         capture_output=True, text=True, check=True, cwd=scorer.parent)
+                         capture_output=True, text=True, cwd=scorer.parent)
+    if res.returncode != 0 or "{" not in res.stdout:
+        # the scorer's own error (missing venv package, CUDA out of memory, ...) - not just "exit status 1"
+        sys.stderr.write(res.stderr[-4000:] + res.stdout[-2000:])
+        raise SystemExit(f"the XTTS scorer failed (exit {res.returncode}): {xtts_py} {scorer.name}")
     scores = json.loads(res.stdout[res.stdout.index("{"):])
     ranked = sorted(((re.sub(r"\.wav$", "", Path(k).name), s) for k, s in scores.items()), key=lambda x: -x[1])
     (args.out / "ranking.json").write_text(json.dumps(ranked, indent=2), encoding="utf-8")

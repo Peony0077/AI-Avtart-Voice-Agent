@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import fs from 'node:fs'
-import { captureServerMessages, openAndStartVoice, waitFor } from './helpers.js'
+import { captureServerMessages, openAndStartVoice, waitFor, withOwnerToken } from './helpers.js'
 
 // Phase 4: realistic avatar. Backend must run with profile "avatar" (scripts\run.ps1 -Profile avatar).
 // FAKE_MIC=mic_question.wav
@@ -47,7 +47,7 @@ test('avatar idles, lip-syncs the spoken answer in sync with audio, and returns 
   // Phase 6 head gestures: e.g. a small nod whenever the avatar starts listening, the LLM's gesture per reply
   let gestures = null
   if ((session.avatar?.gestures ?? []).length) {
-    const health = await (await page.request.get('/health')).json()
+    const health = await (await page.request.get(withOwnerToken('/health'))).json()
     gestures = health.avatar.stats.gestures ?? {}
     expect(Object.values(gestures).reduce((a, b) => a + b, 0)).toBeGreaterThan(0)
   }

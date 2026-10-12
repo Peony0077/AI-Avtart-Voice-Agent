@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { expect, test } from '@playwright/test'
-import { appPath, captureServerMessages, waitFor } from './helpers.js'
+import { appPath, captureServerMessages, customerToken, waitFor } from './helpers.js'
 
 // Lead generation (owner, 2026-10-05): with a business set, she guides the customer and asks for their
 // contact details; after the conversation the lead is written down and the owner sees it under Leads.
@@ -97,10 +97,8 @@ test('a conversation with a business set becomes a lead the owner sees', async (
 
 test('the time is the customer\'s own, said the American way', async ({ browser }) => {
   // a customer in New York, on the customer link (their own, empty memory)
-  const file = new URL('../../logs/customer_url.txt', import.meta.url)
-  const token = process.env.AVATAR_CUSTOMER_TOKEN
-    ?? (fs.existsSync(file) ? new URL(fs.readFileSync(file, 'utf8').trim()).searchParams.get('token') : null)
-  test.skip(!token, 'no customer link (start with scripts\\tunnel.ps1)')
+  const token = customerToken()
+  test.skip(!token, 'no customer link: start the backend with scripts\\tunnel.ps1 or scripts/tunnel.sh, or set AVATAR_CUSTOMER_TOKEN')
   const page = await (await browser.newContext({ timezoneId: 'America/New_York' })).newPage()
   const messages = captureServerMessages(page)
   await page.goto(appPath(token))

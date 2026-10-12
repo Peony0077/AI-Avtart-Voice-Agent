@@ -20,7 +20,9 @@ import torchaudio.functional as AF
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
-os.environ.setdefault("HF_HOME", "E:/AI-models/hf")
+from model_home import hf_home  # noqa: E402  (scripts/model_home.py: the env, .env, else the platform default)
+
+os.environ.setdefault("HF_HOME", hf_home())
 
 from app.core.config import TTSCfg  # noqa: E402
 from app.tts.kokoro_tts import KokoroTTS  # noqa: E402
@@ -80,8 +82,13 @@ def _trim(audio: np.ndarray, thresh: float = 0.02) -> np.ndarray:
 
 
 def main() -> None:
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--device", default="cuda", help="cpu: while the GPU is busy (e.g. an avatar build)")
+    args = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
-    tts = KokoroTTS(TTSCfg(voice="am_michael", device="cuda"))
+    tts = KokoroTTS(TTSCfg(voice="am_michael", device=args.device))
     manifest = {}
     for name, script in SCRIPTS.items():
         parts, events, t = [], [], 0.0

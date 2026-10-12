@@ -16,7 +16,9 @@ from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
-os.environ.setdefault("HF_HOME", "E:/AI-models/hf")
+from model_home import hf_home  # noqa: E402  (scripts/model_home.py: the env, .env, else the platform default)
+
+os.environ.setdefault("HF_HOME", hf_home())
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 from app.core.config import get_settings  # noqa: E402
@@ -33,7 +35,7 @@ def fetch(url: str, dest_dir: Path, max_bytes: int = 5_000_000) -> Path:
         raise SystemExit(f"not a web URL: {url}")
     slug = re.sub(r"[^A-Za-z0-9._-]+", "_", f"{u.netloc}{u.path}".strip("/"))[:120] or u.netloc
     r = httpx.get(url, follow_redirects=True, timeout=30.0,
-                  headers={"User-Agent": "AI-Avatar-Voice-Agent ingest (personal, non-commercial)"})
+                  headers={"User-Agent": "AI-Avatar-Voice-Agent ingest"})
     r.raise_for_status()
     ctype = r.headers.get("content-type", "")
     if "html" not in ctype and "text" not in ctype:

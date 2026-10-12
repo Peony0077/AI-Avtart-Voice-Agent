@@ -1,15 +1,12 @@
-import fs from 'node:fs'
 import { expect, test } from '@playwright/test'
-import { appPath, captureServerMessages, waitFor } from './helpers.js'
+import { appPath, captureServerMessages, customerToken, waitFor } from './helpers.js'
 
 // The customer link (2026-10-05: customers in the US and Canada use the page too): only the
 // conversation, no settings or leads; one conversation at a time, and nobody cuts off a customer -
 // the next one waits in line and starts automatically.
 test.setTimeout(180_000)
 
-const CUSTOMER_FILE = new URL('../../logs/customer_url.txt', import.meta.url)
-const customerToken = () => process.env.AVATAR_CUSTOMER_TOKEN
-  ?? (fs.existsSync(CUSTOMER_FILE) ? new URL(fs.readFileSync(CUSTOMER_FILE, 'utf8').trim()).searchParams.get('token') : null)
+const NO_CUSTOMER_LINK = 'no customer link: start the backend with scripts\\tunnel.ps1 or scripts/tunnel.sh, or set AVATAR_CUSTOMER_TOKEN'
 
 async function open(page, token) {
   const messages = captureServerMessages(page)
@@ -20,7 +17,7 @@ async function open(page, token) {
 
 test('a customer sees only the conversation and cannot change the settings', async ({ browser }) => {
   const token = customerToken()
-  test.skip(!token, 'no customer link (start with scripts\\tunnel.ps1)')
+  test.skip(!token, NO_CUSTOMER_LINK)
   const page = await (await browser.newContext()).newPage()
   const messages = await open(page, token)
   const session = await waitFor(messages, (m) => m.type === 'session', 15_000)
@@ -40,7 +37,7 @@ test('a customer sees only the conversation and cannot change the settings', asy
 
 test('a second customer waits in line and starts when the first leaves', async ({ browser }) => {
   const token = customerToken()
-  test.skip(!token, 'no customer link (start with scripts\\tunnel.ps1)')
+  test.skip(!token, NO_CUSTOMER_LINK)
   const first = await (await browser.newContext()).newPage()
   const m1 = await open(first, token)
   await waitFor(m1, (m) => m.type === 'session', 15_000)
@@ -49,7 +46,10 @@ test('a second customer waits in line and starts when the first leaves', async (
   await waitFor(m2, (m) => m.type === 'waiting' && m.position === 1, 15_000)
   await expect(second.getByTestId('waiting')).toContainText('number 1 in line')
   await expect(second.getByTestId('talk')).toHaveCount(0)
-  expect(m1.some((m) => m.type === 'waiting')).toBe(false)           // the first one was not cut off
+  // the first one was not cut off once it had the conversation (before it, it may have waited a few
+  // seconds for the previous test's closed page: its place is kept briefly for a reload, api/ws.py)
+  const started = m1.findIndex((m) => m.type === 'session')
+  expect(m1.slice(started).some((m) => m.type === 'waiting')).toBe(false)
   await first.close()
   await waitFor(m2, (m) => m.type === 'session', 15_000)
   await expect(second.getByTestId('waiting')).toHaveCount(0)
@@ -59,7 +59,7 @@ test('a second customer waits in line and starts when the first leaves', async (
 
 test('the same customer reconnecting continues instead of waiting behind themselves', async ({ browser }) => {
   const token = customerToken()
-  test.skip(!token, 'no customer link (start with scripts\\tunnel.ps1)')
+  test.skip(!token, NO_CUSTOMER_LINK)
   const ctx = await browser.newContext()                             // one browser (one visitor id)
   const a = await ctx.newPage()
   const ma = await open(a, token)

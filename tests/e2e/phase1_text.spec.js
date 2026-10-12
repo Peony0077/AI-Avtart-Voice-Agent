@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { appPath } from './helpers.js'
+import { appPath, ownerToken } from './helpers.js'
 
 // Phase 1: typed conversation with streamed replies, explicit state machine, cancellation.
 
@@ -79,7 +79,7 @@ test('reconnects automatically after the socket drops', async ({ page }) => {
 })
 
 test('a wrong access token is rejected when a token is configured', async ({ page }) => {
-  test.skip(!process.env.AVATAR_TOKEN, 'only meaningful when the server requires a token')
+  test.skip(!ownerToken(), 'only meaningful when the server requires a token')
   await page.goto(appPath('wrong-token'))
   await expect(page.getByTestId('conn-status')).toHaveText('access denied (token)', { timeout: 20_000 })
 })

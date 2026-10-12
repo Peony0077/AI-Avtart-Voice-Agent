@@ -107,7 +107,8 @@ async function run(browser, page, messages, original) {
   expect(p.remembered).toMatch(/Sam/)
   expect(p.remembered).toMatch(/hik/i)
   // only what the user said: not the avatar's cooking talk, not the date, no guessed gender
-  expect(p.remembered).not.toMatch(/(he|she|his|her|him)|cook|recipe|october|sunday/i)
+  // whole words: "The user's name is Sam. They love hiking." has "he" inside "The" and "They"
+  expect(p.remembered).not.toMatch(/\b(he|she|his|her|him)\b|cook|recipe|october|sunday/i)
   await expect(page2.getByTestId('memory')).toContainText('Sam')
   await page2.keyboard.press('Escape')
   // the memory is in the new session (it started before the update finished, so open a fresh one)

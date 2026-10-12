@@ -37,7 +37,11 @@ foreach ($name in $files.Keys) {
   if (-not (Test-Path $dest)) {
     New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
     Write-Host "downloading $name"
-    curl.exe -sL -o $dest "$base/$name"
+    # -f: an HTTP error fails instead of saving the error page as the weights; a temporary name, so an
+    # interrupted download is not taken as done by the next run
+    curl.exe -fsSL -o "$dest.part" "$base/$name"
+    if ($LASTEXITCODE -ne 0) { Remove-Item "$dest.part" -ErrorAction SilentlyContinue; throw "download failed: $base/$name" }
+    Move-Item -Force "$dest.part" $dest
   }
 }
 $link = Join-Path $vendor 'weights'

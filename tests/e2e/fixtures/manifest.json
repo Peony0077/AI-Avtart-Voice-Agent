@@ -10,7 +10,7 @@
     ]
   },
   "mic_story_bargein": {
-    "duration_s": 28.204,
+    "duration_s": 28.224,
     "speech": [
       {
         "text": "Can you tell me a long story about a lighthouse keeper and the sea?",
@@ -20,12 +20,12 @@
       {
         "text": "Wait, stop please. What is two plus two?",
         "start_s": 11.764,
-        "end_s": 14.204
+        "end_s": 14.224
       }
     ]
   },
   "mic_resume": {
-    "duration_s": 16.529,
+    "duration_s": 16.528,
     "speech": [
       {
         "text": "I was thinking about",
@@ -40,22 +40,22 @@
     ]
   },
   "mic_pause_unfinished": {
-    "duration_s": 19.181,
+    "duration_s": 19.19,
     "speech": [
       {
         "text": "I would like to know",
         "start_s": 1.5,
-        "end_s": 2.468
+        "end_s": 2.476
       },
       {
         "text": "what the weather will be like tomorrow.",
-        "start_s": 3.468,
-        "end_s": 5.181
+        "start_s": 3.476,
+        "end_s": 5.19
       }
     ]
   },
   "mic_pause_question": {
-    "duration_s": 19.247,
+    "duration_s": 19.246,
     "speech": [
       {
         "text": "Could you explain?",
@@ -65,7 +65,7 @@
       {
         "text": "how rain forms in the clouds.",
         "start_s": 3.598,
-        "end_s": 5.247
+        "end_s": 5.246
       }
     ]
   },
@@ -90,12 +90,12 @@
     ]
   },
   "bench_q1": {
-    "duration_s": 3.945,
+    "duration_s": 3.944,
     "speech": [
       {
         "text": "What is the capital of Japan?",
         "start_s": 0.8,
-        "end_s": 2.445
+        "end_s": 2.444
       }
     ]
   },
@@ -130,12 +130,12 @@
     ]
   },
   "bench_q5": {
-    "duration_s": 4.159,
+    "duration_s": 4.177,
     "speech": [
       {
         "text": "What should I eat for breakfast tomorrow?",
         "start_s": 0.8,
-        "end_s": 2.659
+        "end_s": 2.677
       }
     ]
   },
@@ -150,12 +150,12 @@
     ]
   },
   "bench_q7": {
-    "duration_s": 3.741,
+    "duration_s": 3.748,
     "speech": [
       {
         "text": "How far away is the moon?",
         "start_s": 0.8,
-        "end_s": 2.241
+        "end_s": 2.248
       }
     ]
   },
@@ -170,12 +170,12 @@
     ]
   },
   "bench_interrupt": {
-    "duration_s": 3.718,
+    "duration_s": 3.713,
     "speech": [
       {
         "text": "Wait, stop. What is two plus two?",
         "start_s": 0.3,
-        "end_s": 2.218
+        "end_s": 2.213
       }
     ]
   },

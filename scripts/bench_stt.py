@@ -22,7 +22,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
-os.environ.setdefault("HF_HOME", "E:/AI-models/hf")
+from model_home import hf_home  # noqa: E402  (scripts/model_home.py: the env, .env, else the platform default)
+
+os.environ.setdefault("HF_HOME", hf_home())
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import numpy as np  # noqa: E402
@@ -31,6 +33,8 @@ from scipy.signal import butter, resample_poly, sosfilt  # noqa: E402
 
 from app.core.config import STTCfg, VADCfg  # noqa: E402
 
+# am_/bf_ voices come with `download_models.py voice`; the accented ones with `download_models.py voice_accents`
+# (voices that are not on this PC, and whose clips are not cached in logs/stt_bench, are skipped)
 VOICES = {"am_michael": "US male", "bf_emma": "British female", "hf_alpha": "Indian female",
           "jf_alpha": "Japanese female", "ef_dora": "Spanish female", "zf_xiaobei": "Chinese female"}
 # "|" = a 0.9 s pause inside the sentence (people pause to think, especially in a second language)
@@ -83,6 +87,20 @@ def condition(audio: np.ndarray, kind: str, rng: np.random.Generator) -> np.ndar
     return np.clip(x, -1, 1).astype(np.float32)
 
 
+def available(voices: dict[str, str]) -> dict[str, str]:
+    """The voices this run can use: clips already cached, or the voice file in the HF cache (offline)."""
+    from huggingface_hub import try_to_load_from_cache
+
+    usable = {}
+    for v, label in voices.items():
+        cached = all((CACHE / f"{v}_{i}_{c}.wav").exists() for i in range(len(SENTENCES)) for c in CONDITIONS)
+        if cached or isinstance(try_to_load_from_cache("hexgrad/Kokoro-82M", f"voices/{v}.pt"), str):
+            usable[v] = label
+        else:
+            print(f"  skipped {v} ({label}): not downloaded (scripts/download_models.py voice_accents)", flush=True)
+    return usable
+
+
 def run_vad_stt(vad, stt, audio: np.ndarray) -> list[str]:
     """Stream like the browser (20 ms packets) and transcribe every VAD utterance."""
     pcm = (audio * 32767).astype(np.int16)
@@ -108,8 +126,9 @@ def main() -> None:
     from app.stt.whisper import WhisperSTT
 
     CACHE.mkdir(parents=True, exist_ok=True)
+    voices = available(VOICES)
     rng = np.random.default_rng(0)
-    need = [(v, s, c) for v in VOICES for s in SENTENCES for c in CONDITIONS
+    need = [(v, s, c) for v in voices for s in SENTENCES for c in CONDITIONS
             if not (CACHE / f"{v}_{SENTENCES.index(s)}_{c}.wav").exists()]
     if need:
         model = KModel(repo_id="hexgrad/Kokoro-82M").to("cuda").eval()
@@ -122,7 +141,7 @@ def main() -> None:
     stt.warmup()
     vad = StreamingVAD(VADCfg())
     rows = []
-    for v in VOICES:
+    for v in voices:
         for si, s in enumerate(SENTENCES):
             for c in CONDITIONS:
                 audio, _ = sf.read(CACHE / f"{v}_{si}_{c}.wav", dtype="float32")
@@ -141,7 +160,7 @@ def main() -> None:
 
     out = {"label": args.label, "overall": agg(rows),
            "by_condition": {c: agg([r for r in rows if r["condition"] == c]) for c in CONDITIONS},
-           "by_voice": {f"{v} ({VOICES[v]})": agg([r for r in rows if r["voice"] == v]) for v in VOICES},
+           "by_voice": {f"{v} ({voices[v]})": agg([r for r in rows if r["voice"] == v]) for v in voices},
            "short_answers": agg([r for r in rows if len(words(r["sentence"])) <= 2]),
            "pause_sentences": agg([r for r in rows if "|" in r["sentence"]]), "rows": rows}
     print(json.dumps({k: v for k, v in out.items() if k != "rows"}, indent=1))

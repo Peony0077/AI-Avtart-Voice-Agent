@@ -6,6 +6,9 @@
   - avatar/musetalk/.venv          Python 3.11 + torch 2.9.1+cu130 + MuseTalk/LivePortrait deps
   - avatar/musetalk/vendor/MuseTalk      TMElyralab/MuseTalk @ 0a89dec (MIT)
   - avatar/musetalk/vendor/LivePortrait  KlingAIResearch/LivePortrait @ 9b294b3 (MIT; InsightFace models non-commercial)
+
+  Weights afterwards: avatar\musetalk\.venv\Scripts\python avatar\musetalk\download_weights.py
+  Linux: avatar/musetalk/setup.sh (or scripts/setup_linux.sh --avatar).
 #>
 $ErrorActionPreference = 'Continue'  # git/uv write progress to stderr
 $here = $PSScriptRoot

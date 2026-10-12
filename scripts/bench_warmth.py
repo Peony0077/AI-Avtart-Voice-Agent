@@ -1,6 +1,8 @@
 """Does the avatar smile at the right moments? For happy, sad and plain messages, runs the real LLM with
 the real system prompt and reports the faces the avatar shows: while thinking (from the user's words)
 and while replying (LLM tag refined by the reply's first words) - before and after the warmth rules.
+It measures the LLM's behaviour tag, which is off in the app by default (llm.behavior_tag: false), so the
+tag is turned on here for the benchmark's own prompts; otherwise every reply would count as "neutral".
 
     .venv\\Scripts\\python scripts\\bench_warmth.py --json docs\\benchmarks\\phase6_warmth.json
 """
@@ -37,7 +39,7 @@ OLD = {"neutral": "neutral", "friendly": "soft_smile", "happy": "smile", "empath
 
 
 async def reply(llm: LLMClient, text: str) -> tuple[dict | None, str]:
-    memory = ConversationMemory(persona=get_settings().persona_name)
+    memory = ConversationMemory(persona=get_settings().persona_name, behavior_tag=True)   # see the docstring
     parser, spoken = MetaStreamParser(), []
     async for delta in llm.stream_chat(memory.build(text)):
         spoken.append(clean_delta(parser.feed(delta)[1]))
