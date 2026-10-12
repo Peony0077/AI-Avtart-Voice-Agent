@@ -1,7 +1,8 @@
 """Application settings.
 
-Precedence (highest first): environment variables (prefix ``AVATAR_``) â†’ ``.env`` â†’
-YAML profile ``config/profiles/<AVATAR_PROFILE>.yaml`` â†’ defaults below.
+Precedence (highest first): environment variables (prefix ``AVATAR_``) -> ``.env`` ->
+YAML profile ``config/profiles/<AVATAR_PROFILE>.yaml`` -> defaults below.
+``AVATAR_PROFILE`` itself may come from the environment or from ``.env``.
 Nested keys use ``__`` in env vars, e.g. ``AVATAR_LLM__MAX_TOKENS=200``.
 """
 from __future__ import annotations
@@ -12,23 +13,21 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-
-
-class ServerCfg(BaseModel):
-    host: str = "127.0.0.1"
-    port: int = 8000
-    ssl_certfile: str | None = None
-    ssl_keyfile: str | None = None
+WINDOWS = os.name == "nt"
+# executables inside a venv / a llama.cpp build differ between Windows and Linux
+VENV_PYTHON = ".venv/Scripts/python.exe" if WINDOWS else ".venv/bin/python"
+DEFAULT_MODEL_HOME = Path("E:/AI-models") if WINDOWS else Path.home() / "AI-models"
 
 
 class LLMCfg(BaseModel):
     base_url: str = "http://127.0.0.1:8081"
     model_path: str = "llm/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"  # relative to model_home
-    server_exe: str = "tools/llama.cpp/current/llama-server.exe"  # relative to repo
+    server_exe: str = ("tools/llama.cpp/current/llama-server.exe" if WINDOWS
+                       else "tools/llama.cpp/current/llama-server")  # relative to repo
     manage_server: bool = True  # backend starts/stops llama-server itself
     context: int = 4096
     gpu_layers: int = 99
@@ -76,7 +75,6 @@ class TTSCfg(BaseModel):
     speed: float = 1.0
     device: str = "cuda"
     clone_reference_wav: str | None = None   # for engine == "clone"
-    clone_reference_text: str | None = None
     clone_tau: float = 0.3            # clone_light: OpenVoice conversion temperature (its default)
 
 
@@ -95,13 +93,16 @@ class AvatarCfg(BaseModel):
     enabled: bool = False
     worker_url: str = "ws://127.0.0.1:8765/ws"
     manage_worker: bool = True
-    worker_python: str = "avatar/musetalk/.venv/Scripts/python.exe"
+    worker_python: str = f"avatar/musetalk/{VENV_PYTHON}"
     avatar_id: str = "dev_girl"
     fps: int = 20
     jpeg_quality: int = 90      # speech frames; idle frames are stored at 90 too (no visible change when she stops talking)
     gate_frames: int = 4        # lip-synced frames rendered before a turn's first audio is released
-    decoder: str = "taesd"      # MuseTalk latent decoder: taesd (fast, E:/AI-models/avatar/models/taesd) | vae
-                                # (measured with the GPU kept warm: 4 -> no late frames; 2 -> lips lag at start)
+    decoder: str = "taesd"      # MuseTalk latent decoder: taesd (fast, MODEL_HOME/avatar/models/taesd) | vae (more
+                                # faithful; the HD profile uses it). RTX 3060, GPU kept warm: gate 4 -> no late frames
+    upscaler: str = "x2plus"    # Real-ESRGAN for the lower face of large (> 512 px) avatars (avatar/musetalk/upscale.py);
+                                # "" = bicubic
+    h264_encoder: str = "auto"  # auto: NVENC when the GPU and ffmpeg have it, else libx264 (avatar/musetalk/h264.py)
     late_ms: int = 100          # skip speech frames that would reach the browser more than this late
                                 # (keeps lips in sync when the GPU is busy; 0 = render every frame)
     warm_burst_ms: int = 0      # MuseTalk warm-up when a turn enters THINKING; redundant since the STT
@@ -113,10 +114,9 @@ class Settings(BaseSettings):
                                       env_file=REPO_ROOT / ".env", extra="ignore")
 
     profile: str = "default"
-    model_home: Path = Path("E:/AI-models")
+    model_home: Path = DEFAULT_MODEL_HOME
     log_dir: Path = REPO_ROOT / "logs"
     persona_name: str = "Ava"
-    server: ServerCfg = ServerCfg()
     llm: LLMCfg = LLMCfg()
     stt: STTCfg = STTCfg()
     vad: VADCfg = VADCfg()
@@ -127,6 +127,15 @@ class Settings(BaseSettings):
     access_token: str | None = None   # required as ?token=... on /ws and /api when set (remote access): the owner's link
     customer_token: str | None = None   # the customer link: talks to her, no settings or leads (api/ws.py)
     vram_min_free_gib: float = 0.8
+
+    @model_validator(mode="after")
+    def _tokens(self) -> Settings:
+        # Without an owner token everyone is the owner (local use): a customer link next to it would have
+        # given every customer - and anyone else - the owner's settings and leads. Refused at start-up.
+        if self.customer_token and not self.access_token:
+            raise ValueError("customer_token is set but access_token is not: set AVATAR_ACCESS_TOKEN too (the "
+                             "owner's link), or remove AVATAR_CUSTOMER_TOKEN for local use without links")
+        return self
 
     @classmethod
     def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings,
@@ -147,13 +156,26 @@ class _YamlProfileSource(PydanticBaseSettingsSource):
         return None, field_name, False
 
     def __call__(self) -> dict[str, Any]:
-        name = os.environ.get("AVATAR_PROFILE", "default")
+        name = profile_name()
         path = REPO_ROOT / "config" / "profiles" / f"{name}.yaml"
         if not path.exists():
-            return {}
+            known = sorted(p.stem for p in path.parent.glob("*.yaml"))
+            raise ValueError(f"unknown profile {name!r} (AVATAR_PROFILE); profiles: {', '.join(known)}")
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         data.setdefault("profile", name)
         return data
+
+
+def profile_name() -> str:
+    """AVATAR_PROFILE from the environment, else from .env. (pydantic's .env source fills the settings only,
+    not os.environ: with the profile set in .env alone, /health named it but default.yaml was loaded.)"""
+    name = os.environ.get("AVATAR_PROFILE")
+    env_file = REPO_ROOT / ".env"
+    if not name and env_file.exists():
+        from dotenv import dotenv_values
+
+        name = dotenv_values(env_file).get("AVATAR_PROFILE")
+    return name or "default"
 
 
 @lru_cache

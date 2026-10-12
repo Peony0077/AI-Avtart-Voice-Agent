@@ -20,10 +20,10 @@ class TTSResult:
 
 def pause_after(clause: str) -> float:
     """Natural pause (ms) after a clause: longer after a sentence than after a comma."""
-    end = clause.rstrip().rstrip("\"')]")[-1:] if clause.strip() else ""
-    if end in ".!?":
+    end = clause.rstrip().rstrip("\"')]")[-1:]
+    if end and end in ".!?":            # ("" is in every string: an empty clause got a sentence's pause)
         return 260.0
-    if end in ",;:":
+    if end and end in ",;:":
         return 130.0
     return 60.0
 

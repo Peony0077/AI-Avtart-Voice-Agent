@@ -6,7 +6,6 @@ PyMuPDF is deliberately not used (AGPL-3.0).
 from __future__ import annotations
 
 import hashlib
-import html
 import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -119,6 +118,8 @@ class _HTMLText(HTMLParser):
             self.skip = max(0, self.skip - 1)
         if tag == "title":
             self._in_title = False
+        if tag in ("h1", "h2", "h3"):
+            self.parts.append("\n")     # the heading line ends here (the text after it was in the heading)
 
     def handle_data(self, data):
         if self._in_title:
@@ -128,9 +129,10 @@ class _HTMLText(HTMLParser):
 
 
 def _html(path: Path) -> tuple[str, list[Section]]:
-    p = _HTMLText()
+    p = _HTMLText()                     # (convert_charrefs: the text is unescaped once, by the parser)
     p.feed(path.read_text(encoding="utf-8", errors="replace"))
-    return _markdown(html.unescape("".join(p.parts)), default_title=p.title.strip() or path.stem)
+    p.close()
+    return _markdown("".join(p.parts), default_title=p.title.strip() or path.stem)
 
 
 # ---------------------------------------------------------------- cleaning + chunking
@@ -146,6 +148,15 @@ def _words(text: str) -> list[str]:
     return text.split()
 
 
+def _split_long(unit: str, max_words: int) -> list[str]:
+    """A unit (paragraph or sentence) longer than ``max_words``, e.g. a PDF page without punctuation, in
+    pieces of ``max_words``: it used to become one huge chunk (cut off by the embedder, too long for the prompt)."""
+    words = _words(unit)
+    if len(words) <= max_words:
+        return [unit]
+    return [" ".join(words[i:i + max_words]) for i in range(0, len(words), max_words)]
+
+
 def chunk_document(path: Path, root: Path, max_words: int = 220, overlap_words: int = 30) -> list[Chunk]:
     """Chunks stay inside one section; long sections are split on paragraph/sentence
     boundaries with a small overlap. ~220 words ≈ 300 tokens."""
@@ -157,6 +168,9 @@ def chunk_document(path: Path, root: Path, max_words: int = 220, overlap_words: 
         if not text:
             continue
         units = [u for p in re.split(r"\n\s*\n", text) for u in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9])", p) if u.strip()]
+        # (minus the overlap: a piece after the previous chunk's tail still fits in max_words)
+        piece = max(1, max_words - overlap_words)
+        units = [part for u in units for part in _split_long(u, piece if len(_words(u)) > max_words else max_words)]
         buf: list[str] = []
         for unit in units:
             if buf and len(_words(" ".join(buf + [unit]))) > max_words:

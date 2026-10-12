@@ -91,9 +91,13 @@ async def serve(tts: XTTS, host: str, port: int) -> None:
                 queue: asyncio.Queue = asyncio.Queue()
 
                 def produce() -> None:
-                    for audio in tts.stream(req["text"]):
-                        loop.call_soon_threadsafe(queue.put_nowait, audio)
-                    loop.call_soon_threadsafe(queue.put_nowait, None)
+                    # the end marker always follows: an XTTS error (CUDA out of memory, an over-long text)
+                    # used to leave this handler - and the backend's recv() - waiting forever
+                    try:
+                        for audio in tts.stream(req["text"]):
+                            loop.call_soon_threadsafe(queue.put_nowait, audio)
+                    finally:
+                        loop.call_soon_threadsafe(queue.put_nowait, None)
 
                 fut = loop.run_in_executor(None, produce)
                 seq = 0

@@ -130,6 +130,8 @@ class WhisperSTT:
         drop within ~2 s); with an encoder pass every 250-500 ms it stays at ~133 ms. Small matmul
         or memcopy keep-alives, a CPU spin or a higher process priority did not help.
         """
+        if not str(self.device).startswith("cuda"):
+            return                          # (on the CPU there are no clocks to keep up, and no CUDA to sync)
         self.model.model.encoder(self._warm_feats)
         torch.cuda.synchronize()
 

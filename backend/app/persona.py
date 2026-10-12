@@ -16,10 +16,14 @@ from __future__ import annotations
 import json
 import re
 import time
+import weakref
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from loguru import logger
+
+from app.core.files import write_text_atomic
+from app.llm.prompt import strip_control_tokens
 
 MAX_NAME = 40
 MAX_PERSONALITY = 600
@@ -69,8 +73,7 @@ class PersonaStore:
         return self.merge(self.defaults, data, voices=None)
 
     def save(self, persona: Persona) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(persona.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+        write_text_atomic(self.path, json.dumps(persona.to_dict(), indent=2, ensure_ascii=False))
 
     @staticmethod
     def merge(current: Persona, data: dict, voices: list[str] | None) -> Persona:
@@ -121,9 +124,8 @@ class MemoryStore:
         words = summary.split()
         if len(words) > MAX_MEMORY_WORDS:
             summary = " ".join(words[:MAX_MEMORY_WORDS])
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps({"summary": summary.strip(), "updated": time.strftime("%Y-%m-%dT%H:%M:%S")},
-                                        indent=2, ensure_ascii=False), encoding="utf-8")
+        write_text_atomic(self.path, json.dumps({"summary": summary.strip(), "updated": time.strftime("%Y-%m-%dT%H:%M:%S")},
+                                                indent=2, ensure_ascii=False))
         return True
 
     def clear(self) -> None:
@@ -131,23 +133,26 @@ class MemoryStore:
         self.path.unlink(missing_ok=True)
 
 
-_VISITOR_ID = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+_VISITOR_ID = re.compile(r"[A-Za-z0-9-]{8,64}")     # fullmatch: "$" let a trailing newline into the file name
 
 
 class VisitorMemories:
     """One MemoryStore per customer (data/visitors/<id>.json): customers must never be greeted with
-    another customer's name. The stores are kept, so each one's "Forget me" generation stays valid."""
+    another customer's name. A store lives as long as something uses it (a session, a pending memory
+    update), so its "Forget me" generation stays valid while it matters; a dict of every visitor ever seen
+    grew without bound."""
 
     def __init__(self, folder: Path) -> None:
         self.folder = folder
-        self._stores: dict[str, MemoryStore] = {}
+        self._stores: weakref.WeakValueDictionary[str, MemoryStore] = weakref.WeakValueDictionary()
 
     def store(self, visitor_id: str) -> MemoryStore | None:
-        if not _VISITOR_ID.match(visitor_id or ""):
+        if not _VISITOR_ID.fullmatch(visitor_id or ""):
             return None
-        if visitor_id not in self._stores:
-            self._stores[visitor_id] = MemoryStore(self.folder / f"{visitor_id}.json")
-        return self._stores[visitor_id]
+        store = self._stores.get(visitor_id)
+        if store is None:
+            store = self._stores[visitor_id] = MemoryStore(self.folder / f"{visitor_id}.json")
+        return store
 
 
 def memory_request(earlier: str | None, user_said: str) -> list[dict]:
@@ -165,6 +170,7 @@ def memory_request(earlier: str | None, user_said: str) -> list[dict]:
             "'the user'; never guess their gender (no he or she). "
             f"At most {MAX_MEMORY_WORDS - 10} words, plain sentences, no lists. If there is nothing new worth "
             "keeping, repeat the earlier memory.")},
-        {"role": "user", "content": f"Earlier memory: {earlier or 'none'}\n\nWhat the user said in the latest "
-                                    f"conversation:\n{user_said}\n\nUpdated memory:"},
+        {"role": "user", "content": f"Earlier memory: {strip_control_tokens(earlier or 'none')}\n\nWhat the user "
+                                    f"said in the latest conversation:\n{strip_control_tokens(user_said)}\n\n"
+                                    "Updated memory:"},
     ]

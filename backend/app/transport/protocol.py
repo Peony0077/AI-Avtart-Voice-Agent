@@ -12,6 +12,9 @@ Binary server→client packets have a 16-byte little-endian header:
     offset 8  u32  seq       packet sequence within the turn
     offset 12 u32  pts_ms    position on the turn's audio timeline (ms)
 
+``HEADER`` below reads kind, turn_id, seq and pts_ms and skips bytes 1-3: the flags are read as
+``packet[1]`` (the avatar worker writes them; ``pack`` here sends 0).
+
 Binary client→server packets are raw PCM16 mono 16 kHz microphone audio.
 """
 from __future__ import annotations

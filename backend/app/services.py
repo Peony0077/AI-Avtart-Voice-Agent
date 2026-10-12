@@ -8,14 +8,15 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from dataclasses import replace
 
 from loguru import logger
 
 from app.core.config import Settings
-from app.core.gpu import gpu_snapshot, vram_free_gib
+from app.core.gpu import gpu_snapshot, locked_thread, vram_free_gib
 from app.leads import LeadStore, is_lead, lead_request, parse_lead
 from app.llm.client import LLMClient
-from app.llm.prompt import system_prompt
+from app.llm.prompt import lead_rules, system_prompt
 from app.llm.server import LlamaServerSupervisor
 from app.persona import MemoryStore, Persona, PersonaStore, VisitorMemories, memory_request
 
@@ -35,9 +36,12 @@ VOICE_BLENDS = ("af_heart,af_bella", "af_heart,af_nicole")
 # to start at once and the next conversation's reply waited behind them (a 890 ms gap in the e2e run;
 # with a waiting line the next customer starts the moment the previous one leaves). Now they run only
 # when no conversation has needed the LLM for BACKGROUND_QUIET_S, and stop (to retry later) as soon as
-# one does.
+# one does. A job is never dropped: after BACKGROUND_MAX_WAIT_S (a steady line of customers kept the LLM
+# busy and leads were given up after 6 tries) it runs to the end and the next reply waits for it. At
+# shutdown the jobs still queued run (at most BACKGROUND_DRAIN_S) before the LLM server stops.
 BACKGROUND_QUIET_S = 1.5
-BACKGROUND_TRIES = 6
+BACKGROUND_MAX_WAIT_S = 180.0
+BACKGROUND_DRAIN_S = 60.0
 PREVIEW_TEXT = ("Hi there! I'm so glad you stopped by. Tell me a little about what you're looking for, "
                 "and I'll be happy to help.")
 
@@ -65,17 +69,29 @@ class Services:
         self.lead_store = LeadStore(settings.repo_path("data/leads.jsonl"))
         self.persona = self.persona_store.load()
         self._background: set[asyncio.Task] = set()
-        self._llm_jobs: list[tuple[str, object, int]] = []
+        self._llm_jobs: list[tuple[str, object, float]] = []   # (name, job, queued at: time.monotonic())
         self._llm_runner: asyncio.Task | None = None
-        self.conversation_busy = lambda: False      # set by api/ws.py: a conversation is using the LLM
+        self._llm_job: asyncio.Task | None = None   # the job running now
+        self._draining = False                      # shutting down: run what is queued, no more waiting
+        self.conversation_busy = lambda: False      # set once by main.py: a conversation is using the LLM
 
     def voices(self) -> list[str]:
         if self.tts is None or not hasattr(self.tts, "voices"):
             return []
         stock = [v for v in self.tts.voices() if v.startswith("a")]
         blends = [b for b in VOICE_BLENDS if all(v in stock for v in b.split(","))]
-        current = [self.persona.voice] if self.persona.voice and self.persona.voice not in stock + blends else []
+        # the persona's voice if it is another one that exists here (e.g. a British one); not when its
+        # files are missing: then it is not offered, and set_voice would fail
+        voice = self.persona.voice
+        current = [voice] if voice and voice not in stock + blends and self._voice_available(voice) else []
         return blends + stock + current
+
+    def _voice_available(self, voice: str) -> bool:
+        """``voice`` (or each voice of a blend) is in the local model cache."""
+        if self.tts is None or not hasattr(self.tts, "voices"):
+            return False
+        have = set(self.tts.voices())
+        return bool(voice) and all(v in have for v in voice.split(","))
 
     async def voice_preview(self, voice: str) -> bytes | None:
         """A short sample of ``voice`` as WAV (Settings: "Listen"), without changing the persona."""
@@ -92,11 +108,17 @@ class Services:
         sf.write(buf, (np.clip(result.audio, -1, 1) * 32767).astype(np.int16), result.sample_rate, format="WAV")
         return buf.getvalue()
 
-    def set_persona(self, data: dict) -> Persona:
+    async def set_persona(self, data: dict) -> Persona:
         """Apply and store the persona settings from the page (valid fields only)."""
         persona = PersonaStore.merge(self.persona, data, self.voices())
         if persona.voice != self.persona.voice and hasattr(self.tts, "set_voice"):
-            self.tts.set_voice(persona.voice)
+            # under the GPU lock and off the event loop: the cloned voice (converted_tts) measures the new
+            # base voice's tone colour, a few short syntheses
+            try:
+                await locked_thread(self.gpu_lock, self.tts.set_voice, persona.voice)
+            except Exception as exc:  # noqa: BLE001 - the voice stays as it was
+                logger.error(f"voice {persona.voice!r} could not be loaded: {exc!r}")
+                persona = replace(persona, voice=self.persona.voice)
         self.persona = persona
         self.persona_store.save(persona)
         logger.info(f"persona updated: {persona.name}, voice {persona.voice}, memory {'on' if persona.memory else 'off'}")
@@ -148,35 +170,60 @@ class Services:
         return len(self._llm_jobs) + (1 if running else 0)
 
     def _queue_llm_job(self, name: str, job) -> None:
-        self._llm_jobs.append((name, job, 0))
+        self._llm_jobs.append((name, job, time.monotonic()))
+        self._ensure_llm_runner()
+
+    def _ensure_llm_runner(self) -> asyncio.Task:
         if self._llm_runner is None or self._llm_runner.done():
             self._llm_runner = asyncio.get_running_loop().create_task(self._run_llm_jobs(), name="llm-background")
             self._background.add(self._llm_runner)
             self._llm_runner.add_done_callback(self._background.discard)
+        return self._llm_runner
+
+    def _may_wait(self, queued: float) -> bool:
+        """The job may still give way to a conversation (not shutting down, not waiting too long already)."""
+        return not self._draining and time.monotonic() - queued < BACKGROUND_MAX_WAIT_S
 
     async def _run_llm_jobs(self) -> None:
-        """Background LLM jobs, one at a time, only while no conversation needs the LLM."""
+        """Background LLM jobs, one at a time (oldest first), while no conversation needs the LLM."""
+        step = min(0.25, BACKGROUND_QUIET_S / 2)
         while self._llm_jobs:
-            quiet, step = 0.0, min(0.25, BACKGROUND_QUIET_S / 2)
-            while quiet < BACKGROUND_QUIET_S:
+            name, job, queued = self._llm_jobs[0]
+            quiet = 0.0
+            while quiet < BACKGROUND_QUIET_S and self._may_wait(queued):
                 await asyncio.sleep(step)
                 quiet = 0.0 if self.conversation_busy() else quiet + step
-            name, job, tries = self._llm_jobs.pop(0)
-            task = asyncio.get_running_loop().create_task(job(), name=name)
+            if not self._may_wait(queued) and not self._draining:
+                logger.warning(f"{name}: waited {BACKGROUND_MAX_WAIT_S:.0f} s for a quiet moment; runs now")
+            self._llm_jobs.pop(0)
+            task = self._llm_job = asyncio.get_running_loop().create_task(job(), name=name)
             while not task.done():
                 await asyncio.wait({task}, timeout=0.1)
-                if not task.done() and self.conversation_busy():
+                if not task.done() and self.conversation_busy() and self._may_wait(queued):
                     task.cancel()                   # closes its request: the LLM stops at once
                     try:
                         await task
                     except asyncio.CancelledError:
                         pass
-                    if tries + 1 < BACKGROUND_TRIES:
-                        self._llm_jobs.append((name, job, tries + 1))
-                        logger.info(f"{name}: paused, a conversation needs the LLM (retried later)")
-                    else:
-                        logger.warning(f"{name}: given up after {BACKGROUND_TRIES} tries")
+                    self._llm_jobs.insert(0, (name, job, queued))   # first again when it is quiet
+                    logger.info(f"{name}: paused, a conversation needs the LLM (retried later)")
                     break
+
+    async def drain_background(self, timeout_s: float = BACKGROUND_DRAIN_S) -> None:
+        """Shutdown: the memory and lead jobs still queued (close() of the last conversations queued them)
+        run now, without waiting for a quiet moment, within ``timeout_s``; they were lost before."""
+        if not self.pending_background():
+            return
+        self._draining = True
+        runner = self._ensure_llm_runner()
+        logger.info(f"shutdown: running {self.pending_background()} background job(s) first")
+        try:
+            await asyncio.wait_for(asyncio.shield(runner), timeout_s)
+        except TimeoutError:
+            logger.warning(f"shutdown: {self.pending_background()} memory/lead job(s) not done in {timeout_s:.0f} s")
+            for task in (runner, self._llm_job):
+                if task is not None and not task.done():
+                    task.cancel()
 
     @property
     def voice_ready(self) -> bool:
@@ -252,10 +299,25 @@ class Services:
             self.settings.tts.engine = "kokoro"
             self.tts = create_tts(self.settings)
         self.load_report["tts_load_s"] = round(time.perf_counter() - t0, 2)
-        if hasattr(self.tts, "set_voice") and self.persona.voice not in ("", self.tts.voice):
-            if self.persona.voice in self.voices():       # the voice chosen in the page (persona)
-                self.tts.set_voice(self.persona.voice)
+        self._apply_persona_voice()
         self.load_report["tts_warmup_s"] = self.tts.warmup()
+
+    def _apply_persona_voice(self) -> None:
+        """The voice chosen in the page (persona.json) at start-up. One that is not here any more (e.g. not
+        in this PC's model cache) made set_voice raise and the backend fail to start: the configured
+        voice is used instead, with a warning."""
+        voice = self.persona.voice
+        if not hasattr(self.tts, "set_voice") or voice in ("", self.tts.voice):
+            return
+        try:
+            if not self._voice_available(voice):
+                raise FileNotFoundError("not in the local model cache")
+            self.tts.set_voice(voice)
+        except Exception as exc:  # noqa: BLE001
+            msg = f"persona voice {voice!r} unavailable ({exc}): using the configured voice {self.tts.voice!r}"
+            logger.warning(msg)
+            self.warnings.append(msg)
+            self.persona = replace(self.persona, voice=self.tts.voice)   # (persona.json is left as it is)
 
     def _load_rag(self) -> None:
         index = self.settings.repo_path(self.settings.rag.index_dir)
@@ -274,9 +336,14 @@ class Services:
         self.load_report["rag_s"] = round(time.perf_counter() - t0, 2)
 
     async def _warm_llm(self) -> None:
-        """Run one tiny request with the real system prompt so its KV prefix is cached."""
+        """Run one tiny request with the real system prompt so its KV prefix is cached: the persona's name,
+        personality and business as a conversation's (session.py; a customer without a memory of earlier
+        conversations) - with the configured name alone the cached prefix ended after a few words."""
         t0 = time.perf_counter()
-        prompt = system_prompt(self.settings.persona_name, behavior_tag=self.settings.llm.behavior_tag)   # same prefix as turns (cache)
+        p = self.persona
+        prompt = system_prompt(p.name, knowledge_enabled=self.settings.rag.enabled,
+                               behavior_tag=self.settings.llm.behavior_tag, personality=p.personality,
+                               company=p.company, lead=lead_rules(p.company, p.offer, p.next_step) if p.lead_gen else "")
         try:
             await self.llm.complete([{"role": "system", "content": prompt}, {"role": "user", "content": "Hi"}], max_tokens=4)
         except Exception as exc:  # noqa: BLE001
@@ -368,6 +435,7 @@ class Services:
                                    "played_ms": round(played_ms)})
 
     async def stop(self) -> None:
+        await self.drain_background()               # (needs the LLM server: before it stops)
         if self.avatar is not None:
             await self.avatar.stop()
         if self.tts is not None and hasattr(self.tts, "close"):

@@ -121,10 +121,12 @@ _HAPPY_USER = re.compile(
     r"i (just |finally )?got (the|a|my|an)|i (just |finally )?(passed|won|did it)|"
     r"i'?m (so |really )?(happy|excited|glad|thrilled)|(it'?s|today is) my birthday|congratulat\w*|"
     r"you'?re (great|awesome|amazing|the best|funny|sweet|kind)|nice to meet|jokes?|funny)\b")
+# (whole words: "pain\w*" matched "painting", "cry\w*" "crypto", "scar\w*" "scarf")
 _SAD = re.compile(
-    r"\b(sad|sorry|die[ds]?|dead|death|passed away|sick|ill|hurt\w*|pain\w*|lost|los(e|ing)|fail\w*|worr\w*|"
-    r"anxi\w*|scar\w*|afraid|angry|upset|terribl\w*|awful|bad news|cry\w*|depress\w*|lonely|accident|hospital|"
-    r"stress\w*|unfortunately|broke up|fired|nervous|frighten\w*|difficult|tough|hard time)\b")
+    r"\b(sad|sorry|die[ds]?|dead|death|passed away|sick|ill|hurt(s|ing|ful)?|pain(s|ful|fully)?|lost|los(e|ing)|"
+    r"fail\w*|worr\w*|anxi\w*|scar(e|ed|es|y|ier|iest|ing)|afraid|angry|upset|terribl\w*|awful|bad news|"
+    r"cr(y|ies|ied|ying)|depress\w*|lonely|accident|hospital|stress\w*|unfortunately|broke up|fired|nervous|"
+    r"frighten\w*|difficult|tough|hard time)\b")
 _NO_SMILE = ("empathetic", "concerned", "serious")
 
 

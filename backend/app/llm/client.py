@@ -14,6 +14,29 @@ from loguru import logger
 
 from app.core.config import LLMCfg
 
+# llama-server's /completion says why it stopped in its own words; the chat endpoint uses OpenAI's
+_STOP_TYPES = {"eos": "stop", "word": "stop", "limit": "length"}
+
+
+class LLMError(RuntimeError):
+    """llama-server reported an error inside a 200 response (an SSE ``error`` event), or sent no reply at all."""
+
+
+def _error_event(line: str) -> str | None:
+    """The error in an SSE line (``error: {...}``, or a ``data:`` chunk with an ``error`` object), else None.
+    Only ``data:`` lines were read: such an error became a silent empty reply."""
+    if line.startswith("error:"):
+        return line[6:].strip() or "unknown error"
+    if line.startswith("data:") and '"error"' in line:
+        try:
+            chunk = json.loads(line[5:])
+        except ValueError:
+            return None
+        if isinstance(chunk, dict) and chunk.get("error"):
+            err = chunk["error"]
+            return str(err.get("message", err) if isinstance(err, dict) else err)
+    return None
+
 
 @dataclass
 class LLMStats:
@@ -79,6 +102,8 @@ class LLMClient:
         async with self._http.stream("POST", "/completion", json=body) as r:
             r.raise_for_status()
             async for line in r.aiter_lines():
+                if (error := _error_event(line)) is not None:
+                    raise LLMError(f"llama-server: {error}")
                 if not line.startswith("data:"):
                     continue
                 chunk = json.loads(line[5:])
@@ -87,7 +112,8 @@ class LLMClient:
                 if chunk.get("stop"):
                     if stats is not None:
                         t = chunk.get("timings") or {}
-                        stats.finish_reason = chunk.get("stop_type")
+                        stop = chunk.get("stop_type")
+                        stats.finish_reason = _STOP_TYPES.get(stop, stop)
                         stats.completion_tokens = (stats.completion_tokens or 0) + (t.get("predicted_n") or 0)
                         stats.extra["continued"] = {"prompt_n": t.get("prompt_n"), "cache_n": t.get("cache_n")}
                     break
@@ -126,9 +152,16 @@ class LLMClient:
     async def _stream(self, body: dict, stats: LLMStats | None) -> AsyncIterator[str]:
         async with self._http.stream("POST", "/v1/chat/completions", json=body) as resp:
             resp.raise_for_status()
+            other: list[str] = []          # what came instead of SSE data (for the error)
+            data = False
             async for line in resp.aiter_lines():
+                if (error := _error_event(line)) is not None:
+                    raise LLMError(f"llama-server: {error}")
                 if not line.startswith("data:"):
+                    if line.strip() and len(other) < 3:
+                        other.append(line.strip()[:200])
                     continue
+                data = True
                 payload = line[5:].strip()
                 if payload == "[DONE]":
                     break
@@ -147,6 +180,8 @@ class LLMClient:
                     stats.completion_tokens = t.get("predicted_n")
                     stats.tokens_per_s = t.get("predicted_per_second")
                     stats.cached_tokens = t.get("cache_n")
+            if not data:
+                raise LLMError(f"llama-server sent no reply (HTTP {resp.status_code}): {' | '.join(other) or 'empty'}")
 
     async def complete(self, messages: list[dict], max_tokens: int = 16) -> str:
         """Non-streaming helper (warm-up, summaries)."""

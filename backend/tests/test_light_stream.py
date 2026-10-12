@@ -5,6 +5,7 @@ import io
 import struct
 
 import numpy as np
+import pytest
 import soundfile as sf
 
 from app.session.outbox import Outbox
@@ -81,3 +82,27 @@ def test_video_bitrate_settles_below_what_the_link_carries():
     for k in range(8):
         scale, ceiling = next_video_scale(scale, ceiling, False, calm_s=70 + 10 * k)
     assert scale == 1.0
+
+
+def test_video_bitrate_follows_the_avatar_size_and_frame_rate():
+    from app.session.session import VIDEO_KBPS, video_kbps
+
+    assert video_kbps(None) == VIDEO_KBPS == video_kbps({"size": [512, 512], "fps": 20})
+    speech, idle = video_kbps({"size": [1024, 1024], "fps": 25})     # the HD avatar: ~2.5 / 1.2 Mbit/s
+    assert 2300 <= speech <= 2600 and 1100 <= idle <= 1300
+    assert video_kbps({"size": [256, 256], "fps": 20}) == VIDEO_KBPS  # never below the 512 rates
+
+
+def test_an_hd_video_adapts_to_a_slow_link_in_one_reply():
+    """2.5 Mbit/s on an 800 kbit/s link: the measured delivery rate sets the next share at once, and the
+    floor is the same ~245 kbit/s as for a 512 avatar."""
+    from app.session.session import VIDEO_KBPS, next_video_scale, video_kbps
+
+    full = video_kbps({"size": [1024, 1024], "fps": 25})[0]
+    floor = VIDEO_SCALE_MIN * VIDEO_KBPS[0] / full
+    fit = (0.7 * 800 - 64) / full
+    scale, ceiling = next_video_scale(1.0, 1.0, congested=True, floor=floor, fit=fit)
+    assert scale * full == pytest.approx(496, abs=1)                   # fits the link after one reply
+    assert ceiling >= scale
+    scale, _ = next_video_scale(scale, ceiling, congested=True, floor=floor, fit=0.0)
+    assert scale * full == pytest.approx(VIDEO_SCALE_MIN * VIDEO_KBPS[0])   # never below ~245 kbit/s

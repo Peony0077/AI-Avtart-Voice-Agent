@@ -80,6 +80,7 @@ def test_vad_segments_real_speech_with_pause():
     assert abs(events[3][2] - manifest[1]["end_s"]) < 0.25
 
 
+@pytest.mark.skipif(not (FIXTURES / "mic_resume.wav").exists(), reason="run scripts/make_fixtures.py")
 def test_vad_resume_after_a_short_pause_inside_one_utterance():
     """A 0.3 s gap (> early-STT 120 ms, < endpoint 550 ms) gives pause → resume, then one end."""
     from app.audio.vad import StreamingVAD

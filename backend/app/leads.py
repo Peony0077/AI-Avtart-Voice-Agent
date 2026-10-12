@@ -13,6 +13,9 @@ import re
 import time
 from pathlib import Path
 
+from app.core.files import write_text_atomic
+from app.llm.prompt import strip_control_tokens
+
 FIELDS = ("name", "email", "phone", "company", "need", "timeline", "budget", "interest", "next_step", "notes")
 INTEREST = ("low", "medium", "high")
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[a-z]{2,}$", re.I)
@@ -21,7 +24,7 @@ _MAX_FIELD = 300
 
 def lead_request(transcript: str, company: str = "") -> list[dict]:
     """LLM request: the conversation -> one JSON object with the lead's fields."""
-    business = f" for {company}" if company else ""
+    business = f" for {strip_control_tokens(company)}" if company else ""
     return [
         {"role": "system", "content": (
             f"You read a conversation between a customer and a voice assistant{business} and write down the lead. "
@@ -33,7 +36,7 @@ def lead_request(transcript: str, company: str = "") -> list[dict]:
             '"next_step" (what was agreed, e.g. "call back on Tuesday"), "notes" (anything else useful, short). '
             "Use an empty string for anything the customer did not say. Write emails as name@example.com "
             '(speech recognition writes "john at gmail dot com") and phone numbers as digits.')},
-        {"role": "user", "content": f"Conversation:\n{transcript}\n\nJSON:"},
+        {"role": "user", "content": f"Conversation:\n{strip_control_tokens(transcript)}\n\nJSON:"},
     ]
 
 
@@ -65,7 +68,8 @@ def parse_lead(text: str) -> dict | None:
     return lead
 
 
-_CONTACT = re.compile(r"@|\bat\b.*\bdot\b|\d[\d\s().-]{6,}\d|\bmy name\b|\bi'?m [A-Z][a-z]+|\bcall me\b|"
+# "I'm Sarah" (Whisper capitalises names), not "I'm fine": the name's capital is matched case-sensitively
+_CONTACT = re.compile(r"@|\bat\b.*\bdot\b|\d[\d\s().-]{6,}\d|\bmy name\b|\bi'?m (?-i:[A-Z][a-z]+)\b|\bcall me\b|"
                       r"\bemail\b|\bphone\b|\bnumber\b", re.I)
 
 
@@ -95,8 +99,7 @@ class LeadStore:
         record = {"time": time.strftime("%Y-%m-%d %H:%M"), "session": session_id, "visitor": visitor_id or "", **lead}
         rows = [r for r in self.load() if r.get("session") != session_id]   # the newest version of a session
         rows.append(record)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+        write_text_atomic(self.path, "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
         return record
 
     def load(self) -> list[dict]:
@@ -114,8 +117,16 @@ class LeadStore:
 
     @staticmethod
     def to_csv(rows: list[dict]) -> str:
+        """CSV for a spreadsheet. The values are what customers said: a value starting like a formula
+        (=, +, -, @) gets a leading apostrophe, so Excel shows it as text instead of running it."""
         out = io.StringIO()
         writer = csv.DictWriter(out, fieldnames=("time", *FIELDS), extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows({k: _cell(v) for k, v in row.items()} for row in rows)
         return out.getvalue()
+
+
+def _cell(value):
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + value
+    return value

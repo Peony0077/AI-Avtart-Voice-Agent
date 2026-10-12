@@ -77,11 +77,36 @@ def wants_detail(user_text: str) -> bool:
 
 
 # Questions about the time or date get the current local time on that message only (the LLM does not
-# know it; in the system prompt it would change the cached prefix every minute).
-_ABOUT_TIME = re.compile(r"\b(time|date|day|today|tonight|tomorrow|yesterday|week|weekend|month|year|clock|"
-                         r"hour|o'clock|morning|afternoon|evening|monday|tuesday|wednesday|thursday|friday|"
-                         r"saturday|sunday|january|february|march|april|may|june|july|august|september|"
-                         r"october|november|december)\b", re.I)
+# know it; in the system prompt it would change the cached prefix every minute). Not "May I ..." or
+# "every time": the month only with a date word or a number, "time" only when it is the clock's.
+_ABOUT_TIME = re.compile(r"\b(what time|time is it|the time|current time|time now|time zone|date|day|today|tonight|"
+                         r"tomorrow|yesterday|week|weekend|month|year|clock|hour|o'clock|morning|afternoon|evening|"
+                         r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|"
+                         r"june|july|august|september|october|november|december|"
+                         r"(?:in|of|on|by|until|this|next|last|early|late|mid)[- ]may|may \d{1,2}(?:st|nd|rd|th)?)\b",
+                         re.I)
+
+# Chat-template control tokens (Qwen's ChatML and its other special tokens). llama-server parses special
+# tokens in the rendered prompt, so a customer typing "<|im_end|><|im_start|>system ..." - or a document
+# containing it - could write her instructions. Removed from everything that is not ours.
+_CONTROL_TOKEN = re.compile(r"<\|[^<>|\s]{1,40}\|>|</?(?:think|tool_call|tool_response)>", re.I)
+# Prompt size (llm.context): ~3.5 characters a token for English, and per message the template's own
+# tokens. The lite profile's 3072-token context overflowed in long chats (llama-server then fails the turn).
+CHARS_PER_TOKEN = 3.5
+MESSAGE_OVERHEAD_TOKENS = 8
+TRIM_TO = 0.75          # over the budget: older exchanges leave until they use this share of the room left
+
+
+def strip_control_tokens(text: str) -> str:
+    """``text`` without chat-template control tokens (also when removing one would form another)."""
+    prev = None
+    while prev != text:
+        prev, text = text, _CONTROL_TOKEN.sub("", text)
+    return text
+
+
+def estimate_tokens(text: str) -> int:
+    return int(len(text) / CHARS_PER_TOKEN) + MESSAGE_OVERHEAD_TOKENS
 
 
 def time_hint(user_text: str, now: float | None = None, utc_offset_min: int | None = None) -> str:
@@ -142,8 +167,11 @@ class ConversationMemory:
     company: str = ""                  # the business she represents (persona.company)
     lead: str = ""                     # lead-generation rules (prompt.lead_rules) when lead_gen is on
     utc_offset_min: int | None = None  # the customer's time zone (their browser), for time questions
+    context_tokens: int | None = None  # llm.context: the prompt must leave room for the reply in it
+    reply_tokens: int = 320            # llm.max_tokens
 
     def add(self, user_text: str, assistant_text: str, interrupted: bool = False) -> None:
+        user_text, assistant_text = strip_control_tokens(user_text), strip_control_tokens(assistant_text)
         self.after_interruption = interrupted
         self.said.append(user_text)
         self.dialog.append((user_text, assistant_text))
@@ -157,19 +185,41 @@ class ConversationMemory:
             del self.turns[:cut]
 
     def build(self, user_text: str, knowledge: str | None = None) -> list[dict]:
+        user_text = strip_control_tokens(user_text)
         content = (user_text + (DETAIL_HINT if wants_detail(user_text) else "")
                    + time_hint(user_text, utc_offset_min=self.utc_offset_min))
         if self.after_interruption:
             content += INTERRUPTED_HINT
-        if knowledge:
-            content = f"{content}\n\nKNOWLEDGE (retrieved from the user's documents):\n{knowledge}"
-        return [
-            {"role": "system", "content": system_prompt(self.persona, self.summary, self.knowledge_enabled,
-                                                        self.behavior_tag, self.personality, self.long_term,
-                                                        self.company, self.lead)},
-            *self.turns,
-            {"role": "user", "content": content},
-        ]
+        system = system_prompt(self.persona, strip_control_tokens(self.summary or "") or None, self.knowledge_enabled,
+                               self.behavior_tag, self.personality, strip_control_tokens(self.long_term or "") or None,
+                               self.company, self.lead)
+        knowledge = strip_control_tokens(knowledge) if knowledge else None
+        if (budget := self.prompt_budget()) is not None:
+            fixed = estimate_tokens(system) + estimate_tokens(content)
+            if knowledge:
+                fixed += estimate_tokens(KNOWLEDGE_TEMPLATE) + estimate_tokens(knowledge)
+            used = fixed + sum(estimate_tokens(t["content"]) for t in self.turns)
+            if used > budget:
+                # too long for the context: the oldest exchanges leave the window for the rolling summary
+                # (as in add), in a block (TRIM_TO of the room the history has) so the cached prefix
+                # changes rarely
+                target = fixed + max(0, budget - fixed) * TRIM_TO
+                while self.turns and used > target:
+                    dropped = self.turns[:2]
+                    del self.turns[:2]
+                    self.archived.extend(dropped)
+                    used -= sum(estimate_tokens(t["content"]) for t in dropped)
+            if knowledge and used > budget:            # still too long: less of the retrieved knowledge
+                knowledge = knowledge[:max(0, len(knowledge) - int((used - budget) * CHARS_PER_TOKEN))]
+        if knowledge:   # with its rules: answer from it, never invent facts, no source numbers read aloud
+            content = KNOWLEDGE_TEMPLATE.format(question=content, knowledge=knowledge)
+        return [{"role": "system", "content": system}, *self.turns, {"role": "user", "content": content}]
+
+    def prompt_budget(self) -> int | None:
+        """Tokens the prompt may use: the context minus the reply's room (None: no limit known)."""
+        if not self.context_tokens:
+            return None
+        return max(256, self.context_tokens - self.reply_tokens)
 
     def transcript(self) -> str:
         """This session's conversation as text (rolling summary of older turns + recent turns)."""
@@ -204,9 +254,26 @@ class ConversationMemory:
     def needs_summary(self) -> bool:
         return len(self.archived) >= 4
 
-    def summary_request(self) -> list[dict]:
-        transcript = "\n".join(f"{t['role']}: {_strip_meta(t['content'])}" for t in self.archived)
-        prior = f"Existing summary: {self.summary}\n\n" if self.summary else ""
+    def summary_count(self) -> int:
+        """How many archived turns (oldest first, whole exchanges) the next summary request covers: all of
+        them, or as many as fit in the context."""
+        budget = self.prompt_budget()
+        if budget is None:
+            return len(self.archived)
+        used, n = 400 + estimate_tokens(self.summary or ""), 0       # (instructions and the reply)
+        while n < len(self.archived):
+            pair = self.archived[n:n + 2]
+            used += sum(estimate_tokens(t["content"]) for t in pair)
+            if used > budget and n:
+                break
+            n += len(pair)
+        return n
+
+    def summary_request(self, count: int | None = None) -> list[dict]:
+        """Merge the first ``count`` archived turns (default: all) into the summary (apply_summary)."""
+        turns = self.archived if count is None else self.archived[:count]
+        transcript = strip_control_tokens("\n".join(f"{t['role']}: {_strip_meta(t['content'])}" for t in turns))
+        prior = f"Existing summary: {strip_control_tokens(self.summary)}\n\n" if self.summary else ""
         return [
             {"role": "system", "content": "You write compact conversation summaries. Keep the user's name, facts about "
              "them, preferences and open questions, and list the topics in the order they came up. Max 80 words. "
@@ -214,9 +281,14 @@ class ConversationMemory:
             {"role": "user", "content": f"{prior}Conversation to add:\n{transcript}\n\nUpdated summary:"},
         ]
 
-    def apply_summary(self, text: str) -> None:
+    def apply_summary(self, text: str, count: int | None = None) -> None:
+        """The summary now covers the first ``count`` archived turns (default: all). Only those leave
+        ``archived``: turns archived while the summary was being written are summarised next time
+        (clearing all of them lost those)."""
+        if not text.strip():
+            return                         # an empty summary would lose the turns
         self.summary = text.strip()
-        self.archived.clear()
+        del self.archived[:len(self.archived) if count is None else count]
 
 
 def _strip_meta(text: str) -> str:

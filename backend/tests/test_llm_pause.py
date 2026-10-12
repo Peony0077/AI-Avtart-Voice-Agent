@@ -71,7 +71,7 @@ def test_pauses_after_the_first_clause_and_continues_the_same_reply():
     # the continuation starts from exactly the text already produced
     completion = next(body for path, body in seen if path == "/completion")
     assert completion["prompt"] == "<prompt>The capital is Tokyo. It is" and completion["cache_prompt"] is True
-    assert stats.finish_reason == "eos" and stats.extra["continued"]["cache_n"] == 30
+    assert stats.finish_reason == "stop" and stats.extra["continued"]["cache_n"] == 30   # (llama.cpp's "eos")
 
 
 def test_without_pause_it_streams_straight_through():

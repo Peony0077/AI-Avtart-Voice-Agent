@@ -103,11 +103,20 @@ class ConvertedTTS(KokoroTTS):
         t0 = time.perf_counter()
         self.tau = settings.tts.clone_tau
         self.converter = ToneColorConverter(settings.tts.device)
-        self.src_se = self.converter.embed([(KokoroTTS.synthesize(self, t).audio, self.sample_rate)
-                                            for t in SOURCE_TEXT])
+        self.src_se = self._base_tone()
         self.tgt_se = self.converter.embed(reference_clips(settings.repo_path(ref)))
         self.load_s = round(self.load_s + time.perf_counter() - t0, 2)
         logger.info(f"clone_light ready: Kokoro '{settings.tts.voice}' -> timbre of {ref} (tau {self.tau})")
+
+    def _base_tone(self) -> torch.Tensor:
+        """Tone colour of the current Kokoro base voice (what the converter changes from)."""
+        return self.converter.embed([(KokoroTTS.synthesize(self, t).audio, self.sample_rate) for t in SOURCE_TEXT])
+
+    def set_voice(self, voice: str) -> None:
+        """Another base voice: its tone colour is measured again. With the old one the converter took the
+        new voice's timbre for the old one's, and the cloned voice came out wrong."""
+        super().set_voice(voice)
+        self.src_se = self._base_tone()
 
     def synthesize(self, text: str) -> TTSResult:
         t0 = time.perf_counter()

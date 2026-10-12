@@ -71,6 +71,7 @@ def background_services(llm, store, monkeypatch):
     svc = Services.__new__(Services)
     svc.llm, svc.memory_store, svc._background = llm, store, set()
     svc._llm_jobs, svc._llm_runner, svc.conversation_busy = [], None, lambda: False
+    svc._llm_job, svc._draining = None, False
     return svc
 
 
@@ -169,3 +170,82 @@ async def test_background_llm_jobs_give_way_to_a_conversation(tmp_path, monkeypa
     busy["now"] = False
     await asyncio.gather(*svc._background)
     assert calls["started"] == 2 and calls["finished"] == 1 and store.load() == "The user is Sam."
+
+
+def test_visitor_ids_are_plain_and_unused_stores_are_not_kept(tmp_path):
+    import gc
+
+    from app.persona import VisitorMemories
+    v = VisitorMemories(tmp_path / "visitors")
+    assert v.store("visitor-aaaa-1111\n") is None                           # ("$" let the newline through)
+    for i in range(50):
+        v.store(f"visitor-{i:04d}-xxxx")                                    # sessions that ended
+    gc.collect()
+    assert len(v._stores) == 0                                               # not a dict of everyone ever seen
+    kept = v.store("visitor-aaaa-1111")
+    gc.collect()
+    assert v.store("visitor-aaaa-1111") is kept                             # in use: the same store (Forget me)
+
+
+async def test_an_unavailable_persona_voice_falls_back_to_the_configured_one(tmp_path):
+    import asyncio
+
+    from app.services import Services
+
+    class TTS:
+        voice, broken = "af_heart", False
+
+        def voices(self):
+            return ["af_heart", "af_bella", "bf_emma"]
+
+        def set_voice(self, voice):
+            if voice not in self.voices() or self.broken:
+                raise FileNotFoundError(voice)
+            self.voice = voice
+
+    svc = Services.__new__(Services)
+    svc.tts, svc.warnings, svc.gpu_lock = TTS(), [], asyncio.Lock()
+    svc.persona_store = PersonaStore(tmp_path / "persona.json", Persona(name="Ava"))
+    svc.persona = Persona(name="Ava", voice="af_missing")                    # persona.json from another PC
+    assert "af_missing" not in svc.voices()
+    svc._apply_persona_voice()                                               # start-up: no exception
+    assert svc.persona.voice == "af_heart" and svc.tts.voice == "af_heart" and svc.warnings
+    svc.persona = Persona(name="Ava", voice="bf_emma")
+    assert svc.voices()[-1] == "bf_emma"                                     # another voice that exists: offered
+    svc.persona, svc.tts.broken = Persona(name="Ava", voice="af_heart"), True
+    persona = await svc.set_persona({"voice": "af_bella", "company": "Acme"})   # the voice fails to load
+    assert persona.voice == "af_heart" and persona.company == "Acme" and svc.tts.voice == "af_heart"
+
+
+async def test_background_jobs_are_never_dropped_and_run_at_shutdown(tmp_path, monkeypatch):
+    """A steady line of customers interrupted lead jobs until they were given up (6 tries), and jobs queued
+    by the last conversations were lost at shutdown."""
+    import asyncio
+
+    import app.services as services_mod
+    store = MemoryStore(tmp_path / "memory.json")
+    calls = []
+
+    class LLM:
+        async def complete(self, messages, max_tokens=0):
+            calls.append(1)
+            await asyncio.sleep(0.3)
+            return "The user is Sam."
+
+    svc = background_services(LLM(), store, monkeypatch)
+    busy = {"now": False}
+    svc.conversation_busy = lambda: busy["now"]
+    svc.remember("- I'm Sam.")
+    for _ in range(8):                                        # interrupted again and again ...
+        busy["now"] = False
+        await asyncio.sleep(0.12)                             # (quiet: it starts)
+        busy["now"] = True
+        await asyncio.sleep(0.12)                             # (a conversation: it stops)
+    assert len(calls) >= 7 and len(svc._llm_jobs) == 1 and store.load() is None    # ... still queued
+    await svc.drain_background(timeout_s=2)                  # shutdown: runs although a conversation is "busy"
+    assert store.load() == "The user is Sam." and svc.pending_background() == 0
+    monkeypatch.setattr(services_mod, "BACKGROUND_MAX_WAIT_S", 0.0)    # waited too long: runs to the end
+    svc._draining, n = False, len(calls)
+    svc.remember("- I'm Kim.")
+    await asyncio.wait_for(asyncio.gather(*svc._background), 2)
+    assert len(calls) == n + 1                               # once, not interrupted by the busy conversation

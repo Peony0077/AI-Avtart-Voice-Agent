@@ -1,7 +1,9 @@
 """Make LLM text safe to speak: strip emojis, markdown and URLs; normalise punctuation.
 
-Works on streamed deltas (character-level rules only), so it can run before the
-text is displayed and before it reaches TTS — what the user sees is what is spoken.
+Runs before the text is displayed and before it reaches TTS - what the user sees is what is spoken.
+The LLM streams tokens, and a URL, an email or "~20" arrives in pieces: SpeechTextStream cleans the
+stream a whole word at a time (clean_delta per token read URLs aloud, and turned "john_doe@" into
+"johndoe@").
 """
 from __future__ import annotations
 
@@ -10,13 +12,19 @@ import re
 _EMOJI = re.compile(
     "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF\U00002B00-\U00002BFF️‍]"
 )
-_MARKDOWN = re.compile(r"[*_`#~>]")
-_URL = re.compile(r"https?://\S+")
+# markdown marks; "_" only as emphasis (not inside a word: "john_doe"), "~" not before a number (the
+# speech rules say "~20" as "about 20")
+_MARKDOWN = re.compile(r"[*`#>]|(?<!\w)_+|_+(?!\w)|~(?!\s?\d)")
+_URL = re.compile(r"\b(?:https?://|www\.)\S+?(?=[.,;:!?)\]\"']*(?:\s|$))")   # its sentence's full stop stays
 _DASH = re.compile(r"\s*—\s*")   # em dash = a pause; an en dash is a range ("2–3") -> hyphen
 _REPLACE = {"…": "...", "“": '"', "”": '"', "‘": "'", "’": "'", " ": " ", "–": "-"}
 
+_LAST_SPACES = re.compile(r"\s+(?=\S*\Z)")
+MAX_HELD_CHARS = 64     # a "word" longer than this (no spaces at all) is let through as it is
+
 
 def clean_delta(text: str) -> str:
+    """Clean a piece of text that ends at a word boundary (or a whole text)."""
     text = _URL.sub("", text)
     text = _EMOJI.sub("", text)
     text = _MARKDOWN.sub("", text)
@@ -24,6 +32,42 @@ def clean_delta(text: str) -> str:
     for src, dst in _REPLACE.items():
         text = text.replace(src, dst)
     return text
+
+
+class SpeechTextStream:
+    """clean_delta for streamed LLM text: each delta is released up to its last whitespace, the word still
+    being written waits for the next delta (or flush), so the rules see whole words. A space after a word
+    waits too (an em dash may follow: "normal —" is "normal,"), but not one after punctuation: "Sure! "
+    must reach the chunker as a finished sentence at once (the LLM pauses there, session.clause_pauses).
+    What is released depends only on the text so far, not on how it was split into deltas."""
+
+    def __init__(self) -> None:
+        self._held = ""
+        self._last = ""          # the last character released
+
+    def feed(self, delta: str) -> str:
+        text = _DASH.sub(", ", self._held + delta)
+        spaces = _LAST_SPACES.search(text)
+        cut = spaces.end() if spaces else 0
+        if spaces and cut == len(text):
+            before = text[spaces.start() - 1] if spaces.start() else self._last
+            if before.isalnum():
+                cut = spaces.start()
+        if len(text) - cut > MAX_HELD_CHARS:
+            cut = len(text)
+        self._held = text[cut:]
+        return self._release(text[:cut])
+
+    def flush(self) -> str:
+        text, self._held = self._held, ""
+        return self._release(text)
+
+    def _release(self, text: str) -> str:
+        if self._last == " ":
+            text = text.lstrip(" ")
+        if text:
+            self._last = text[-1]
+        return clean_delta(text)
 
 
 def collapse_spaces(text: str) -> str:
@@ -36,6 +80,9 @@ def collapse_spaces(text: str) -> str:
 _UNITS = {"km": "kilometers", "kg": "kilograms", "cm": "centimeters", "mm": "millimeters", "ml": "milliliters",
           "mph": "miles per hour", "km/h": "kilometers per hour", "kph": "kilometers per hour", "lbs": "pounds",
           "lb": "pounds", "hrs": "hours", "mins": "minutes", "sec": "seconds", "secs": "seconds"}
+_RANGE_UNITS = (r"(?:seconds?|minutes?|mins|hours?|hrs|days?|weeks?|months?|years?|times|people|persons|percent|"
+                r"dollars|cents|miles|kilometers|km|pounds|lbs|kilograms|kg|inches|feet|meters|items|pieces|steps|"
+                r"business days|calls|sessions)")
 _STREET = {"St": "Street", "Ave": "Avenue", "Rd": "Road", "Blvd": "Boulevard", "Ln": "Lane"}
 
 
@@ -54,6 +101,8 @@ _SPEECH_RULES: list[tuple[re.Pattern, object]] = [
     (re.compile(r"(\d)\s?°\s?F\b"), r"\1 degrees Fahrenheit"),
     (re.compile(r"(\d)\s?°"), r"\1 degrees"),
     (re.compile(r"(?:\babout\s+)?~\s?(?=\d)", re.I), "about "),
+    (re.compile(r"~"), ""),
+    (re.compile(r"(?<=\w)_(?=\w)"), " underscore "),          # an email or a user name read back
     (re.compile(r"\be\.g\.,?", re.I), "for example"),
     (re.compile(r"\bi\.e\.,?", re.I), "that is"),
     (re.compile(r"\betc\.(?=\s*$)", re.I), "et cetera."),
@@ -62,8 +111,10 @@ _SPEECH_RULES: list[tuple[re.Pattern, object]] = [
     # street and place abbreviations (scripts/bench_tts.py: "Main St." was spoken "Maincent")
     (re.compile(r"(\b[A-Z][a-z]+ )?\b(St|Ave|Rd|Blvd|Ln)\.(?=(\s+[A-Z])|\s*$)?"), _street),
     (re.compile(r"\bMt\.(?=\s+[A-Z])"), "Mount"),
-    # numeric range "2-3", "10-15" (short numbers only: not phone numbers or dates)
-    (re.compile(r"(?<![\d/.-])\b(\d{1,3})\s?-\s?(\d{1,3})\b(?![-/:.]\d)"), r"\1 to \2"),
+    # numeric range "2-3", "10-15" (short numbers only: not phone numbers or dates), and "10 - 15 minutes";
+    # not arithmetic ("x - 5 - 3", "5-3=2", "7 - 2 is 5"): no operator next to it, spaced only before a unit
+    (re.compile(r"(?<![\d/.\-+*=×÷])(?<![\-+*=×÷] )\b(\d{1,3})(?:-|\s-\s(?=\d{1,3}\s+" + _RANGE_UNITS + r"\b))"
+                r"(\d{1,3})\b(?![-/:.]\d)(?!\s?[\-+*/=×÷]\s?\d)"), r"\1 to \2"),
     # clock times: "9:00" -> "9 o'clock", "13:00" -> "13 hundred", "9:05" -> "9 oh 5", "9:30" -> "9 30"
     (re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b"),
      lambda m: (f"{int(m[1])} o'clock" if int(m[1]) <= 12 else f"{int(m[1])} hundred") if m[2] == "00"

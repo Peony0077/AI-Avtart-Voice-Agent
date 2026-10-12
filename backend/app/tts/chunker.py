@@ -15,6 +15,13 @@ _LINE_BREAK = re.compile(r"\n")
 # one-word clause with its own pauses (measured: "Dr." alone was a 1.45 s clip)
 _ABBREVIATION = re.compile(r"(?:\b(?:mr|mrs|ms|dr|prof|sr|jr|st|mt|vs|etc|approx|dept|inc|ltd|co|fig|vol)"
                            r"|\b(?:e\.g|i\.e|a\.m|p\.m|u\.s|u\.k)|(?:^|\s)(?-i:[A-HJ-Z]))\.$", re.I)   # initials, not "I."
+# ... but these end a sentence: a letter naming something ("Plan B.", "vitamin C.") and "etc." before a
+# capital ("..., nuts, etc. Then ...")
+_LETTER_NAME = re.compile(r"\b(?:plan|option|type|vitamin|grade|class|section|part|room|gate|exit|row|zone|level|"
+                          r"step|tier|category|model|version|appendix|unit|building|block|terminal|group|team|"
+                          r"phase|stage|letter|size)\s+(?-i:[A-Z])\.$", re.I)
+_ETC = re.compile(r"\betc\.$", re.I)
+_NEXT_CAPITAL = re.compile(r"\s+[\"'(]?[A-Z]")
 
 
 class ClauseChunker:
@@ -52,9 +59,11 @@ class ClauseChunker:
         for match in _SENTENCE_END.finditer(buf):
             if line_end is not None and match.start() > line_end:
                 break
-            if buf[match.start()] == "." and _ABBREVIATION.search(buf[:match.start() + 1]):
+            if buf[match.start()] == "." and self._abbreviation(buf, match):
                 continue
-            if match.end() < len(buf) or buf.endswith("\n"):
+            # punctuation and a space end a sentence also at the end of the buffer (SpeechTextStream
+            # releases "Sure! " before the next word exists, and the LLM pauses right there)
+            if match.end() < len(buf) or buf[match.end() - 1].isspace():
                 return self._cut(match.end())
             break
         if line_end is not None:
@@ -71,6 +80,16 @@ class ClauseChunker:
             cut = buf.rfind(" ", 0, self.max_chars)
             return self._cut(cut if cut > 0 else self.max_chars)
         return None
+
+    @staticmethod
+    def _abbreviation(buf: str, match: re.Match) -> bool:
+        """The full stop at ``match`` belongs to an abbreviation or an initial (no sentence end)."""
+        head = buf[:match.start() + 1]
+        if not _ABBREVIATION.search(head) or _LETTER_NAME.search(head):
+            return False
+        if _ETC.search(head):                        # "etc." ends the sentence when a capital follows
+            return not _NEXT_CAPITAL.match(buf, match.start() + 1)
+        return True
 
     def _cut(self, pos: int) -> str | None:
         clause, self._buf = self._buf[:pos].strip(), self._buf[pos:]

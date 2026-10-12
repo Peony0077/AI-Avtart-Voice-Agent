@@ -27,6 +27,12 @@ def test_empty_transcript_returns_to_listening():
     assert sm.fire(Event.TRANSCRIPT_EMPTY) is State.LISTENING
 
 
+def test_typed_text_while_the_speech_is_transcribed_starts_the_turn():
+    """A message typed in END_OF_TURN raised InvalidTransition, which closed the connection."""
+    sm = StateMachine(state=State.END_OF_TURN)
+    assert sm.fire(Event.TEXT_INPUT) is State.THINKING
+
+
 def test_invalid_transition_raises():
     sm = StateMachine(state=State.LISTENING)
     with pytest.raises(InvalidTransition):

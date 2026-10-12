@@ -17,9 +17,16 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import torch
-from silero_vad import load_silero_vad
 
 from app.core.config import VADCfg
+
+# silero_vad's import calls torch.set_num_threads(1) for the whole process (its README's advice for the
+# TorchScript model), and StreamingVAD did again: the RAG embedder (CPU) then ran on one thread. The ONNX
+# model used here has its own session with one thread (silero_vad.utils_vad.OnnxWrapper).
+_THREADS = torch.get_num_threads()
+from silero_vad import load_silero_vad  # noqa: E402
+
+torch.set_num_threads(_THREADS)
 
 SR = 16000
 CHUNK = 512                     # Silero needs 512-sample windows at 16 kHz
@@ -39,8 +46,13 @@ class VadEvent:
 class StreamingVAD:
     def __init__(self, cfg: VADCfg) -> None:
         self.cfg = cfg
-        torch.set_num_threads(1)
-        self.model = load_silero_vad(onnx=True)
+        try:
+            self.model = load_silero_vad(onnx=True)
+        except ImportError:
+            # onnxruntime is not in requirements.txt (a Windows install had it from elsewhere): on a fresh
+            # Linux venv the microphone failed to start ("No module named 'onnxruntime'"). The same model
+            # as TorchScript, bundled with silero_vad.
+            self.model = load_silero_vad(onnx=False)
         self._pending = np.zeros(0, dtype=np.int16)
         self._preroll: deque[np.ndarray] = deque(maxlen=max(1, int(cfg.preroll_ms / CHUNK_MS)))
         self.reset()
@@ -61,6 +73,8 @@ class StreamingVAD:
 
     def process(self, pcm16: bytes, assistant_active: bool, now: float | None = None) -> list[VadEvent]:
         now = now or time.time()
+        if len(pcm16) % 2:              # (the session refuses such frames; np.frombuffer would raise)
+            pcm16 = pcm16[:-1]
         self._pending = np.concatenate([self._pending, np.frombuffer(pcm16, dtype=np.int16)])
         events: list[VadEvent] = []
         n = len(self._pending) // CHUNK

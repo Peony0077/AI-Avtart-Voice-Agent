@@ -55,12 +55,17 @@ class MetaStreamParser:
 
     def flush(self) -> str:
         """End of stream: return any text still buffered as speech."""
-        if self._header_done:
-            rest, self._pending = self._pending, ""
-            return rest
-        self._header_done = True
-        rest = self._buf.lstrip()
-        return "" if rest.startswith("<meta>") else self._speech(rest)
+        text = ""
+        if not self._header_done:
+            self._header_done = True
+            rest, self._buf = self._buf.lstrip(), ""
+            if rest.startswith("<meta>"):
+                return ""
+            # an unclosed "[" (a short reply such as "[laughs] ..." cut off, or "[1" alone) waits in
+            # _pending for its "]": returned with it, or the whole reply was lost
+            text = self._speech(rest)
+        rest, self._pending = self._pending, ""
+        return text + rest
 
     def _finish(self, meta: dict | None, raw: str | None, speech: str) -> tuple[dict | None, str]:
         self._header_done = True

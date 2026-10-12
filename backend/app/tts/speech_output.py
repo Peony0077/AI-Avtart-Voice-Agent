@@ -15,6 +15,7 @@ import numpy as np
 from loguru import logger
 
 from app.behavior.speech_text import normalize_for_speech
+from app.core.gpu import locked_thread
 from app.transport.protocol import KIND_AUDIO, KIND_AUDIO_OPUS, pack
 from app.tts.base import pause_after, trim_silence
 from app.tts.opus import opus_payload
@@ -49,6 +50,7 @@ class SpeechOutput:
         self.total_ms = 0.0
         self.first_timing: dict | None = None
         self.finished = asyncio.Event()
+        self.error: Exception | None = None        # set when speech output failed (finished is set too)
         self.task = asyncio.create_task(self._run(), name=f"speech-{turn.turn_id}")
         turn.tasks.append(self.task)
 
@@ -66,6 +68,19 @@ class SpeechOutput:
         self.queue.put_nowait(None)
 
     async def _run(self) -> None:
+        # ``finished`` is always set: a TTS error (e.g. CUDA out of memory, a crashed worker) used to leave the
+        # turn waiting for it forever, in THINKING/SPEAKING, with no message to the page
+        try:
+            await self._speak()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - reported by the session after finished
+            self.error = exc
+            logger.exception(f"turn {self.turn.turn_id}: speech output failed")
+        finally:
+            self.finished.set()
+
+    async def _speak(self) -> None:
         tid = self.turn.turn_id
         seq = 0
         while True:
@@ -84,11 +99,11 @@ class SpeechOutput:
             if not any(ch.isalnum() for ch in spoken):
                 continue                                  # only a list number ("2."): nothing to say
             t_req = time.perf_counter()
-            async with self.gpu_lock:
-                if self.turn.is_cancelled:
-                    break
-                t_lock = time.perf_counter()
-                result = await asyncio.to_thread(self.tts.synthesize, spoken)
+            if self.turn.is_cancelled:
+                break
+            result, t_lock = await locked_thread(self.gpu_lock, self._timed_synth, spoken)
+            if result is None:
+                break
             # the engine's ~0.3 s + ~0.5 s padding made ~0.8 s gaps between sentences: natural pause instead
             result = trim_silence(result, pause_after(clause))
             if seq == 0:
@@ -119,7 +134,12 @@ class SpeechOutput:
         if not self.turn.is_cancelled:
             self.outbox.json({"type": "tts_done", "turn_id": tid, "total_ms": round(self.total_ms),
                               "segments": seq}, tid)
-        self.finished.set()
+
+    def _timed_synth(self, text: str):
+        """(result or None when the turn was cancelled while waiting for the GPU, the time the lock was
+        taken) - runs in the worker thread, under the GPU lock."""
+        t_lock = time.perf_counter()
+        return (None if self.turn.is_cancelled else self.tts.synthesize(text)), t_lock
 
     async def _pace(self) -> None:
         """With the avatar: synthesise the next sentence just in time (AHEAD_MS of audio queued ahead

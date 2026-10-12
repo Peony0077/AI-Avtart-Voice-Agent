@@ -11,12 +11,22 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 from loguru import logger
 
 from app.core.config import Settings
 from app.core.procjob import JOB, free_port
+
+READY_TIMEOUT_S = 180.0
+RESTART_BACKOFF_S = (2.0, 60.0)     # first and longest wait between restarts of a crashing llama-server
+HUNG_AFTER_S = 600.0                # a restarted llama-server that never answers /health is restarted again
+
+
+def port_of(base_url: str) -> int:
+    url = urlsplit(base_url)
+    return url.port or (443 if url.scheme == "https" else 80)
 
 
 class LlamaServerSupervisor:
@@ -25,8 +35,10 @@ class LlamaServerSupervisor:
         self.exe = settings.repo_path(self.cfg.server_exe)
         self.model = settings.model_file(self.cfg.model_path)
         self.log_path: Path = settings.log_dir / "llama-server.log"
-        self.port = int(self.cfg.base_url.rsplit(":", 1)[1].split("/")[0])
+        # only for a server of our own: an external one (manage_server: false) may be at any URL
+        self.port = port_of(self.cfg.base_url) if self.cfg.manage_server else None
         self._proc: subprocess.Popen | None = None
+        self._spawned_at = 0.0
         self._stop = threading.Event()
         self._watchdog: threading.Thread | None = None
         self.restarts = 0
@@ -56,13 +68,14 @@ class LlamaServerSupervisor:
         if not self.model.exists():
             raise FileNotFoundError(f"LLM model not found: {self.model}")
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        log = self.log_path.open("ab")
         logger.info(f"starting llama-server: {' '.join(self.command())}")
-        self._proc = subprocess.Popen(self.command(), stdout=log, stderr=subprocess.STDOUT,
-                                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        with self.log_path.open("ab") as log:      # the child has its own handle: ours leaked one per restart
+            self._proc = subprocess.Popen(self.command(), stdout=log, stderr=subprocess.STDOUT,
+                                          **JOB.popen_kwargs())
+        self._spawned_at = time.time()
         JOB.adopt(self._proc)
 
-    def start(self, timeout_s: float = 180.0) -> None:
+    def start(self, timeout_s: float = READY_TIMEOUT_S) -> None:
         free_port(self.port, "llama-server")   # a stale llama-server of ours (e.g. from a killed backend)
         self._spawn()
         self.wait_ready(timeout_s)
@@ -88,16 +101,36 @@ class LlamaServerSupervisor:
             return False
 
     def _watch(self) -> None:
-        while not self._stop.wait(2.0):
-            if self._proc is not None and self._proc.poll() is not None:
-                self.ready.clear()
-                self.restarts += 1
-                logger.error(f"llama-server died (code {self._proc.returncode}); restart #{self.restarts}")
-                try:
-                    self._spawn()
-                    self.wait_ready(180.0)
-                except Exception as exc:  # noqa: BLE001
-                    logger.error(f"llama-server restart failed: {exc}")
+        """Restart llama-server when it dies, waiting longer after every failed restart (it used to retry
+        every 2 s forever), and keep watching a restart that is slower than READY_TIMEOUT_S: ``ready`` was
+        then never set again although the server came up."""
+        backoff = delay = RESTART_BACKOFF_S[0]
+        while not self._stop.wait(delay):
+            proc = self._proc
+            if proc is not None and proc.poll() is None:
+                delay = RESTART_BACKOFF_S[0]
+                if self.ready.is_set():
+                    backoff = RESTART_BACKOFF_S[0]
+                elif self._is_healthy():
+                    logger.info("llama-server is ready (late)")
+                    self.ready.set()
+                elif time.time() - self._spawned_at > HUNG_AFTER_S:
+                    logger.error(f"llama-server not ready after {HUNG_AFTER_S:.0f} s: restarting it")
+                    proc.kill()
+                    delay = 1.0
+                continue
+            self.ready.clear()
+            self.restarts += 1
+            logger.error(f"llama-server died (code {proc.returncode if proc else None}); restart #{self.restarts}")
+            if self._stop.is_set():
+                return
+            try:
+                self._spawn()
+                self.wait_ready(READY_TIMEOUT_S)
+                backoff = delay = RESTART_BACKOFF_S[0]
+            except Exception as exc:  # noqa: BLE001 - checked (and restarted) again later
+                backoff = delay = min(RESTART_BACKOFF_S[1], backoff * 2)
+                logger.error(f"llama-server restart failed: {exc}; next check in {delay:.0f} s")
 
     async def wait_until_ready(self, timeout_s: float) -> bool:
         """For requests that hit a crashed server: wait until the watchdog has it answering again."""

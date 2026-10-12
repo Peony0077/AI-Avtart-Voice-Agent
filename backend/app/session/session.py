@@ -2,7 +2,7 @@
 
 Owns the state machine, turn registry, conversation memory and outbox.
 Inputs: typed text (``user_text``) or microphone PCM (binary frames → VAD → STT).
-Outputs: streamed text, behaviour events, TTS audio packets (+ avatar frames in Phase 4).
+Outputs: streamed text, behaviour events, TTS audio packets and the avatar's video frames.
 """
 from __future__ import annotations
 
@@ -31,7 +31,8 @@ from app.behavior.manager import (
     smile_for_user_text,
 )
 from app.behavior.meta import MetaStreamParser
-from app.behavior.speech_text import clean_delta
+from app.behavior.speech_text import SpeechTextStream
+from app.core.gpu import locked_thread
 from app.core.logging import write_metrics
 from app.leads import worth_reading
 from app.llm.client import LLMStats
@@ -47,20 +48,38 @@ from app.tts.chunker import ClauseChunker
 from app.tts.speech_output import SpeechOutput
 
 ACTIVE = (State.THINKING, State.SPEAKING)
+# Inbound limits: a microphone frame is ~20-100 ms of PCM16 (a few KiB); a typed message is a question.
+MAX_MIC_FRAME_BYTES = 64 * 1024
+MAX_USER_TEXT_CHARS = 2000
 # H.264 bitrate (kbit/s) of the reply's and of the idle video at full quality (worker defaults), and the
 # lowest share of it on a slow connection (adapt_video)
-VIDEO_KBPS = (700, 350)
+VIDEO_KBPS = (700, 350)          # (speech, idle) kbit/s for a 512x512 avatar at 20 fps (video_kbps scales it)
+
+
+def video_kbps(avatar: dict | None) -> tuple[int, int]:
+    """Full-quality bitrates for this avatar: VIDEO_KBPS scaled by pixels^0.75 and frame rate. A 1024x1024,
+    25 fps avatar (owner, 2026-10-10: "the resolution is not good") gets ~2.5/1.2 Mbit/s; the adaptation
+    (next_video_scale) still lowers it on a slow connection, down to VIDEO_SCALE_MIN."""
+    w, h = (avatar or {}).get("size") or (512, 512)
+    fps = (avatar or {}).get("fps") or 20
+    factor = max(1.0, (w * h / (512 * 512)) ** 0.75 * fps / 20)
+    return round(VIDEO_KBPS[0] * factor), round(VIDEO_KBPS[1] * factor)
 VIDEO_SCALE_MIN = 0.35
 
 
-def next_video_scale(scale: float, ceiling: float, congested: bool, calm_s: float = 0.0) -> tuple[float, float]:
+def next_video_scale(scale: float, ceiling: float, congested: bool, calm_s: float = 0.0,
+                     floor: float = VIDEO_SCALE_MIN, fit: float | None = None) -> tuple[float, float]:
     """(share of VIDEO_KBPS, ceiling) after a reply: frames dropped -> 60 %, and the ceiling 75 % of the
     share that was too much; no drops -> 25 % more, up to the ceiling, which rises 5 % per such reply and
     is forgotten after a minute without drops (calm_s: seconds since the last drop) - a short slowdown
     does not keep the picture soft. A ceiling 80 % rising 10 % dropped frames every third reply on a link
     carrying half the video; this one about every seventh, and a probe a minute."""
+    # floor: the lowest share (an absolute ~245 kbit/s whatever the avatar's size); fit: the share that the
+    # measured delivery rate carries - one congested reply is then enough also from an HD avatar's 2.5 Mbit/s
+    # (60 % steps took three replies to get under an 800 kbit/s link, and 35 % of 2.5 Mbit/s never did)
     if congested:
-        return max(VIDEO_SCALE_MIN, scale * 0.6), max(VIDEO_SCALE_MIN, scale * 0.75)
+        new = scale * 0.6 if fit is None else min(scale * 0.6, fit)
+        return max(floor, new), max(floor, min(scale * 0.75, new * 1.25))
     ceiling = 1.0 if calm_s > 60 else min(1.0, ceiling * 1.05)
     return min(ceiling, scale * 1.25), ceiling
 # A first clause shorter than this ("Sure!", "Absolutely!", "Happy to help!": under ~1.5 s of speech)
@@ -77,7 +96,8 @@ def clause_pauses():
 
     def pause_after(text: str) -> bool:
         nonlocal seen
-        clauses = ClauseChunker().feed(clean_delta(text))
+        # the same text the speech gets (_respond): a clause seen here is one the speech can start with
+        clauses = ClauseChunker().feed(SpeechTextStream().feed(text))
         if len(clauses) <= seen:
             return False
         seen = len(clauses)
@@ -118,7 +138,8 @@ class Session:
         self.visitor_id = visitor_id      # the customer's browser (random id it keeps)
         self.last_activity = time.time()  # the customer spoke, typed or listened (SessionManager's idle hand-over)
         self.started = False              # waits in line until SessionManager starts it
-        self.pending_hello: dict | None = None   # the page's hello while it waited
+        self.ready = False                # started, and what the page sent while it waited applied (api/ws.py)
+        self.pending: dict[str, dict] = {}   # the page's hello, visible, voice, ... while it waited (by type)
         self.sm = StateMachine()
         self.turns = TurnRegistry()
         persona = services.persona
@@ -127,18 +148,22 @@ class Session:
                              else services.visitor_memories.store(visitor_id or ""))
         self.memory = ConversationMemory(persona=persona.name, max_turns=self.cfg.llm.history_turns,
                                          knowledge_enabled=self.cfg.rag.enabled, behavior_tag=self.cfg.llm.behavior_tag,
-                                         personality=persona.personality, long_term=self._long_term())
+                                         personality=persona.personality, long_term=self._long_term(),
+                                         context_tokens=self.cfg.llm.context, reply_tokens=self.cfg.llm.max_tokens)
         self._apply_business()
         self._memory_gen = self.memory_store.generation if self.memory_store else 0   # erased later: nothing from before is kept
         self._greeted = False
         self.outbox = Outbox(ws, self.turns.is_current)
         self.voice_out = False            # replies are spoken (client plays assistant audio)
         self.speaker_on = False           # client asked for spoken replies (also for typed messages)
+        self.speaker_set = False          # the page said so explicitly ("speaker"): then Mute wins over the mic
         self.mic_on = False               # client streams the microphone
         self.vad: StreamingVAD | None = None
         self.mic_stats = MicStats()
-        self._stt_task: asyncio.Task | None = None
+        self._stt_tasks: set[asyncio.Task] = set()   # transcriptions of finished utterances (_on_speech_end)
+        self._utterance = 0               # +1 at every utterance end: an older transcription only carries its text
         self._carry_text = ""             # transcript of an utterance the user continued
+        self._bad_frames = 0              # microphone frames refused (too long, odd length)
         self._spec: tuple[float, asyncio.Task] | None = None  # (speech_end_t, speculative STT task)
         self._prefetch: AnswerPrefetch | None = None           # answer started at the same pause
         self._summary_task: asyncio.Task | None = None
@@ -171,6 +196,7 @@ class Session:
     # ------------------------------------------------------------------ lifecycle
     async def start(self) -> None:
         self.started = True
+        self.last_activity = time.time()   # waiting in line is not inactivity (SessionManager's idle hand-over)
         self.outbox.start()
         self.outbox.json({"type": "session", "session_id": self.id, "persona": self.memory.persona,
                           "profile": self.cfg.profile, "voice_available": self.svc.voice_ready,
@@ -187,7 +213,7 @@ class Session:
             self.turns.current.cancel()
         self.svc.avatar_reset()
         self._drop_prefetch()
-        for task in (self._stt_task, self._summary_task, self._warm_task):
+        for task in (*self._stt_tasks, self._spec[1] if self._spec else None, self._summary_task, self._warm_task):
             if task and not task.done():
                 task.cancel()
         self.sm.try_fire(Event.STOP)
@@ -218,7 +244,7 @@ class Session:
             if msg.get("ack"):                           # the page acknowledges what it received (outbox.py)
                 self.outbox.window = VIDEO_WINDOW
             self.video_scale = self._video_ceiling = 1.0  # a new connection starts at full quality
-            self.svc.avatar_bitrate(*VIDEO_KBPS)
+            self._apply_video_rate(*video_kbps(self.svc.avatar.hello if self.svc.avatar_ready else None))
             logger.info(f"session {self.id}: video {self.video_codec}, voice {self.audio_codec}, "
                         f"window {'on' if self.outbox.window else 'off'}")
             try:      # the customer's time zone (minutes east of UTC), for questions about the time
@@ -235,6 +261,7 @@ class Session:
             self._set_visible(bool(msg.get("visible", True)))
         elif kind == "speaker":
             self.speaker_on = bool(msg.get("enabled"))
+            self.speaker_set = True
             self._update_voice_out()
             self.outbox.json({"type": "speaker", "enabled": self.voice_out}, force=True)
         elif kind == "voice":
@@ -247,7 +274,7 @@ class Session:
                     logger.warning("browser echo cancellation is OFF: the avatar may hear itself (use headphones)")
             await self._set_voice(bool(msg.get("enabled")))
         elif kind == "user_text":
-            text = str(msg.get("text", "")).strip()
+            text = str(msg.get("text", "")).strip()[:MAX_USER_TEXT_CHARS]
             if text:
                 await self.start_turn("text", text)
         elif kind == "interrupt":
@@ -259,7 +286,7 @@ class Session:
         elif kind == "get_persona":
             self._send_persona()
         elif kind == "set_persona":
-            persona = self.svc.set_persona(msg.get("persona") or {})
+            persona = await self.svc.set_persona(msg.get("persona") or {})
             self.memory.persona, self.memory.personality = persona.name, persona.personality
             self.memory.long_term = self._long_term()
             self._apply_business()
@@ -303,6 +330,12 @@ class Session:
             logger.debug(f"unknown message type {kind!r}")
 
     async def on_binary(self, data: bytes) -> None:
+        if len(data) > MAX_MIC_FRAME_BYTES or len(data) % 2:
+            # not microphone PCM16 (an odd length made the VAD raise on every frame after it)
+            self._bad_frames += 1
+            if self._bad_frames in (1, 100, 10000):
+                logger.warning(f"session {self.id}: refused {self._bad_frames} binary frame(s) ({len(data)} bytes)")
+            return
         if (warning := self.mic_stats.add(data, voice_on=self.vad is not None)) is not None:
             logger.warning(f"session {self.id} {warning}")
         if self.vad is None:
@@ -321,7 +354,8 @@ class Session:
 
     async def _set_voice(self, enabled: bool) -> None:
         if enabled and not self.svc.voice_ready:
-            self.outbox.json({"type": "error", "message": "voice models are not loaded"}, force=True)
+            self.outbox.json({"type": "error", "code": "voice_unavailable", "message": "voice models are not loaded"},
+                             force=True)
             return
         self.mic_on = enabled
         self._update_voice_out()
@@ -334,7 +368,9 @@ class Session:
     def _update_voice_out(self) -> None:
         # Typed messages are spoken too when the client has a speaker on: the avatar's lip sync is
         # driven by the speech audio, so a text-only reply would leave the avatar silent.
-        self.voice_out = (self.speaker_on or self.mic_on) and self.svc.voice_ready
+        # (with the microphone on, Mute used to be ignored: the replies stayed spoken)
+        wanted = self.speaker_on if self.speaker_set else (self.speaker_on or self.mic_on)
+        self.voice_out = wanted and self.svc.voice_ready
 
     def _send_persona(self) -> None:
         p = self.svc.persona
@@ -365,6 +401,7 @@ class Session:
     async def _on_speech_start(self, ev: VadEvent) -> None:
         self.outbox.json({"type": "vad", "event": "start", "bargein": ev.bargein}, force=True)
         self.last_activity = time.time()
+        self._cancel_summary()             # a turn is coming: the LLM is needed for it
         if self.sm.state is State.LISTENING:
             self._send_behavior(None, for_user_speaking())      # active listening: an attentive face
         if self.sm.state in ACTIVE:
@@ -387,8 +424,7 @@ class Session:
             if (vad is None or not vad.in_speech or vad.silence_ms > 0 or self.sm.state is not State.LISTENING
                     or self.svc.gpu_lock.locked() or self.svc.stt is None):
                 continue
-            async with self.svc.gpu_lock:
-                await asyncio.to_thread(self.svc.stt.keep_warm)
+            await locked_thread(self.svc.gpu_lock, self.svc.stt.keep_warm)
 
     def _on_speech_pause(self, ev: VadEvent) -> None:
         """Start STT (and the answer) speculatively; reused at the endpoint if the user stayed silent."""
@@ -416,9 +452,10 @@ class Session:
 
     async def _stt(self, audio) -> tuple[str, float]:
         t_req = time.perf_counter()
-        async with self.svc.gpu_lock:
-            t_lock = time.perf_counter()
-            text = await asyncio.to_thread(self.svc.stt.transcribe, audio)
+        def transcribe():
+            return time.perf_counter(), self.svc.stt.transcribe(audio)
+
+        t_lock, text = await locked_thread(self.svc.gpu_lock, transcribe)
         t_end = time.perf_counter()
         self._stt_timing = {"lock_wait_ms": round((t_lock - t_req) * 1000, 1),
                             "thread_ms": round((t_end - t_lock) * 1000, 1), **self.svc.stt.last_timing}
@@ -429,11 +466,44 @@ class Session:
         if self.sm.state is not State.LISTENING:
             return
         self.sm.fire(Event.SPEECH_END)
-        self._stt_task = asyncio.create_task(self._transcribe(ev), name="stt")
+        # The user may have paused, gone on and stopped again while the first part was still being
+        # transcribed: that transcription only carries its text over (_transcribe), this one waits for it
+        # and answers the whole utterance (the older one used to start a turn with the first half).
+        previous = {t for t in self._stt_tasks if not t.done()}
+        self._utterance += 1
+        task = asyncio.create_task(self._transcribe_safe(ev, self._utterance, previous), name="stt")
+        self._stt_tasks.add(task)
+        task.add_done_callback(self._stt_tasks.discard)
 
-    async def _transcribe(self, ev: VadEvent) -> None:
+    def _cancel_transcription(self) -> None:
+        self._utterance += 1                      # a transcription still running starts no turn
+        for task in list(self._stt_tasks):
+            if not task.done() and task is not asyncio.current_task():
+                task.cancel()
+        if self._spec and not self._spec[1].done():
+            self._spec[1].cancel()
+        self._spec = None
+        self._carry_text = ""
+
+    async def _transcribe_safe(self, ev: VadEvent, utterance: int = 0, previous: set | None = None) -> None:
+        try:
+            await self._transcribe(ev, utterance or self._utterance, previous)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - e.g. CUDA out of memory in Whisper
+            logger.exception(f"session {self.id}: speech recognition failed")
+            self.outbox.json({"type": "error", "code": "stt_failed", "message": f"speech recognition failed: {exc}"},
+                             force=True)
+            if self.sm.state is State.END_OF_TURN:
+                self.sm.fire(Event.TRANSCRIPT_EMPTY)
+
+    async def _transcribe(self, ev: VadEvent, utterance: int, previous: set | None = None) -> None:
         t_end = ev.speech_end_t or ev.t
         t_endpoint = time.time()
+
+        def superseded() -> bool:                   # the user went on (or typed) after this utterance
+            return self.sm.state is not State.END_OF_TURN or utterance != self._utterance
+
         spec, self._spec = self._spec, None
         prefetch, self._prefetch = self._prefetch, None
         speculative = spec is not None and spec[0] == ev.speech_end_t   # no new speech since the pause
@@ -445,7 +515,9 @@ class Session:
                 if spec and not spec[1].done():
                     spec[1].cancel()
                 text, t_stt = await self._stt(ev.audio)
-            if self.sm.state is not State.END_OF_TURN:      # user resumed speaking meanwhile
+            if previous:                                    # the earlier part's text first (its carry)
+                await asyncio.wait(previous)
+            if superseded():                                # user resumed speaking meanwhile
                 self._carry_text = f"{self._carry_text} {text}".strip()
                 return
             text = f"{self._carry_text} {text}".strip()
@@ -453,9 +525,9 @@ class Session:
             if text and self.cfg.vad.continue_ms and looks_unfinished(text):
                 # probably a pause in the middle of the sentence: wait a little longer for the rest
                 deadline = t_end + (self.cfg.vad.endpoint_ms + self.cfg.vad.continue_ms) / 1000
-                while time.time() < deadline and self.sm.state is State.END_OF_TURN:
+                while time.time() < deadline and not superseded():
                     await asyncio.sleep(0.03)
-                if self.sm.state is not State.END_OF_TURN:  # the user went on: this part starts the turn
+                if superseded():                            # the user went on: this part starts the turn
                     logger.info(f"utterance continues after a pause: {text!r}")
                     self._carry_text = text
                     return
@@ -471,7 +543,7 @@ class Session:
                 return
             if prefetch is not None and speculative:
                 adopted = await prefetch.matches(ev.speech_end_t, text)
-                if self.sm.state is not State.END_OF_TURN:  # resumed while checking (bounded wait)
+                if superseded():                            # resumed while checking (bounded wait)
                     adopted = False
                     self._carry_text = text
                     return
@@ -518,7 +590,10 @@ class Session:
         the conversation, e.g. the greeting) or a fixed ``script`` (no LLM)."""
         if self.sm.state in ACTIVE:
             await self.interrupt("new_input")
+        if self.sm.state is State.END_OF_TURN and source in ("text", "greeting"):
+            self._cancel_transcription()       # typed while the spoken words were transcribed: the typed text wins
         self._drop_prefetch()                  # e.g. typed text while a spoken answer was being prefetched
+        self._cancel_summary()                 # the reply needs the LLM (the summary is tried after it again)
         turn = self.turns.new_turn(source, text)
         turn.mark("t0", t0)
         if prefetch is not None:
@@ -541,7 +616,8 @@ class Session:
             pass
         except Exception as exc:  # noqa: BLE001
             logger.exception(f"turn {turn.turn_id} failed")
-            self.outbox.json({"type": "error", "turn_id": turn.turn_id, "message": str(exc)}, force=True)
+            self.outbox.json({"type": "error", "code": "turn_failed", "turn_id": turn.turn_id, "message": str(exc)},
+                             force=True)
             if self.turns.is_current(turn.turn_id):
                 turn.cancel()
                 self.sm.fire(Event.FAILURE)
@@ -565,7 +641,7 @@ class Session:
             deltas = self.svc.llm.stream_chat(messages or self.memory.build(turn.user_text, knowledge), stats,
                                               pause_after=self._pause_after() if self.voice_out else None,
                                               resume=lambda: self._resume_llm(turn))
-        parser, spoken = MetaStreamParser(), []
+        parser, spoken, cleaner = MetaStreamParser(), [], SpeechTextStream()
         speech = chunker = None
         if self.voice_out:
             speech = SpeechOutput(turn, self.svc.tts, self.outbox, self.svc.gpu_lock,
@@ -612,7 +688,7 @@ class Session:
                 turn.mark("llm_request", prefetch.t_request)
             turn.mark("llm_first_token", prefetch.t_first_token if prefetch else None)
             _meta, text = parser.feed(delta)
-            text = clean_delta(text)
+            text = cleaner.feed(text)              # whole words (a URL or an email is cleaned in one piece)
             if text.startswith(" ") and spoken and spoken[-1].endswith(" "):
                 text = text.lstrip(" ")        # "normal —" + " a" -> "normal, " + "a" (not "normal,  a")
             if not behavior_sent and (parser.meta is not None or text) and (tagged or parser.meta is not None):
@@ -628,7 +704,9 @@ class Session:
                 if chunker:
                     for clause in chunker.feed(text):
                         say(clause)
-        tail = clean_delta(parser.flush())
+        tail = cleaner.feed(parser.flush()) + cleaner.flush()
+        if tail.startswith(" ") and spoken and spoken[-1].endswith(" "):
+            tail = tail.lstrip(" ")
         if tail:
             self._emit_text(turn, tail, spoken)
             if chunker:
@@ -650,6 +728,9 @@ class Session:
             await speech.finished.wait()
             if turn.is_cancelled:
                 return
+            if speech.error is not None:
+                self.outbox.json({"type": "error", "code": "voice_failed", "turn_id": tid,
+                                  "message": f"the voice failed for this reply: {speech.error}"}, force=True)
             if speech.avatar_sink is not None and speech.total_ms > 0:
                 self.svc.avatar_speech_end(tid, speech.total_ms)     # the avatar closes its mouth after the last word
             if speech.total_ms > 0:
@@ -752,6 +833,11 @@ class Session:
         if speech:
             self.svc.avatar_speech_keyframe()
 
+    def _apply_video_rate(self, speech: int, idle: int) -> None:
+        """The worker's bitrates. (The outbox window stays VIDEO_WINDOW: scaled with an HD bitrate it queued
+        ~1.5 s of video ahead of the voice on an 800 kbit/s link.)"""
+        self.svc.avatar_bitrate(speech, idle)
+
     def _adapt_video(self, congested: bool) -> bool:
         """The video's bitrate follows the connection: when frames had to be dropped (the link is slower
         than the video) the next video gets 60 % of the bitrate, after a reply without drops 25 % more,
@@ -762,17 +848,24 @@ class Session:
         now = time.time()
         if congested and now - self._adapted_at < 2.0:
             return False
+        full = video_kbps(self.svc.avatar.hello if self.svc.avatar_ready else None)
+        floor = VIDEO_SCALE_MIN * VIDEO_KBPS[0] / full[0]
+        fit = None
+        delivered = self.outbox.delivery_kbps() if congested else None
+        if delivered:                    # 70 % of what the link carried, less the voice (Opus ~56 kbit/s + overhead)
+            fit = max(0.0, 0.7 * delivered - 64) / full[0]
         scale, self._video_ceiling = next_video_scale(self.video_scale, self._video_ceiling, congested,
-                                                      now - self._congested_at)
+                                                      now - self._congested_at, floor, fit)
         if congested:
             self._congested_at = now
         if abs(scale - self.video_scale) < 0.02:
             return False
         self.video_scale, self._adapted_at = scale, now
-        speech, idle = round(VIDEO_KBPS[0] * scale), round(VIDEO_KBPS[1] * scale)
-        self.svc.avatar_bitrate(speech, idle)
+        speech, idle = round(full[0] * scale), round(full[1] * scale)
+        self._apply_video_rate(speech, idle)
         logger.info(f"session {self.id}: video at {speech}/{idle} kbit/s "
-                    f"({'frames were dropped' if congested else 'the connection keeps up'})")
+                    f"({'frames were dropped' if congested else 'the connection keeps up'}"
+                    f"{f', the link carried {delivered:.0f} kbit/s' if delivered else ''})")
         return True                                       # (the worker restarts the idle video at the new rate)
 
     def _set_visible(self, visible: bool) -> None:
@@ -790,6 +883,11 @@ class Session:
             self._speech_wait_key = self.turns.current_id
             self._keyframe_asked = 0.0
             self._ask_keyframe(speech=True)
+
+    def avatar_restarted(self, hello: dict) -> None:
+        """The avatar worker (re)connected during this session: its size, fps and frame numbers to the page."""
+        if self.started:
+            self.outbox.json({"type": "avatar", "avatar": hello}, force=True)
 
     def on_avatar_frame(self, packet: bytes, kind: int, turn_id: int) -> None:
         """Avatar worker frame → browser, behind the voice (outbox lanes). Idle frames give way when the
@@ -900,13 +998,22 @@ class Session:
             if self.sm.state is not State.LISTENING:
                 return
             try:
-                text = await self.svc.llm.complete(self.memory.summary_request(), max_tokens=120)
-                self.memory.apply_summary(text)
+                # only the turns in this request leave the archive: those archived meanwhile stay for the next
+                count = self.memory.summary_count()
+                text = await self.svc.llm.complete(self.memory.summary_request(count), max_tokens=120)
+                self.memory.apply_summary(text, count)
                 logger.info(f"rolling summary updated ({len(text)} chars)")
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"summary failed: {exc!r}")
 
         self._summary_task = asyncio.create_task(run(), name="summary")
+
+    def _cancel_summary(self) -> None:
+        """The user speaks or a turn starts: the summary request would compete with the reply for the LLM.
+        Cancelled (the request is closed, llama-server stops it); it is tried again after the next reply."""
+        task = self._summary_task
+        if task is not None and not task.done() and task is not asyncio.current_task():
+            task.cancel()
 
     # ------------------------------------------------------------------ events
     def _on_state_change(self, old: State, new: State, event: Event) -> None:

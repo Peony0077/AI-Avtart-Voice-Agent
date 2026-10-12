@@ -123,3 +123,99 @@ def test_streaming_chunks_merge_while_avatar_is_busy_and_keep_all_audio():
     assert sum(len(p) - 16 for p in outbox.packets) == 2 * sum(chunks)   # PCM16 to the browser, same audio
     assert so.segments[0].duration_ms == pytest.approx(sum(chunks) / 24, abs=0.5)
     assert outbox.json_msgs[-1]["type"] == "tts_done"
+
+
+class _FailingTTS:
+    sample_rate = 24000
+
+    def synthesize(self, text: str):
+        raise RuntimeError("CUDA out of memory")
+
+
+def test_a_tts_error_still_finishes_the_speech_output():
+    """A failed synthesis used to leave ``finished`` unset: the turn waited for it forever."""
+    async def run() -> SpeechOutput:
+        so = SpeechOutput(_Turn(), _FailingTTS(), _Outbox(), asyncio.Lock(), lambda: None)
+        so.say("Hello there.")
+        so.close()
+        await asyncio.wait_for(so.finished.wait(), 5)
+        return so
+
+    so = asyncio.run(run())
+    assert isinstance(so.error, RuntimeError)
+
+
+def test_a_cancelled_gpu_job_keeps_the_lock_until_its_thread_is_done():
+    """Cancelling the caller (a barge-in) must not let the next GPU job overlap the running thread."""
+    from app.core.gpu import locked_thread
+
+    async def run() -> list[str]:
+        lock, events = asyncio.Lock(), []
+
+        def slow() -> None:
+            time.sleep(0.2)
+            events.append("first done")
+
+        first = asyncio.create_task(locked_thread(lock, slow))
+        await asyncio.sleep(0.05)
+        first.cancel()
+        await locked_thread(lock, lambda: events.append("second starts"))
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        return events
+
+    assert asyncio.run(run()) == ["first done", "second starts"]
+
+
+def test_an_external_llm_server_may_have_any_url():
+    """The supervisor parsed the port from base_url even when it does not run the server."""
+    from app.core.config import Settings
+    from app.llm.server import LlamaServerSupervisor, port_of
+    settings = Settings(_env_file=None)
+    settings.llm.manage_server, settings.llm.base_url = False, "https://llm.example.com/v1"
+    assert LlamaServerSupervisor(settings).port is None
+    assert port_of("http://127.0.0.1:8081") == 8081 and port_of("https://llm.example.com") == 443
+
+
+def test_sad_words_are_whole_words():
+    from app.behavior.manager import is_happy_text
+    assert is_happy_text("That's great! I love painting and my new scarf.")
+    assert not is_happy_text("That's great, but I'm scared and crying.")
+
+
+def test_watchdog_backs_off_and_notices_a_restart_slower_than_its_timeout(monkeypatch):
+    import threading
+
+    import app.llm.server as srv
+    from app.core.config import Settings
+    monkeypatch.setattr(srv, "RESTART_BACKOFF_S", (0.01, 0.08))
+    sup = srv.LlamaServerSupervisor(Settings(_env_file=None))
+    spawns = []
+
+    class Proc:
+        def __init__(self, alive):
+            self.alive, self.returncode = alive, None if alive else 1
+
+        def poll(self):
+            return None if self.alive else 1
+
+    def spawn():
+        spawns.append(time.monotonic())
+        sup._proc = Proc(alive=len(spawns) >= 5)          # crashes four times, then loads slowly
+
+    def wait_ready(timeout_s):
+        if not sup._proc.alive:
+            raise RuntimeError("exited")
+        raise TimeoutError("not ready after 180 s")          # (it comes up later)
+
+    sup._proc = Proc(alive=False)
+    monkeypatch.setattr(sup, "_spawn", spawn)
+    monkeypatch.setattr(sup, "wait_ready", wait_ready)
+    monkeypatch.setattr(sup, "_is_healthy", lambda: len(spawns) >= 5)
+    watchdog = threading.Thread(target=sup._watch, daemon=True)
+    watchdog.start()
+    assert sup.ready.wait(5)                                  # ready is set again (it never was)
+    sup._stop.set()
+    watchdog.join(2)
+    gaps = [b - a for a, b in zip(spawns, spawns[1:], strict=False)]
+    assert len(spawns) == 5 and gaps[-1] > gaps[0]             # waits longer after each failed restart

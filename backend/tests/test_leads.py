@@ -59,3 +59,42 @@ def test_only_conversations_that_can_hold_a_lead_are_read():
                  "I'm Sam, I need a quote"):
         assert worth_reading([said]), said
     assert not worth_reading(["Can you name three planets?"])
+
+
+def test_csv_cells_that_look_like_formulas_stay_text():
+    rows = [{"time": "t", "name": "=HYPERLINK(\"http://x\",\"Sam\")", "email": "@sam", "phone": "+15125550134",
+             "need": "a website"}]
+    lines = LeadStore.to_csv(rows).splitlines()
+    assert "'=HYPERLINK" in lines[1] and ",'@sam," in lines[1] and ",'+15125550134," in lines[1]
+    assert ",a website," in lines[1]
+
+
+def test_saving_is_all_or_nothing(tmp_path, monkeypatch):
+    """write_text truncated the file first: a crash mid-write lost every lead (and the persona, the memory)."""
+    import os
+
+    import pytest
+
+    from app.leads import LeadStore
+    from app.persona import MemoryStore, Persona, PersonaStore
+    leads, persona, memory = (LeadStore(tmp_path / "leads.jsonl"),
+                              PersonaStore(tmp_path / "persona.json", Persona(name="Ava")), MemoryStore(tmp_path / "m.json"))
+    leads.save({"name": "Sam"}, "s1")
+    persona.save(Persona(name="Ava", company="Acme"))
+    memory.save("The user is Sam.")
+
+    def crash(*args):
+        raise OSError("disk full")
+    monkeypatch.setattr(os, "replace", crash)
+    for save in (lambda: leads.save({"name": "Kim"}, "s2"), lambda: persona.save(Persona(name="Eve")),
+                 lambda: memory.save("The user is Kim.")):
+        with pytest.raises(OSError):
+            save()
+    assert [r["name"] for r in leads.load()] == ["Sam"] and persona.load().company == "Acme"
+    assert memory.load() == "The user is Sam."
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["leads.jsonl", "m.json", "persona.json"]   # no temp files left
+
+
+def test_contact_details_not_small_talk():
+    from app.leads import worth_reading
+    assert worth_reading(["I'm Sarah."]) and not worth_reading(["I'm fine."])

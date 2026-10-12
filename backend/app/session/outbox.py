@@ -20,6 +20,7 @@ the voice are never held. Video that cannot go out waits here, where it can be d
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -29,6 +30,11 @@ from loguru import logger
 
 LANES = ("hi", "speech", "idle")
 VIDEO_WINDOW = 64 * 1024   # unacknowledged bytes before video waits: ~0.5 s at 1 Mbit/s
+# Most video frames a lane holds. The session drops H.264 frames long before this (session.on_avatar_frame);
+# the reply's JPEG frames had no limit, and a page that stopped acknowledging (window full) let them pile
+# up without bound. Beyond this the oldest go first (a JPEG frame stands alone; frames that late are
+# useless anyway: ~5 s at 20 fps).
+MAX_VIDEO_FRAMES = 100
 
 
 @dataclass
@@ -49,6 +55,7 @@ class Outbox:
         self.dropped = 0
         self.sent_bytes = 0            # binary bytes sent (the page counts the same)
         self.acked_bytes = 0
+        self._acks: deque[tuple[float, int]] = deque(maxlen=128)   # (time, acked bytes): the delivery rate
         self.window: int | None = None  # None: the page does not acknowledge (older page) - no window
         self.window_waits = 0          # times video waited for the page
 
@@ -56,14 +63,16 @@ class Outbox:
         self._task = asyncio.create_task(self._run(), name="outbox")
 
     async def stop(self) -> None:
-        """Send what is queued, then stop."""
+        """Send what is queued (for at most 2 s), then stop. A cancelled caller stays cancelled: catching
+        CancelledError here hid the cancellation of the session's close()."""
         self._stopping = True
         self._wake.set()
         if self._task:
             try:
-                await asyncio.wait_for(self._task, timeout=2)
-            except (TimeoutError, asyncio.CancelledError):
-                self._task.cancel()
+                await asyncio.wait({self._task}, timeout=2)
+            finally:
+                if not self._task.done():
+                    self._task.cancel()
 
     def json(self, msg: dict, turn_id: int = 0, force: bool = False) -> None:
         self._put("hi", _Item(msg, turn_id, force))
@@ -75,15 +84,40 @@ class Outbox:
         """The page has received this many binary bytes."""
         if received > self.acked_bytes:
             self.acked_bytes = min(received, self.sent_bytes)
+            self._acks.append((time.monotonic(), self.acked_bytes))
             self._wake.set()
+
+    def delivery_kbps(self, span_s: float = 3.0) -> float | None:
+        """kbit/s the page received over the last ``span_s`` (its acknowledgements); None when unknown. While
+        video waits for the window (a slow link) this is what the link carries."""
+        now = time.monotonic()
+        recent = [(t, b) for t, b in self._acks if now - t <= span_s]
+        if len(recent) < 2 or recent[-1][0] - recent[0][0] < 0.5:
+            return None
+        return (recent[-1][1] - recent[0][1]) * 8 / 1000 / (recent[-1][0] - recent[0][0])
 
     @property
     def in_flight(self) -> int:
         return self.sent_bytes - self.acked_bytes
 
     def _put(self, lane: str, item: _Item) -> None:
-        self._lanes[lane].append(item)
+        queue = self._lanes[lane]
+        queue.append(item)
+        if lane != "hi" and len(queue) > MAX_VIDEO_FRAMES:
+            self._purge(lane)
+            while len(queue) > MAX_VIDEO_FRAMES:
+                queue.popleft()
+                self.dropped += 1
         self._wake.set()
+
+    def _purge(self, lane: str) -> None:
+        """Drop the lane's frames of turns that are no longer current (they would be dropped when sent)."""
+        queue = self._lanes[lane]
+        keep = [i for i in queue if i.force or not i.turn_id or self._is_current(i.turn_id)]
+        if len(keep) < len(queue):
+            self.dropped += len(queue) - len(keep)
+            queue.clear()
+            queue.extend(keep)
 
     @property
     def backlog(self) -> int:
@@ -103,6 +137,7 @@ class Outbox:
             return self._lanes["hi"].popleft()
         if self.window is not None and self.in_flight >= self.window and (self._lanes["speech"] or self._lanes["idle"]):
             self.window_waits += 1
+            self._purge("speech")                 # an interrupted reply's frames need not wait for the page
             return None                           # the page is behind: video waits (an ack wakes us)
         for lane in LANES[1:]:
             if self._lanes[lane]:

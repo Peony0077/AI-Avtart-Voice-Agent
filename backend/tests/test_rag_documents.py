@@ -46,3 +46,20 @@ def test_html_parsing(tmp_path):
 def test_every_format_is_parsed(name, needle):
     chunks = chunk_document(KNOW / name, KNOW)
     assert any(needle in c.text for c in chunks), [c.text[:80] for c in chunks]
+
+
+def test_a_long_unit_without_punctuation_is_split(tmp_path):
+    f = tmp_path / "page.txt"
+    f.write_text(" ".join(f"word{i}" for i in range(1000)), encoding="utf-8")    # a PDF page without full stops
+    chunks = chunk_document(f, tmp_path, max_words=100, overlap_words=10)
+    assert len(chunks) >= 10 and all(len(c.text.split()) <= 100 for c in chunks)
+    assert "word999" in chunks[-1].text
+
+
+def test_html_is_unescaped_once_and_headings_end_their_line(tmp_path):
+    f = tmp_path / "page.html"
+    f.write_text("<h1>Prices</h1>Use &amp;lt;b&amp;gt; tags &amp; more<h2>Hours</h2>Open daily", encoding="utf-8")
+    title, sections = parse(f)
+    sections = [s for s in sections if s.text.strip()]
+    assert title == "Prices" and [s.heading for s in sections] == ["Prices", "Hours"]
+    assert "Use &lt;b&gt; tags & more" in sections[0].text and "Open daily" in sections[1].text

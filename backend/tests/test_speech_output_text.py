@@ -95,3 +95,75 @@ def test_long_pauses_inside_a_sentence_are_shortened():
     assert moved[0] == ("a", 0.0, 0.5) and abs(moved[1][1] - 0.82) < 0.02  # the next word moved up
     short = np.concatenate([tone, np.zeros(int(0.2 * sr), np.float32), tone])
     assert len(cap_pauses(short, sr, words)[0]) == len(short)              # a short pause stays
+
+
+def _clean_stream(text, step):
+    from app.behavior.speech_text import SpeechTextStream
+    s, out = SpeechTextStream(), ""
+    for i in range(0, len(text), step):
+        out += s.feed(text[i:i + step])
+    return out + s.flush()
+
+
+@pytest.mark.parametrize("text, shown", [
+    ("See https://example.com/a_b?x=1. Then go.", "See . Then go."),       # a URL split over tokens
+    ("Write to john_doe@gmail.com today.", "Write to john_doe@gmail.com today."),   # not "johndoe@"
+    ("It takes ~20 min, _really_ **fast**.", "It takes ~20 min, really fast."),   # "~20" stays for "about 20"
+    ("It is normal — a test.", "It is normal, a test."),
+    ("rain—or sun", "rain, or sun"),
+])
+def test_streamed_text_is_cleaned_a_whole_word_at_a_time(text, shown):
+    for step in (1, 2, 3, 7, len(text)):                     # however the LLM's tokens split it
+        assert _clean_stream(text, step) == shown, step
+
+
+def test_what_the_cleaning_keeps_is_spoken_right():
+    assert normalize_for_speech("It takes ~20 min.") == "It takes about 20 min."
+    assert normalize_for_speech("Write to john_doe@gmail.com.") == "Write to john underscore doe@gmail.com."
+
+
+def test_a_finished_sentence_is_released_before_the_next_word_exists():
+    """The LLM pauses after a clause (session.clause_pauses): the speech must have that clause then."""
+    from app.behavior.speech_text import SpeechTextStream
+    s, c = SpeechTextStream(), ClauseChunker()
+    clauses = []
+    for delta in ("Sure", "!", " Here", " are", " facts", "."):
+        clauses += c.feed(s.feed(delta))
+        if delta == " Here":
+            assert clauses == ["Sure!"]
+    assert clauses + c.feed(s.flush()) + c.flush() == ["Sure!", "Here are facts."]
+
+
+@pytest.mark.parametrize("text, clauses", [
+    ("Plan B. Go now.", ["Plan B.", "Go now."]),
+    ("Take vitamin C. It helps.", ["Take vitamin C.", "It helps."]),
+    ("Fruits, nuts, etc. Then we left.", ["Fruits, nuts, etc.", "Then we left."]),
+    ("Fruits, nuts, etc. and more.", ["Fruits, nuts, etc. and more."]),
+    ("George W. Bush spoke. Yes.", ["George W. Bush spoke.", "Yes."]),
+])
+def test_sentence_ends_after_a_letter_name_and_etc(text, clauses):
+    assert _chunks(text) == clauses
+
+
+@pytest.mark.parametrize("text, spoken", [
+    ("So x - 5 - 3 is it.", "So x - 5 - 3 is it."),       # arithmetic, not "5 to 3"
+    ("And 5-3=2.", "And 5-3=2."),
+    ("Then 7 - 2 is 5.", "Then 7 - 2 is 5."),
+    ("It takes 10 - 15 minutes.", "It takes 10 to 15 minutes."),
+])
+def test_ranges_only_in_clear_contexts(text, spoken):
+    assert normalize_for_speech(text) == spoken
+
+
+def test_an_empty_clause_gets_no_sentence_pause():
+    assert pause_after("") == 60 and pause_after("   ") == 60      # ("" is in ".!?")
+
+
+def test_a_short_reply_starting_with_an_unclosed_bracket_is_not_lost():
+    from app.behavior.meta import MetaStreamParser
+    p = MetaStreamParser()
+    assert p.feed("[Note") == (None, "") and p.feed(": short") == (None, "")
+    assert p.flush() == "[Note: short"
+    p = MetaStreamParser()
+    assert p.feed("[friendly|nod|0.4]Hi [x")[1] == "Hi "
+    assert p.flush() == "[x"

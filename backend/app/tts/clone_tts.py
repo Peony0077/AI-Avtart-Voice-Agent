@@ -17,7 +17,7 @@ import numpy as np
 from loguru import logger
 from websockets.sync.client import connect
 
-from app.core.config import Settings
+from app.core.config import VENV_PYTHON, Settings
 from app.core.procjob import JOB, free_port
 from app.tts.base import TTSResult
 
@@ -33,15 +33,15 @@ class CloneTTS:
         if not cfg.clone_reference_wav:
             raise ValueError("tts.clone_reference_wav is required for the clone engine")
         self.url = f"ws://127.0.0.1:{port}"
-        py = settings.repo_path("voice/xtts/.venv/Scripts/python.exe")
+        py = settings.repo_path(f"voice/xtts/{VENV_PYTHON}")
         script = settings.repo_path("voice/xtts/worker.py")
         ref = settings.repo_path(cfg.clone_reference_wav)
-        log = (settings.log_dir / "xtts-worker.log").open("ab")
         t0 = time.perf_counter()
         free_port(port, "worker.py")
-        self.proc = subprocess.Popen([str(py), str(script), "--ref", str(ref), "--port", str(port)],
-                                     cwd=script.parent, stdout=log, stderr=subprocess.STDOUT,
-                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        with (settings.log_dir / "xtts-worker.log").open("ab") as log:   # (the child keeps its own handle)
+            self.proc = subprocess.Popen([str(py), str(script), "--ref", str(ref), "--port", str(port)],
+                                         cwd=script.parent, stdout=log, stderr=subprocess.STDOUT,
+                                         **JOB.popen_kwargs())
         JOB.adopt(self.proc)
         self.ws = self._connect(240)
         self._ids = itertools.count(1)
