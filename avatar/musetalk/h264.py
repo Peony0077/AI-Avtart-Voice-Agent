@@ -6,8 +6,10 @@ waited behind them and a reply started playing seconds late - or not at all. H.2
 the same here (PSNR 38-39 dB against the rendered frames) at a seventh of the bandwidth, like the video
 streams of HeyGen and Anam. The browser decodes it with WebCodecs (AvatarStage).
 
-One ffmpeg process per stream (libx264 ultrafast/zerolatency or NVENC, baseline profile, no B-frames):
-raw BGR frames in, FLV out. FLV gives every frame with its exact length, as soon as it is encoded
+One ffmpeg process per stream (NVENC, else libx264; High profile, no B-frames): raw BGR frames in, FLV out.
+Encoder (measured 2026-10-10, 1024x1024 at 25 fps, 2.5 Mbit/s, PSNR against the source): libx264 ultrafast
+baseline (the first setting: no deblocking, CAVLC) 45.3 dB; libx264 veryfast High 47.8 dB; NVENC p4 High
+49.8 dB at under one CPU core (x264: 3-8 cores). NVENC at 1.5 Mbit/s (48.5 dB) beats ultrafast at 2.5. FLV gives every frame with its exact length, as soon as it is encoded
 (1.9 ms p50 after the frame was written, measured; MP4 and Matroska held every frame until the next one
 arrived). The frames are rewritten as Annex-B access units for the browser, SPS and PPS before every
 keyframe. A raw H.264 stream was used first, split at access unit delimiters with "no bytes for 4 ms =
@@ -26,6 +28,7 @@ from collections import deque
 from collections.abc import Callable
 
 import numpy as np
+from loguru import logger
 
 START_CODE = b"\x00\x00\x00\x01"
 
@@ -113,9 +116,34 @@ class FlvReader:
 
 
 def encoder_args(encoder: str) -> list[str]:
+    """High profile (CABAC, 8x8 transform, deblocking) at level 4.1: frames up to 2048x1024 at 30 fps.
+    The browser decodes it (lib/h264.js asks WebCodecs for avc1.640029)."""
     if encoder == "nvenc":
-        return ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ull", "-zerolatency", "1", "-delay", "0", "-rc", "cbr"]
-    return ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency"]
+        return ["-c:v", "h264_nvenc", "-preset", "p4", "-tune", "ll", "-zerolatency", "1", "-delay", "0",
+                "-rc", "cbr", "-profile:v", "high", "-level", "4.1"]
+    return ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-profile:v", "high", "-level", "4.1"]
+
+
+@functools.cache
+def pick_encoder(wanted: str = "auto") -> str:
+    """"nvenc" when asked for or ("auto") when this ffmpeg and GPU can open an NVENC session, else "libx264"."""
+    exe = ffmpeg_exe()
+    if wanted == "libx264" or exe is None:
+        return "libx264"
+    try:
+        probe = subprocess.run([exe, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                                "color=black:s=256x256:r=25:d=0.2", *encoder_args("nvenc"), "-f", "null", "-"],
+                               capture_output=True, timeout=20, **_no_window())
+        if probe.returncode == 0:
+            return "nvenc"
+        logger.warning(f"NVENC unavailable ({probe.stderr.decode(errors='replace').strip()[-200:]}): libx264")
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning(f"NVENC probe failed ({exc!r}): libx264")
+    return "libx264"
+
+
+def _no_window() -> dict:
+    return {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
 
 class H264Stream:
@@ -130,18 +158,20 @@ class H264Stream:
         w, h = size
         self.size = size
         cmd = [exe, "-hide_banner", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{w}x{h}",
-               "-r", str(fps), "-i", "pipe:0", *encoder_args(encoder), "-b:v", f"{kbps}k", "-maxrate", f"{kbps}k",
-               "-bufsize", f"{max(1, kbps // 2)}k", "-g", str(gop), "-bf", "0", "-profile:v", "baseline",
+               "-r", str(fps), "-i", "pipe:0", *encoder_args(pick_encoder(encoder)), "-b:v", f"{kbps}k",
+               "-maxrate", f"{kbps}k", "-bufsize", f"{max(1, kbps // 2)}k", "-g", str(gop), "-bf", "0",
                "-pix_fmt", "yuv420p", "-fps_mode", "passthrough", "-flush_packets", "1",
                "-flvflags", "no_duration_filesize", "-f", "flv", "pipe:1"]
-        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-        self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                     bufsize=0, creationflags=flags)
+        self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     bufsize=0, **_no_window())
+        self.stderr_tail: deque[str] = deque(maxlen=20)   # why an encoder stopped (it used to go to DEVNULL)
+        threading.Thread(target=self._drain_stderr, daemon=True, name="h264-err").start()
         self.on_au = on_au
         self._meta: deque = deque()
         self._lock = threading.Lock()
         self._write_lock = threading.Lock()
         self.closed = False
+        self._closed_by_us = False
         self.frames_in = 0
         self.frames_out = 0
         self.bytes_out = 0
@@ -165,6 +195,7 @@ class H264Stream:
 
     def close(self) -> None:
         """No more frames: the encoder writes out what it has and exits (its frames still arrive)."""
+        self._closed_by_us = True
         if self.closed:
             return
         self.closed = True
@@ -176,6 +207,16 @@ class H264Stream:
             self.proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
             self.proc.kill()
+            self.proc.wait()
+
+    @property
+    def failed(self) -> bool:
+        """The encoder exited on its own (not closed by us): its frames will not come."""
+        return self.proc.poll() is not None and not self._closed_by_us
+
+    def _drain_stderr(self) -> None:
+        for line in iter(self.proc.stderr.readline, b""):
+            self.stderr_tail.append(line.decode(errors="replace").rstrip())
 
     def _read(self) -> None:
         flv = FlvReader()
@@ -200,3 +241,6 @@ class H264Stream:
                 except Exception:  # noqa: BLE001 - a consumer error must not stop the stream
                     pass
         self.closed = True
+        if not self._closed_by_us:
+            self.proc.wait()
+            logger.warning(f"H.264 encoder exited ({self.proc.returncode}): {' | '.join(self.stderr_tail) or 'no message'}")

@@ -27,7 +27,11 @@ LP = WEIGHTS / "liveportrait"
 
 
 class FaceRig:
-    def __init__(self, device_id: int = 0) -> None:
+    """``upscaler``: a Real-ESRGAN model (upscale.py) that doubles LivePortrait's 512x512 face crop before it is
+    pasted back - for avatars above 512x512, where the crop covers ~1100 px and was enlarged ~2x. ``detail``:
+    its share of the result (the rest bicubic: some skin texture stays)."""
+
+    def __init__(self, device_id: int = 0, upscaler: str | None = None, detail: float = 0.7) -> None:
         inf = InferenceConfig(
             checkpoint_F=str(LP / "liveportrait/base_models/appearance_feature_extractor.pth"),
             checkpoint_M=str(LP / "liveportrait/base_models/motion_extractor.pth"),
@@ -42,6 +46,11 @@ class FaceRig:
         self.cropper = Cropper(crop_cfg=self.crop_cfg, device_id=device_id)
         self.mask_crop = inf.mask_crop
         self.device = self.wrapper.device
+        self.sr = None
+        self.detail = detail
+        if upscaler:
+            from upscale import Upscaler
+            self.sr = Upscaler(upscaler, device=f"cuda:{device_id}")
 
     @torch.no_grad()
     def load_source(self, img_rgb: np.ndarray) -> dict:
@@ -84,8 +93,25 @@ class FaceRig:
         x_d = x_d + w.retarget_lip(src["x_s"], lip)
         x_d = w.stitching(src["x_s"], x_d)
         out = w.warp_decode(src["f_s"], src["x_s"], x_d)
-        crop_rgb = w.parse_output(out["out"])[0]
-        return paste_back(crop_rgb, src["M_c2o"], src["img"], src["mask"])
+        if self.sr is None or not self._needs_sr(src):
+            crop_rgb = w.parse_output(out["out"])[0]
+            return paste_back(crop_rgb, src["M_c2o"], src["img"], src["mask"])
+        # the crop doubled (Real-ESRGAN, blended with bicubic) and pasted with the matrix for a 2x crop
+        x = out["out"].float().clamp(0, 1)                                   # [1,3,512,512] RGB
+        up = torch.nn.functional.interpolate(x, scale_factor=2, mode="bicubic", align_corners=False)
+        hr = (self.detail * self.sr.tensor(x).float() + (1 - self.detail) * up).clamp(0, 1)
+        crop_rgb = hr[0].permute(1, 2, 0).mul(255).round().to(torch.uint8).cpu().numpy()
+        m = src["M_c2o"] @ np.diag([0.5, 0.5, 1.0]).astype(np.float32)
+        h, w_ = src["img"].shape[:2]
+        pasted = cv2.warpAffine(crop_rgb, m[:2], (w_, h), flags=cv2.INTER_CUBIC)
+        mask = src["mask"]
+        return np.clip(mask * pasted + (1 - mask) * src["img"], 0, 255).astype(np.uint8)
+
+    @staticmethod
+    def _needs_sr(src: dict) -> bool:
+        """The 512x512 crop covers more than ~600 px of the photo: it would be enlarged."""
+        m = src["M_c2o"]
+        return float(np.hypot(m[0, 0], m[1, 0])) * 512 > 600
 
 
 # ---- expression deltas: copied from LivePortrait src/gradio_pipeline.py (MIT), which
@@ -128,13 +154,21 @@ def _eyebrow(d: torch.Tensor, e: float) -> None:
         d[0, 2, 1] += e * -0.0003
 
 
-def load_photo(path, size: int = 512) -> np.ndarray:
-    """Read a photo as RGB, center-crop to a square and resize to ``size``."""
+def load_photo(path, size: int = 512, upscaler=None, detail: float = 0.7) -> np.ndarray:
+    """Read a photo as RGB, center-crop to a square and resize to ``size``. A photo smaller than ``size`` is
+    enlarged with ``upscaler`` (upscale.Upscaler) when given - hair, clothes and background come straight
+    from it - else bicubic."""
     bgr = cv2.imread(str(path))
     if bgr is None:
         raise FileNotFoundError(path)
     h, w = bgr.shape[:2]
     s = min(h, w)
     y0, x0 = (h - s) // 2, (w - s) // 2
-    bgr = cv2.resize(bgr[y0:y0 + s, x0:x0 + s], (size, size), interpolation=cv2.INTER_AREA)
+    bgr = bgr[y0:y0 + s, x0:x0 + s]
+    while upscaler is not None and bgr.shape[0] < size:
+        big = upscaler.images([bgr])[0]
+        soft = cv2.resize(bgr, big.shape[1::-1], interpolation=cv2.INTER_CUBIC)
+        bgr = cv2.addWeighted(big, detail, soft, 1 - detail, 0)
+    interp = cv2.INTER_AREA if bgr.shape[0] >= size else cv2.INTER_CUBIC
+    bgr = cv2.resize(bgr, (size, size), interpolation=interp)
     return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)

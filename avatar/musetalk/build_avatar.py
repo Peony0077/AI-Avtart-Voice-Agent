@@ -63,16 +63,17 @@ def unpack(frame):
 
 
 def render_frames(photo: Path, fps: int, seconds: float, names: list[str], size: int,
-                  gestures: dict[str, tuple[str, ...]], pingpong: bool = False) -> tuple[dict, dict, dict]:
-    """Base loops (all frames) and gesture variants (only the frames inside gesture windows)."""
+                  gestures: dict[str, tuple[str, ...]], pingpong: bool = False, sr: str | None = None) -> tuple[dict, dict, dict]:
+    """Base loops (all frames) and gesture variants (only the frames inside gesture windows). ``sr``: the
+    Real-ESRGAN model for the photo and LivePortrait's face crops (upscale.py), None = bicubic."""
     from face_rig import FaceRig, load_photo
 
     def bgr(img):
         return cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
     t0 = time.perf_counter()
-    rig = FaceRig()
-    src = rig.load_source(load_photo(photo, size))
+    rig = FaceRig(upscaler=sr)
+    src = rig.load_source(load_photo(photo, size, rig.sr))
     curves = idle_curves(int(seconds * fps), fps, periodic=not pingpong)   # same seed: variants match the loops
     loops, variants, timings = {}, {}, {"rig_load_s": round(time.perf_counter() - t0, 2)}
     rendered = 0
@@ -109,7 +110,7 @@ def video_params(expression: str) -> RigParams:
 
 
 def render_video_frames(video: Path, fps: int, seconds: float, start_s: float, names: list[str], size: int,
-                        gestures: dict[str, tuple[str, ...]]) -> tuple[dict, dict, dict, dict, int]:
+                        gestures: dict[str, tuple[str, ...]], sr: str | None = None) -> tuple[dict, dict, dict, dict, int]:
     """Loops and gesture variants from a video (video_source.py): each frame through the face rig relative
     to itself, the loop seam cross-faded. Returns (loops, variants, timings, video info, frames in which
     gesture windows may lie - clear of the seam)."""
@@ -128,7 +129,7 @@ def render_video_frames(video: Path, fps: int, seconds: float, start_s: float, n
     n_win = n - SEAM_FRAMES
     windows = {g: gesture_windows(n_win, fps, g, GESTURE_GAP_FRAMES_LONG) for g in gestures}
     deltas = {(g, s): gesture_delta(g, fps, seed=s) for g in gestures for s, _ in windows[g]}
-    rig = FaceRig()
+    rig = FaceRig(upscaler=sr)
     timings = {"rig_load_s": round(time.perf_counter() - t0, 2)}
     loops = {name: [] for name in names}
     lead = {name: [] for name in names}
@@ -184,11 +185,15 @@ def main() -> None:
     ap.add_argument("--video", type=Path, help="build from a video of a real person (video_source.py) instead of a photo")
     ap.add_argument("--start-s", type=float, default=1.0, help="with --video: where the loop segment starts")
     ap.add_argument("--id", required=True)
-    ap.add_argument("--fps", type=int, default=20)
+    # 25 fps: MuseTalk's training frame rate (the first avatars used 20); 1024x1024 with Real-ESRGAN (owner,
+    # 2026-10-10: "the resolution is not good" - 512x512 was enlarged 2-3x on the page)
+    ap.add_argument("--fps", type=int, default=25)
     ap.add_argument("--seconds", type=float, default=30.0, help="length of each (seamless) loop")
     ap.add_argument("--pingpong", action="store_true", help="old style: short loops played forward and backward")
-    ap.add_argument("--size", type=int, default=512)
-    ap.add_argument("--jpeg", type=int, default=90, help="JPEG quality of the stored loop frames (= the idle video); "
+    ap.add_argument("--size", type=int, default=1024)
+    ap.add_argument("--sr", default="x2plus", help="Real-ESRGAN model for the photo and the face crops (upscale.py; "
+                    "used when they would be enlarged); '' = bicubic")
+    ap.add_argument("--jpeg", type=int, default=92, help="JPEG quality of the stored loop frames (= the idle video); "
                     "the same as the speech frames (avatar.jpeg_quality), so the picture does not change when she stops talking")
     ap.add_argument("--loops", default=",".join(EXPRESSIONS))
     ap.add_argument("--gestures", default=",".join(GESTURE_VARIANTS), help="head gestures to render ('' = none)")
@@ -233,10 +238,10 @@ def main() -> None:
     video_info, n_win = None, None
     if args.video is not None:
         loops, variants, timings, video_info, n_win = render_video_frames(
-            args.video, args.fps, args.seconds, args.start_s, names, args.size, to_render)
+            args.video, args.fps, args.seconds, args.start_s, names, args.size, to_render, args.sr or None)
     else:
         loops, variants, timings = render_frames(args.photo, args.fps, args.seconds, names, args.size, to_render,
-                                                 args.pingpong)
+                                                 args.pingpong, args.sr or None)
     for name, frames in loops.items():  # preview: a mid-loop frame
         cv2.imwrite(str(out / "preview" / f"{name}.jpg"), unpack(frames[len(frames) // 3]))
 
@@ -248,7 +253,8 @@ def main() -> None:
     boxer = FaceBoxer()
     timings["musetalk_load_s"] = round(time.perf_counter() - t0, 2)
     prepared: dict[str, Loop] = {}
-    n_loop = len(next(iter(loops.values())))       # (the frames are freed while preparing)
+    # (the frames are freed while preparing; --gestures-only renders no loop: only a video build needs it)
+    n_loop = len(next(iter(loops.values()))) if loops else 0
     for name in list(loops):
         t1 = time.perf_counter()
         frames = [unpack(f) for f in loops.pop(name)]

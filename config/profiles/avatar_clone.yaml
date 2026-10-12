@@ -1,15 +1,18 @@
 # Realistic avatar + cloned voice ("light" clone): Kokoro speech re-timbred by the OpenVoice V2 converter.
-# XTTS-v2 next to the 20 fps MuseTalk avatar needs ~1.4x the RTX 3060's GPU time (measured), so the lips
-# fall behind the voice; the converter costs ~50 ms per clause. XTTS (profile "clone") sounds closer to
+# XTTS-v2 next to the MuseTalk avatar needed ~1.4x the RTX 3060's GPU time (measured), so the lips
+# fell behind the voice; the converter costs ~50 ms per clause. XTTS (profile "clone") sounds closer to
 # the reference, the light clone is what fits next to the avatar.
-# Pick the Kokoro base voice for YOUR reference once (prints the value for tts.voice):
-#   .venv\Scripts\python scripts\pick_clone_voice.py --ref data\voices\me.wav
+# Pick the Kokoro base voice for YOUR reference once (prints the value for tts.voice; it uses XTTS-v2's
+# speaker encoder - non-commercial CPML licence, see docs/THIRD_PARTY_NOTICES.md):
+#   .venv/bin/python scripts/pick_clone_voice.py --ref data/voices/me.wav
 tts:
   engine: clone_light
-  voice: bf_isabella                  # chosen by pick_clone_voice.py for dev_emma.wav
+  voice: af_heart                     # American voices only (owner, 2026-10-05); set the one pick_clone_voice.py prints
   clone_reference_wav: data/voices/dev_emma.wav
 avatar:
   enabled: true
-  avatar_id: dev_girl_v2   # seamless 30 s loops + talking motion (dev_girl: the first, 7 s ping-pong build)
-  gate_frames: 4        # was 6 while gate 4 let ~5 % of frames arrive late; with the gate-sized first batch,
-                        # per-frame sending and catch-up: 0 late frames in 4 browser runs, p50 1,438 -> 1,306 ms
+  avatar_id: dev_girl_hd   # the same avatar as profile "avatar" (build it first, see avatar.yaml)
+  decoder: vae
+  upscaler: x2plus
+  h264_encoder: auto
+  gate_frames: 4        # the converter adds ~50 ms per clause: a little more video before the audio starts

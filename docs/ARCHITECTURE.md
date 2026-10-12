@@ -7,7 +7,7 @@ Living document — updated at the end of every phase. The research behind these
 
 | Question | Answer | Consequence |
 |---|---|---|
-| Commercial use? | No — personal project | Non-commercial licenses (InsightFace, XTTS, F5, Fish) are acceptable; permissive ones still preferred |
+| Commercial use? | No — personal project (2026-09-29). **Changed 2026-10-05:** lead generation and a customer link for the owner's business | Non-commercial licenses (InsightFace, XTTS, F5, Fish) were accepted for the personal project. Two are still in the standard setup — InsightFace in every avatar build, XTTS-v2 in the `clone` profile and `pick_clone_voice.py` — and must be replaced before commercial use: README, "Licences and commercial use", and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) |
 | Languages | English | Kokoro stock voice, English STT setting, English embeddings |
 | Avatar source | **One photo** | LivePortrait animates the photo offline into short loops (blink, gaze, head motion, emotions); MuseTalk lip-syncs them in real time |
 | Voice | Stock **and** cloned | Kokoro by default; XTTS-v2 clone for voice-only use; a "light" clone (Kokoro + OpenVoice V2 converter) next to the avatar — one TTS resident at a time, chosen by profile |
@@ -190,7 +190,8 @@ Reproduce LiteAvatar: `powershell -File avatar\liteavatar\setup.ps1`, then
 
 ### How it works
 
-1. **Offline, once per photo** (`avatar/musetalk/build_avatar.py`, ~6 min): a procedural *face rig* on
+1. **Offline, once per photo** (`avatar/musetalk/build_avatar.py`, ~6 min for this Phase 4 build; today's
+   default build with 30-s loops, head gestures and body motion takes ~80 min, see "Avatar v3"): a procedural *face rig* on
    LivePortrait renders five 7-second loops at 20 fps. All loops share one seeded motion curve
    (head drift ±2°, ~17 blinks/min, micro-saccades with eye contact) and differ only in expression
    (smile, eyebrows, gaze), so the worker can switch loops at the same frame index. MuseTalk then
@@ -370,6 +371,9 @@ a random access token (`AVATAR_ACCESS_TOKEN`; the WebSocket is closed with code 
   `https://<LAN IP>:8000/?token=...`. Accept the certificate warning once.
 
 The page keeps the token for the browser tab (sessionStorage), so reconnects keep working.
+`run.ps1` / `run.sh` create the tokens whenever the backend listens beyond this PC (`-Https`, or a
+`-BindHost` / `--host` other than 127.0.0.1; plain http then serves text only, the microphone needs
+https), and start uvicorn with `--no-access-log` so that no `?token=` ends up in the logs.
 
 ### Cloned voice: two engines
 
@@ -1194,6 +1198,84 @@ PCM (384 kbit/s), the reply's video (1,000) and the idle video (600) until playb
 page). For testing at home on this PC: `http://localhost:8000/?token=...` (the owner link's token) needs
 no tunnel at all.
 
+### HD avatar: 1024x1024 at 25 fps (owner, 2026-10-10: "the quality is bad, the resolution is not good")
+
+Moved to a Linux PC with an RTX 4070 Ti SUPER (16 GB). Where the picture lost its detail, and what changed:
+
+| Stage | Before | Now |
+|---|---|---|
+| Source photo | 512x512 (the AI-generated dev photo), the frame size | enlarged to 1024x1024 with Real-ESRGAN x2plus (70 %, rest bicubic: some skin texture stays) |
+| Face (LivePortrait) | 512x512 crop for an area 2.3x the face: the face was ~220 px wide | the crop doubled by Real-ESRGAN before it is pasted back (`face_rig.py`): face ~430 px wide, as sharp as the photo |
+| Mouth (MuseTalk) | 256x256, pasted through a 256 px copy of the whole face box | the lower face super-resolved on the GPU (`engine.faces`), pasted at the frame's own resolution; the upper face is not touched (`engine.compose`) |
+| Decoder | TAESD (fast, PSNR 30.9 dB against the SD VAE) | SD VAE (`avatar.decoder: vae`) |
+| Frame rate | 20 fps | 25 fps (MuseTalk's training rate) |
+| Video | libx264 ultrafast, baseline profile (no deblocking, no CABAC), 0.7 / 0.35 Mbit/s | NVENC p4 High profile (libx264 veryfast High where there is no NVENC), bitrate scaled with the picture size |
+| Browser | canvas 512x512 stretched to the panel (2-3x on a laptop screen) | 1024x1024 canvas, `imageSmoothingQuality: high`, decoder asks for High profile level 4.1 |
+
+Measured on the RTX 4070 Ti SUPER:
+
+- **Encoder** (1024x1024, 25 fps, PSNR against the source frames): libx264 ultrafast baseline 2.5 Mbit/s 45.3 dB
+  (0.7 Mbit/s: 39.1 dB) - libx264 veryfast High 47.8 dB - **NVENC p4 High 49.8 dB** at under one CPU core
+  (x264: 3-8 cores); NVENC at 1.5 Mbit/s (48.5 dB) beats ultrafast at 2.5.
+- **Lip sync per frame** (1024 avatar, 116 frames, batch 4): GPU 14.0 ms (SD VAE, mouth bicubic) / **24.0 ms with
+  the Real-ESRGAN mouth**; compositing 20 ms on the CPU, overlapped with the GPU stage. Budget at 25 fps: 40 ms.
+- **Real-ESRGAN**: x2plus 75 ms for a 512x512 crop (build time only), 11 ms per 256x160 lower face (batch 4);
+  the compact general-x4v3 5 ms but visibly softer and painterly, so x2plus is used for both.
+- **Build** (`build_avatar.py`, defaults now `--size 1024 --fps 25 --sr x2plus`): LivePortrait + Real-ESRGAN
+  161 ms/frame, MuseTalk preparation ~200 ms/frame (face boxes 84 ms on the CPU, latents 44, masks 73).
+
+Also fixed on the way: MuseTalk's crop box (1.5x the face box) past the top or left edge of the frame wrapped
+around in `compose` (negative slice) and failed; the H.264 encoder's errors went to DEVNULL and a dead idle
+encoder froze the idle picture (now logged and restarted); expression fades counted rendered frames (with a
+stride of 2-3 they lasted 2-3x longer) and blended the old face from a wrapped frame index (two head poses);
+`torch.load(weights_only=False)` was applied to every checkpoint - now only to the two legacy-format files,
+checked by SHA-256 (`common.LEGACY_CHECKPOINTS`); the worker accepts no connection with an Origin header (a
+web page could reach 127.0.0.1:8765).
+
+- **10-minute soak** (browser, fake microphone, whole stack): 33 turns, 0 errors, 0 restarts; first audio p50
+  881 ms / p90 941 ms; **0 late lip-sync frames** of 6,753 (A/V offset p50 and p90 0 ms; frames arrived 1.2 s
+  ahead of their audio, p50); VRAM peak 11.0 GB of 16, PyTorch +2 MiB after warm-up
+  ([phase6_soak_hd_10min.json](benchmarks/phase6_soak_hd_10min.json)). All browser tests pass on this avatar
+  (text 4, mic 4, voice 22 incl. barge-in, pauses, documents, slow link, crash recovery).
+
+**A ghost along the jaw while she talks** (owner, 2026-10-12: "while the avatar talks, the right cheek has an
+issue"): MuseTalk's "jaw" blend mask grows the face region downwards (~21 px of its 512 px parsing, so the jaw
+can move) and narrows it only sideways, so along a slanted jawline it reached ~30 px past the face into the hair;
+MuseTalk draws the jaw up to ~12 px narrower than the frame's own, and both outlines showed - a grey band along the
+jaw, more visible in the sharper HD avatar. `engine.contour_safe_mask` replaces it: the generated face fades out
+12 px (512 parsing) inside the face's outline, reaches further down only under the middle of the chin (the jaw
+still drops), and is blurred half as much. Over a 64-frame sentence the outline's difference to the frame's own
+(99th percentile): cheeks and jaw sides **165 -> 5**, chin 97 -> 80 (the jaw moving). New builds use it; an
+avatar built before: `avatar/musetalk/.venv/bin/python avatar/musetalk/remask.py --id <avatar>` (15,000 masks
+in 90 s, frames and latents unchanged), then restart the backend.
+
+For the best result, build from a sharp photo of at least 1500 px, or better a video of a real person
+(docs/RECORDING_A_VIDEO_AVATAR.md): Real-ESRGAN sharpens edges, it cannot add the detail a better source has.
+
+### Code review fixes (2026-10-10)
+
+A file-by-file review found ~80 issues; the ones that changed behaviour:
+
+- **Reconnects**: the page reset nothing when a new session started, but turn ids start again at 1 - replies
+  were appended to old chat bubbles and their audio or lip sync was dropped as "stale". Now everything kept
+  per turn starts over (`resetTurns`, AvatarStage, chat).
+- **The line**: a customer whose connection drops keeps the conversation for `GRACE_S` = 10 s (a closed or
+  reloaded tab, close code 1001: `RELOAD_GRACE_S` = 4 s) - the next in line waits that long; the line holds
+  `MAX_WAITING` = 20 (more: close code 1013, the page retries after 15 s); a customer promoted from the
+  line is no longer handed over as "inactive" at once (the idle clock started when they joined).
+- **Failures**: a TTS error (CUDA out of memory, a crashed XTTS worker) no longer leaves a turn waiting
+  forever; a message typed while speech is transcribed (END_OF_TURN) no longer closes the connection; one
+  bad message no longer ends the session; errors carry a `code` the page shows (`turn_failed`, `stt_failed`,
+  `voice_failed`, `voice_unavailable`); a cancelled GPU job keeps the GPU lock until its thread has
+  finished (`core/gpu.locked_thread`).
+- **Security**: `/health` details, `/health/gpu` and `/api/metrics` need the owner token when one is set;
+  customer text and documents cannot inject chat-template tokens (`<|im_start|>` ...); the leads CSV
+  neutralises formulas; a customer token without an owner token is refused at startup; LAN starts always
+  get tokens; downloads are pinned and checked by SHA-256.
+- **Answers**: document answers get the "answer from the knowledge, never invent facts" rules again (the
+  template existed but was not used); the history is trimmed to the LLM's context.
+- Silero VAD runs on onnxruntime (now in requirements.txt), with its TorchScript model as the fallback.
+
 ### Robustness
 
 Playwright `tests/e2e/phase6_recovery.spec.js` kills processes in the middle of a live session
@@ -1284,8 +1366,10 @@ trace exceeded the time limit, so tracing is now off for the soak
 
 ## Running
 
-First-time setup (backend venv, models, avatar and voice workers) is described in
-[PHASE0_TECHNICAL_REPORT.md](PHASE0_TECHNICAL_REPORT.md); after that:
+First-time setup (backend venv, models, avatar and voice workers) is in the [README](../README.md)
+(Windows; Linux: `scripts/setup_linux.sh`, and `scripts/run.sh` / `scripts/tunnel.sh` with the same
+options as below); the research behind it in [PHASE0_TECHNICAL_REPORT.md](PHASE0_TECHNICAL_REPORT.md).
+After that:
 
 ```powershell
 scripts\run.ps1 -Build                     # build the UI, start everything: http://127.0.0.1:8000
@@ -1300,7 +1384,8 @@ scripts\run.ps1 -Stop
 Your own avatar, voice and documents:
 
 ```powershell
-# avatar from one photo (~6 min), then set avatar.avatar_id: me in the profile
+# avatar from one photo (~80 min on the RTX 3060: six 30-s loops, head gestures, talking and body
+# motion), then set avatar.avatar_id: me in the profile
 avatar\musetalk\.venv\Scripts\python avatar\musetalk\build_avatar.py --photo me.jpg --id me
 # cloned voice: record 10-15 s of clean speech as data\voices\me.wav, set tts.clone_reference_wav,
 # and for avatar_clone pick the base voice:
@@ -1314,16 +1399,20 @@ Tests (backend running with the matching profile):
 ```powershell
 .venv\Scripts\python -m pytest backend\tests                 # unit tests
 cd tests\e2e
-npx playwright test --project=text                           # Phase 1 (+ token test with $env:AVATAR_TOKEN)
+npx playwright test --project=text                           # Phase 1 (+ the wrong-token test when a token is set)
 npx playwright test --project=voice phase2                    # voice (default profile)
 $env:FAKE_MIC='mic_story_bargein.wav'; npx playwright test --project=voice phase3   # barge-in
 $env:FAKE_MIC='mic_rag.wav'; npx playwright test --project=voice phase5            # documents
 npx playwright test --project=voice phase4 phase6             # avatar, crash recovery (avatar profiles)
 npx playwright test --project=mic                            # starting the microphone as in a normal browser
 npx playwright test --project=voice phase6_customer phase6_leads   # customer link, waiting line, leads, voice
-#   preview, customer time zone (started with scripts\tunnel.ps1: the customer link is read from logs\customer_url.txt)
+#   preview, customer time zone. Tokens: AVATAR_TOKEN or AVATAR_ACCESS_TOKEN (owner), AVATAR_CUSTOMER_TOKEN
+#   (customer); without them, the links of a backend started by scripts\tunnel.ps1 / tunnel.sh are read from
+#   logs\tunnel_url.txt and logs\customer_url.txt - only while they are newer than logs\backend.pid (the
+#   running backend), so the links of a stopped tunnel are never used. Customer tests skip without a token.
 # The owner's data\ (memory, persona, leads, customers' memories) is copied aside before a run and put back
-# after it (tests\e2e\data-guard.js).
+# after it (tests\e2e\data-guard.js); after an interrupted run the next run puts it back first.
+# The fake-microphone WAVs (not in git) come from: .venv\Scripts\python scripts\make_fixtures.py
 $env:FAKE_MIC='mic_soak.wav'; $env:FAKE_MIC_LOOP='1'; npx playwright test --project=voice soak
 # lip-sync timing on rendered frames (stack stopped: needs the GPU; any speech .wav, --compare = MuseTalk's windows)
 cd ..\..\avatar\musetalk; .venv\Scripts\python lipsync_check.py speech.wav --compare

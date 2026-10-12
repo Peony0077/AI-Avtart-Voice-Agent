@@ -1,0 +1,58 @@
+{
+  "test": "soak 10 min, HD avatar dev_girl_hd (1024x1024, 25 fps, Real-ESRGAN, SD VAE, NVENC)",
+  "machine": "RTX 4070 Ti SUPER, Ubuntu 24.04",
+  "date": "2026-10-12",
+  "minutes": 10,
+  "turns": 33,
+  "completed": 32,
+  "interrupted": 1,
+  "e2e_first_audio_ms": {
+    "p50": 881.3,
+    "p90": 940.9,
+    "max": 965.9
+  },
+  "server_errors": 0,
+  "page_errors": 0,
+  "vram_used_mib": {
+    "first": 10503,
+    "last": 10782,
+    "max": 11035
+  },
+  "backend_rss_mib": {
+    "first": 2318,
+    "last": 2458,
+    "max": 2458
+  },
+  "llm_restarts_during": 0,
+  "own_torch_mib": {
+    "at_3min": 6092,
+    "at_half": 6092,
+    "last": 6094,
+    "growth_after_3min": 2,
+    "growth_second_half": 2
+  },
+  "ram_available_mib": {
+    "first": 21358,
+    "min": 20291
+  },
+  "avatar": {
+    "restarts_during": 0,
+    "gestures": {
+      "small_nod": 30,
+      "head_tilt": 13
+    },
+    "skipped_frames": 16,
+    "speech_frames": 6753,
+    "drawn_speech": 15766,
+    "late": 0,
+    "av_offset_p50": 0,
+    "av_offset_p90": 0,
+    "detached_frames": 0,
+    "arrived_late_100ms": 0,
+    "arrived_while_playing": 6671,
+    "arrival_lateness_p50": -1218,
+    "arrival_lateness_p90": -352,
+    "decode_ms_p50": 6,
+    "decode_ms_p90": 9
+  }
+}

@@ -42,6 +42,7 @@ class AvatarClient:
         self._reader: asyncio.Task | None = None
         self._watchdog: asyncio.Task | None = None
         self._stopping = False
+        self.on_hello: Callable[[dict], None] | None = None   # a (re)connected worker's hello: tell the page
         self.restarts = 0
         self.stats = {"frames_in": 0, "idle_in": 0, "first_frame_ms": [], "segment_fps": [], "skipped_frames": 0, "strided_frames": 0,
                       "gestures": {}}
@@ -59,12 +60,13 @@ class AvatarClient:
         port = self.cfg.worker_url.rsplit(":", 1)[1].split("/")[0]
         cmd = [str(py), str(script), "--avatar", self.cfg.avatar_id, "--port", port,
                "--quality", str(self.cfg.jpeg_quality), "--gate-frames", str(self.cfg.gate_frames), "--decoder", self.cfg.decoder,
-               "--warm-burst-ms", str(self.cfg.warm_burst_ms), "--late-ms", str(self.cfg.late_ms)]
+               "--warm-burst-ms", str(self.cfg.warm_burst_ms), "--late-ms", str(self.cfg.late_ms),
+               "--upscaler", getattr(self.cfg, "upscaler", "x2plus"), "--h264-encoder", getattr(self.cfg, "h264_encoder", "auto")]
         free_port(int(port), "worker.py")
-        log = (self.settings.log_dir / "avatar-worker.log").open("ab")
         logger.info(f"starting avatar worker: {' '.join(cmd)}")
-        self.proc = subprocess.Popen(cmd, cwd=script.parent, stdout=log, stderr=subprocess.STDOUT,
-                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        with (self.settings.log_dir / "avatar-worker.log").open("ab") as log:   # the child keeps its own handle
+            self.proc = subprocess.Popen(cmd, cwd=script.parent, stdout=log, stderr=subprocess.STDOUT,
+                                         **JOB.popen_kwargs())
         JOB.adopt(self.proc)
 
     async def _connect(self, timeout_s: float) -> None:
@@ -73,6 +75,9 @@ class AvatarClient:
             if self.proc is not None and self.proc.poll() is not None:
                 raise RuntimeError(f"avatar worker exited with {self.proc.returncode}; see logs/avatar-worker.log")
             try:
+                if self.ws is not None:              # the previous connection: the worker serves one client
+                    await self.ws.close()
+                    self.ws = None
                 self.ws = await websockets.connect(self.cfg.worker_url, max_size=None, ping_interval=20)
                 self.hello = json.loads(await asyncio.wait_for(self.ws.recv(), 10))
                 self.connected = True
@@ -84,6 +89,8 @@ class AvatarClient:
                     self.send_json({"type": "start_hold", "ms": self.start_hold_ms})
                 if self.kbps:
                     self.send_json({"type": "bitrate", "speech": self.kbps[0], "idle": self.kbps[1]})
+                if self.on_hello is not None:
+                    self.on_hello(self.hello)
                 return
             except (OSError, websockets.WebSocketException, TimeoutError):
                 await asyncio.sleep(1.0)
@@ -99,7 +106,7 @@ class AvatarClient:
                 self.connected = False
                 try:
                     if dead and self.cfg.manage_worker:
-                        self._spawn()
+                        await asyncio.to_thread(self._spawn)     # free_port waits for a stale process: not on the loop
                     await self._connect(240.0)
                 except Exception as exc:  # noqa: BLE001
                     logger.error(f"avatar restart failed: {exc!r}")
@@ -114,7 +121,7 @@ class AvatarClient:
         if self.proc is not None and self.proc.poll() is None:
             self.proc.terminate()
             try:
-                self.proc.wait(timeout=10)
+                await asyncio.to_thread(self.proc.wait, 10)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
 
@@ -129,9 +136,15 @@ class AvatarClient:
                     else:
                         self.stats["frames_in"] += 1
                     if self.frame_sink is not None:
-                        self.frame_sink(msg, kind, turn_id)
+                        try:
+                            self.frame_sink(msg, kind, turn_id)
+                        except Exception:  # noqa: BLE001 - a session's error must not end the avatar connection
+                            logger.exception("avatar frame sink failed")
                     continue
-                data = json.loads(msg)
+                try:
+                    data = json.loads(msg)
+                except json.JSONDecodeError:
+                    continue
                 if data.get("type") == "first_frame":
                     fut = self._waiters.pop((data["turn_id"], data["seq"]), None)
                     if data["ms"] is not None:   # None: the segment had no frames to render
@@ -149,6 +162,8 @@ class AvatarClient:
                         self.stats["segment_fps"] = (self.stats["segment_fps"] + [data["fps"]])[-50:]
         except websockets.ConnectionClosed:
             pass
+        except Exception:  # noqa: BLE001 - logged; the watchdog reconnects (and closes this socket first)
+            logger.exception("avatar reader failed")
         finally:
             self.connected = False
             for fut in self._waiters.values():

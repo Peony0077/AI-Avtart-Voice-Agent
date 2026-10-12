@@ -6,6 +6,9 @@ OpenAvatarChat's MuseTalkAlgoV15 (Apache-2.0), rewritten for this project:
     checkpoint in fp16 on the GPU (the fp32 file is 3.2 GB; RAM on this PC is scarce)
   * loop frames and masks are kept JPEG/PNG-compressed in RAM
   * frames are produced in batches with a pts on the turn's audio timeline
+  * for avatars larger than 512x512 the generated lower face (256 px wide) is doubled by Real-ESRGAN
+    (upscale.py) and pasted at the frame's own resolution: enlarged with bilinear interpolation, it was a
+    soft patch in a sharp face
 """
 from __future__ import annotations
 
@@ -19,6 +22,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import torch
+import torch.nn.functional as F
 from loguru import logger
 from scipy.signal import resample_poly
 
@@ -27,10 +31,56 @@ from common import WEIGHTS, chdir
 
 EXTRA_MARGIN = 10     # MuseTalk 1.5: extra chin area below the landmark box
 DECODE_FROM_ROW = 12  # latent row (x8 px) from which the face is decoded: 96 px margin above the blend line
-PARSING_MODE = "jaw"
 
 
 LIP_SHARPEN = 0.25   # unsharp mask on the generated face: as crisp as the photo's (Laplacian var 19 -> 26, photo 24)
+
+# Blend mask (owner, 2026-10-12: "while she talks, her right cheek has an issue"). MuseTalk's "jaw" mask grows the
+# face region downwards by ~21 px of its 512 px parsing (so the jaw can move) and narrows it only sideways: along
+# a slanted jawline it reached ~30 px past the face into the hair, and MuseTalk draws the jaw up to ~12 px narrower
+# than the frame's own - both outlines showed, a grey ghost band along the jaw (sharper, so more visible, in the
+# HD avatar). This mask fades the generated face out INSIDE the face's outline, so the outline is always the
+# frame's own; only under the middle of the chin may it reach further down (the jaw drops when the mouth opens).
+MASK_INSET = 12        # px (512 parsing) inside the outline: the narrower jaw (~8) and the blur's reach (~4)
+CHIN_DROP = 14         # px (512 parsing) the generated chin may reach below the outline ...
+CHIN_HALF_WIDTH = 50   # ... within this many px either side of the centre (~15 % of the face's width)
+MASK_BLUR = 0.05       # Gaussian kernel, share of the crop's size (MuseTalk: 0.1)
+FACE_LABELS = (1, 11, 12, 13)   # BiSeNet: skin, mouth, upper lip, lower lip (not the nose, neck, ears or hair)
+
+
+def contour_safe_mask(frame_bgr: np.ndarray, face_box, fp) -> tuple[np.ndarray, tuple]:
+    """(blend mask, crop box) for loop frame ``frame_bgr`` - a drop-in for MuseTalk's
+    get_image_prepare_material(mode="jaw"): the same crop box (1.5x the face box), lower half only, limited to
+    the face box, but kept inside the face's outline (see MASK_INSET)."""
+    from musetalk.utils.blending import get_crop_box
+    from PIL import Image
+
+    x, y, x1, y1 = (int(v) for v in face_box)
+    crop_box, _ = get_crop_box([x, y, x1, y1], 1.5)
+    xs, ys, xe, ye = crop_box
+    large = Image.fromarray(np.ascontiguousarray(frame_bgr[:, :, ::-1])).crop(crop_box)   # padded past the frame
+    w, h = large.size
+    with torch.no_grad():
+        img = fp.preprocess(large.resize((512, 512), Image.BILINEAR)).unsqueeze(0)
+        img = img.to(next(fp.net.parameters()).device)
+        parsing = fp.net(img)[0].squeeze(0).argmax(0).cpu().numpy()
+    face = np.isin(parsing, FACE_LABELS).astype(np.uint8)
+    k = 2 * MASK_INSET + 1
+    region = cv2.erode(face, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    # under the middle of the chin: the face itself and up to CHIN_DROP px below it
+    dropped = face.copy()
+    for d in range(1, CHIN_DROP + 1):
+        dropped[d:] |= face[:-d]
+    middle = slice(256 - CHIN_HALF_WIDTH, 256 + CHIN_HALF_WIDTH)
+    region[:, middle] = np.maximum(region[:, middle], dropped[:, middle])
+    region[:256] = 0                                                     # the upper half stays the frame's own
+    fx0, fy0 = round((x - xs) * 512 / w), round((y - ys) * 512 / h)       # and outside the face box too
+    fx1, fy1 = round((x1 - xs) * 512 / w), round((y1 - ys) * 512 / h)
+    inside = np.zeros_like(region)
+    inside[max(fy0, 0):fy1, max(fx0, 0):fx1] = 1
+    mask = cv2.resize((region & inside) * 255, (w, h), interpolation=cv2.INTER_LINEAR)
+    blur = int(MASK_BLUR * h) // 2 * 2 + 1
+    return cv2.GaussianBlur(mask, (blur, blur), 0), tuple(crop_box)
 
 
 def _lip_weight(lab: np.ndarray) -> np.ndarray:
@@ -182,8 +232,13 @@ class LoopDelta:
         return cls(latents=torch.load(folder / "latents.pt"), **d)
 
 
+SR_MIN_FACE = 320    # face boxes wider than this (px) get the super-resolved lower face (avatars > 512x512)
+SR_DETAIL = 0.7      # share of the Real-ESRGAN picture (rest: bicubic) - keeps some skin texture, as the loops
+
+
 class MuseTalkEngine:
-    def __init__(self, fps: int = 20, batch_size: int = 4, device: str = "cuda", decoder: str = "vae") -> None:
+    def __init__(self, fps: int = 20, batch_size: int = 4, device: str = "cuda", decoder: str = "vae",
+                 upscaler: str | None = None) -> None:
         from diffusers import UNet2DConditionModel
         from transformers import WhisperModel
 
@@ -227,8 +282,15 @@ class MuseTalkEngine:
             else:
                 logger.warning(f"TAESD not found in {path}: using the SD VAE decoder")
         self.decoder = "taesd" if self.tiny is not None else "vae"
+        # Real-ESRGAN for the lower face of large avatars (the worker turns it on: use_sr)
+        self.sr = None
+        if upscaler:
+            from upscale import Upscaler
+            self.sr = Upscaler(upscaler, device=device)
+        self.use_sr = False
         self.load_s = round(time.perf_counter() - t0, 2)
-        logger.info(f"MuseTalk engine ready in {self.load_s}s (fps={fps}, batch={batch_size}, decoder={self.decoder})")
+        logger.info(f"MuseTalk engine ready in {self.load_s}s (fps={fps}, batch={batch_size}, decoder={self.decoder}, "
+                    f"upscaler={upscaler})")
 
     # ------------------------------------------------------------------ preparation
     @torch.no_grad()
@@ -236,12 +298,13 @@ class MuseTalkEngine:
                         ) -> tuple[list[tuple], list[torch.Tensor], list[bytes], list[tuple]]:
         """Face box, VAE latent and blend mask per frame. A frame whose face is not detected reuses
         the previous box (or ``fallback[i]``, already adjusted, for gesture frames)."""
-        from musetalk.utils.blending import get_image_prepare_material
-
         boxes = boxer.boxes(frames_bgr)
         h = frames_bgr[0].shape[0]
         coords, latents, masks_png, mask_boxes = [], [], [], []
-        last_good = None
+        # a frame without a detected face takes the previous box - the first ones the first detected box
+        last_good = next((b for b in boxes if b != (0.0, 0.0, 0.0, 0.0)), None)
+        if last_good is None and fallback is None:
+            raise ValueError("no face found in any frame")
         for i, (box, frame) in enumerate(zip(boxes, frames_bgr, strict=True)):
             if box == (0.0, 0.0, 0.0, 0.0) and fallback is not None:
                 x1, y1, x2, y2 = fallback[i]
@@ -255,7 +318,7 @@ class MuseTalkEngine:
             coords.append((x1, y1, x2, y2))
             crop = cv2.resize(frame[y1:y2, x1:x2], (256, 256), interpolation=cv2.INTER_LANCZOS4)
             latents.append(self.vae.get_latents_for_unet(crop).to("cpu", self.dtype))
-            mask, crop_box = get_image_prepare_material(frame, [x1, y1, x2, y2], fp=self.fp, mode=PARSING_MODE)
+            mask, crop_box = contour_safe_mask(frame, (x1, y1, x2, y2), self.fp)
             masks_png.append(cv2.imencode(".png", mask)[1].tobytes())
             mask_boxes.append(tuple(int(v) for v in crop_box))
         return coords, latents, masks_png, mask_boxes
@@ -335,26 +398,46 @@ class MuseTalkEngine:
         else:
             lat = pred[:, :, DECODE_FROM_ROW:, :] / self.vae.scaling_factor
             img = self.vae.vae.decode(lat.to(self.vae.vae.dtype)).sample
-        img = (img / 2 + 0.5).clamp(0, 1).mul(255).round().to(torch.uint8)
+        img = (img.float() / 2 + 0.5).clamp(0, 1)
+        if self.sr is not None and self.use_sr:      # 256 -> 512 wide, before it is pasted into a large face box
+            up = F.interpolate(img, scale_factor=2, mode="bicubic", align_corners=False)
+            img = (SR_DETAIL * self.sr.tensor(img).float() + (1 - SR_DETAIL) * up).clamp(0, 1)
+        img = img.mul(255).round().to(torch.uint8)
         return idx, img.permute(0, 2, 3, 1).cpu().numpy()[..., ::-1]   # RGB → BGR
 
     def compose(self, loop: Loop, i: int, face_bottom: np.ndarray, background: np.ndarray | None = None) -> np.ndarray:
         """CPU stage: paste the generated lower face into loop frame i (MuseTalk blending).
         ``background``: another picture of frame i to paste into (two expressions blended) - one paste,
-        so the mouth cannot appear twice."""
+        so the mouth cannot appear twice.
+
+        The lower face is pasted at the frame's own resolution and the rest of the face box is left as it
+        is (it used to go through a 256x256 copy and back). The lip colour correction (refine_face) works
+        on the 256-wide picture as before; its change is smooth, so it is carried over enlarged."""
         frame = loop.frame(i) if background is None else background.copy()
+        fh, fw = frame.shape[:2]
         x1, y1, x2, y2 = loop.coords[i]
-        crop = cv2.resize(frame[y1:y2, x1:x2], (256, 256), interpolation=cv2.INTER_AREA)
-        h = face_bottom.shape[0]
-        crop[256 - h:] = refine_face(np.ascontiguousarray(face_bottom), crop[256 - h:], self.sharpen)  # top rows: original
-        face = cv2.resize(crop, (x2 - x1, y2 - y1))
+        w, h = x2 - x1, y2 - y1
+        rows = face_bottom.shape[0] * 256 // face_bottom.shape[1]          # rows of the 256x256 crop it covers
+        top = y1 + round(h * (256 - rows) / 256)                            # first frame row of the lower face
+        small = face_bottom if face_bottom.shape[1] == 256 else cv2.resize(face_bottom, (256, rows), interpolation=cv2.INTER_AREA)
+        ref = cv2.resize(frame[top:y2, x1:x2], (256, rows), interpolation=cv2.INTER_AREA)
+        refined = refine_face(np.ascontiguousarray(small), ref, self.sharpen if face_bottom.shape[1] == 256 else 0.0)
+        interp = cv2.INTER_AREA if face_bottom.shape[1] >= w else cv2.INTER_CUBIC
+        gen = cv2.resize(face_bottom, (w, y2 - top), interpolation=interp).astype(np.float32)
+        delta = refined.astype(np.float32) - small.astype(np.float32)
+        gen = np.clip(gen + cv2.resize(delta, (w, y2 - top), interpolation=cv2.INTER_LINEAR), 0, 255).astype(np.uint8)
+        # MuseTalk's crop box (1.5x the face box) may reach past the frame edges: clip it, and the mask with it
+        # (frame[ys:ye] with a negative ys wrapped around, and the paste failed)
         xs, ys, xe, ye = loop.mask_boxes[i]
-        body = frame[ys:ye, xs:xe]
+        cx0, cy0, cx1, cy1 = max(xs, 0), max(ys, 0), min(xe, fw), min(ye, fh)
+        body = frame[cy0:cy1, cx0:cx1]
         large = body.copy()
-        large[y1 - ys:y2 - ys, x1 - xs:x2 - xs] = face
-        m = loop.mask(i).astype(np.float32)[..., None] / 255.0
+        py0, py1 = max(top, cy0), min(y2, cy1)
+        px0, px1 = max(x1, cx0), min(x2, cx1)
+        large[py0 - cy0:py1 - cy0, px0 - cx0:px1 - cx0] = gen[py0 - top:py1 - top, px0 - x1:px1 - x1]
+        m = loop.mask(i)[cy0 - ys:cy1 - ys, cx0 - xs:cx1 - xs].astype(np.float32)[..., None] / 255.0
         hh, ww = min(large.shape[0], m.shape[0]), min(large.shape[1], m.shape[1])
-        frame[ys:ys + hh, xs:xs + ww] = (large[:hh, :ww] * m[:hh, :ww] + body[:hh, :ww] * (1 - m[:hh, :ww])).astype(np.uint8)
+        frame[cy0:cy0 + hh, cx0:cx0 + ww] = (large[:hh, :ww] * m[:hh, :ww] + body[:hh, :ww] * (1 - m[:hh, :ww])).astype(np.uint8)
         return frame
 
     def generate(self, loop: Loop, chunks: torch.Tensor, start_idx: int) -> list[np.ndarray]:
