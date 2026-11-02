@@ -87,7 +87,18 @@ if [ ! -x "$LLAMA_DIR/llama-$LLAMA_BUILD/llama-server" ] || [ ! -f "$LLAMA_DIR/l
 fi
 # config llm.server_exe points to tools/llama.cpp/current/llama-server
 ln -sfn "$LLAMA_BUILD-cuda12.8/llama-$LLAMA_BUILD" tools/llama.cpp/current
-tools/llama.cpp/current/llama-server --version 2>&1 | grep -i version || { echo "llama-server does not start" >&2; exit 1; }
+# llama-server needs the OpenMP runtime (libgomp1), missing on minimal Ubuntu / WSL images. PyTorch's wheel
+# ships one: next to llama-server (RUNPATH $ORIGIN) it works without sudo.
+if ldd tools/llama.cpp/current/llama-server 2>/dev/null | grep -q 'libgomp.so.1 => not found'; then
+  GOMP="$("$PY" -c 'import pathlib, torch; print(pathlib.Path(torch.__file__).parent / "lib" / "libgomp.so.1")')"
+  if [ -f "$GOMP" ]; then cp -L "$GOMP" tools/llama.cpp/current/ && echo "libgomp.so.1 from PyTorch next to llama-server"
+  else echo "missing: libgomp.so.1 (llama-server needs it) - sudo apt install libgomp1" >&2; exit 1; fi
+fi
+if ! out="$(tools/llama.cpp/current/llama-server --version 2>&1)" || ! grep -qi version <<<"$out"; then
+  echo "$out" | tail -20 >&2                          # the reason (e.g. a missing library), not just "does not start"
+  echo "llama-server does not start" >&2; exit 1
+fi
+echo "$out" | grep -i version
 
 echo "== models -> $AVATAR_MODEL_HOME"
 "$PY" scripts/download_models.py llm voice rag voice_convert
@@ -105,11 +116,17 @@ if [ "$AVATAR" = 1 ]; then
   echo "== avatar worker (avatar/musetalk/.venv, MuseTalk + LivePortrait, weights)"
   bash avatar/musetalk/setup.sh
   avatar/musetalk/.venv/bin/python avatar/musetalk/download_weights.py
+  # the development avatar's photo (data/ is git-ignored): OpenAvatarChat's girl.png (Apache-2.0
+  # repository, AI-generated), pinned to a commit and checked
+  mkdir -p data/avatars/dev_girl
+  fetch "https://raw.githubusercontent.com/HumanAIGC-Engineering/OpenAvatarChat/8b7b3b45bca28ae9ab5fa72ee31bc03c5a99b08b/resource/avatar/flashhead/girl.png" \
+    data/avatars/dev_girl/photo.png 384abd202f7dae45fdbbab3b6a7777cd7c8a64625fb19217a45d056f2162c624
 fi
 
 echo
 echo "done. Start:   scripts/run.sh                      (http://127.0.0.1:8000)"
 if [ "$AVATAR" = 1 ]; then
-  echo "       scripts/run.sh --profile avatar    (build an avatar first: README.md, \"Make it yours\")"
+  echo "Avatar, once: avatar/musetalk/.venv/bin/python avatar/musetalk/build_avatar.py --photo data/avatars/dev_girl/photo.png --id dev_girl_hd"
+  echo "       (~1.5-2 h), then: scripts/run.sh --profile avatar"
 fi
 echo "Internet:      scripts/tunnel.sh --profile avatar"

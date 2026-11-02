@@ -13,8 +13,7 @@ import re
 
 # a sentence never ends with these: conjunctions, prepositions, articles, possessives, fillers
 _ALWAYS_CONTINUES = {
-    "and", "but", "or", "because", "if", "when", "while", "than", "whether", "of", "in", "on", "at", "for",
-    "with", "about", "from", "into", "by", "the", "a", "an", "my", "your", "our", "their", "his", "her", "its",
+    "and", "but", "or", "because", "if", "when", "while", "than", "whether", "the", "a", "an", "my", "your", "our", "their", "his", "her", "its",
     "these", "those", "um", "uh", "er", "erm", "i", "i'm",
 }
 # ...these usually take an object or a clause ("I would like to know | what ..."), but also end real
@@ -25,6 +24,9 @@ _USUALLY_CONTINUES = {
     "get", "have", "has", "make", "say", "see", "learn", "understand", "can", "could", "would", "should",
     "will", "do", "does", "did", "how", "what", "why", "where", "well", "just", "also", "then", "maybe",
     "really", "very",
+    # prepositions end real questions too ("Where are you from?", "What are you looking for?"): they were
+    # always "unfinished", and every such question waited continue_ms (1 s) longer for its answer
+    "of", "in", "on", "at", "for", "with", "about", "from", "into", "by",
 }
 _WORD = re.compile(r"[a-z']+")
 

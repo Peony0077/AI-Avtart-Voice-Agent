@@ -117,12 +117,18 @@ For a truly lifelike avatar, build it from a short video of a real person:
 
 ## Linux
 
-The same app on Ubuntu 24.04 (tested with an RTX 4070 Ti SUPER). Needs uv, git, curl, Node.js 20+, an
-NVIDIA driver for CUDA 13, and `ffmpeg` (`sudo apt install ffmpeg`) for the avatar's video.
+The same app on Ubuntu 24.04, also under WSL2 (tested with an RTX 4070 Ti SUPER). Needs uv, git, curl,
+Node.js 20.19+ or 22.12+ (Vite 8), and an NVIDIA driver for CUDA 13. No sudo needed: uv and Node.js install
+into `~/.local`. For the avatar's video an `ffmpeg` on the PATH with NVENC (GPU) is best (`sudo apt install
+ffmpeg`, or without sudo `conda create -p ~/.local/conda-ffmpeg -c conda-forge ffmpeg` and a link in
+`~/.local/bin`); without one the avatar worker's bundled ffmpeg encodes on the CPU (libx264).
 
 ```bash
 scripts/setup_linux.sh --avatar          # first time (idempotent): .env, backend venv + CUDA torch, llama-server,
-                                         #   models, frontend; --avatar adds the avatar worker and its weights
+                                         #   models, frontend; --avatar adds the avatar worker, its weights and
+                                         #   the development photo (data/avatars/dev_girl/photo.png)
+avatar/musetalk/.venv/bin/python avatar/musetalk/build_avatar.py --photo data/avatars/dev_girl/photo.png --id dev_girl_hd
+                                         # once, ~1.5-2 h: the avatar profile's avatar (with the backend stopped)
 scripts/run.sh                           # http://127.0.0.1:8000, profile from .env (AVATAR_PROFILE)
 scripts/run.sh --profile avatar --build  # avatar profile, frontend rebuilt first
 scripts/run.sh --host 0.0.0.0            # LAN over plain http (text only on other devices): tokens are printed
@@ -132,7 +138,9 @@ scripts/run.sh --stop                    # backend, its helpers and our quick tu
 ```
 
 Paths in the Windows commands below become `.venv/bin/python` and `avatar/musetalk/.venv/bin/python`.
-Not ported yet: LAN HTTPS (`run.ps1 -Https`; use the tunnel) and the XTTS and LiteAvatar setup scripts.
+Not ported yet: LAN HTTPS (`run.ps1 -Https`; use the tunnel) and the XTTS and LiteAvatar setup scripts (so the
+`clone` profile falls back to the stock voice, and `pick_clone_voice.py` does not run). Under WSL2 `--host 0.0.0.0`
+prints WSL's internal address, which other devices cannot reach: use the tunnel.
 
 ## Make it yours
 

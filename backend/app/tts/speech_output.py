@@ -6,6 +6,7 @@ words the user actually heard when a turn is interrupted.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -92,12 +93,12 @@ class SpeechOutput:
                 await self._pace()
                 if self.turn.is_cancelled:
                     break
-            if hasattr(self.tts, "stream"):
-                seq = await self._stream_clause(clause, seq)
-                continue
             spoken = normalize_for_speech(clause)
             if not any(ch.isalnum() for ch in spoken):
                 continue                                  # only a list number ("2."): nothing to say
+            if hasattr(self.tts, "stream"):               # (checked first: XTTS was sent "" and babbled)
+                seq = await self._stream_clause(clause, seq)
+                continue
             t_req = time.perf_counter()
             if self.turn.is_cancelled:
                 break
@@ -202,34 +203,47 @@ class SpeechOutput:
             producer = loop.run_in_executor(None, produce)
             segment = Segment(seq + 1, clause, self.total_ms, 0.0, [])
             first, done = True, False
-            while not done and (chunk := await queue.get()) is not None:
-                if self.avatar_sink is not None and not queue.empty():
-                    parts = [chunk]
-                    while not queue.empty():
-                        if (nxt := queue.get_nowait()) is None:
-                            done = True
-                            break
-                        parts.append(nxt)
-                    chunk = np.concatenate(parts)
-                if self.turn.is_cancelled:
-                    continue          # drain the worker's stream, send nothing
-                seq += 1
-                if first:
-                    self.turn.mark("tts_first_audio")
-                    self.segments.append(segment)
-                    if self.first_timing is None:
-                        self.first_timing = {"first_chunk_ms": round((time.perf_counter() - t0) * 1000, 1),
-                                             "chars": len(clause), "streaming": True}
-                    self.outbox.json({"type": "tts_segment", "turn_id": self.turn.turn_id, "seq": seq,
-                                      "text": clause, "start_ms": round(self.total_ms), "streaming": True},
-                                     self.turn.turn_id)
-                    first = False
-                pcm = (np.clip(chunk, -1, 1) * 32767).astype(np.int16)
-                await self._emit(seq, pcm)
-                dur = len(pcm) / self.tts.sample_rate * 1000
-                segment.duration_ms += dur
-                self.total_ms += dur
-            await producer
+            try:
+                seq = await self._receive_stream(queue, segment, clause, seq, t0, first, done)
+                await producer
+            except asyncio.CancelledError:
+                # barge-in: the worker still streams the rest of this clause into the producer's recv().
+                # Keep the GPU lock until that thread is done - otherwise the next clause's recv() ran
+                # beside it (websockets: "cannot call recv while another thread is already running recv")
+                # and STT shared the GPU with the orphaned clause.
+                with contextlib.suppress(Exception):
+                    await asyncio.shield(producer)
+                raise
+        return seq
+
+    async def _receive_stream(self, queue, segment, clause, seq, t0, first, done) -> int:
+        while not done and (chunk := await queue.get()) is not None:
+            if self.avatar_sink is not None and not queue.empty():
+                parts = [chunk]
+                while not queue.empty():
+                    if (nxt := queue.get_nowait()) is None:
+                        done = True
+                        break
+                    parts.append(nxt)
+                chunk = np.concatenate(parts)
+            if self.turn.is_cancelled:
+                continue          # drain the worker's stream, send nothing
+            seq += 1
+            if first:
+                self.turn.mark("tts_first_audio")
+                self.segments.append(segment)
+                if self.first_timing is None:
+                    self.first_timing = {"first_chunk_ms": round((time.perf_counter() - t0) * 1000, 1),
+                                         "chars": len(clause), "streaming": True}
+                self.outbox.json({"type": "tts_segment", "turn_id": self.turn.turn_id, "seq": seq,
+                                  "text": clause, "start_ms": round(self.total_ms), "streaming": True},
+                                 self.turn.turn_id)
+                first = False
+            pcm = (np.clip(chunk, -1, 1) * 32767).astype(np.int16)
+            await self._emit(seq, pcm)
+            dur = len(pcm) / self.tts.sample_rate * 1000
+            segment.duration_ms += dur
+            self.total_ms += dur
         return seq
 
     def heard_text(self, played_ms: float) -> str:

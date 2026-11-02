@@ -266,8 +266,9 @@ class Session:
             self.outbox.json({"type": "speaker", "enabled": self.voice_out}, force=True)
         elif kind == "voice":
             if msg.get("mic"):
-                mic = msg["mic"]
-                logger.info(f"session {self.id} microphone: {mic}")
+                mic = msg["mic"] if isinstance(msg["mic"], dict) else {}
+                # cut: a page (a customer link too) could send megabytes here, and all of it went to the log
+                logger.info(f"session {self.id} microphone: {str(mic)[:600]}")
                 if mic.get("contextRate") not in (None, 16000):
                     logger.warning(f"browser runs the microphone at {mic['contextRate']} Hz: resampled to 16 kHz in the page")
                 if mic.get("echoCancellation") is False:
@@ -278,7 +279,7 @@ class Session:
             if text:
                 await self.start_turn("text", text)
         elif kind == "interrupt":
-            await self.interrupt(msg.get("reason", "manual"))
+            await self.interrupt(str(msg.get("reason", "manual"))[:40])   # (logged and echoed back)
         elif kind == "playback":
             self._on_playback(msg)
         elif kind == "greet":
@@ -494,7 +495,8 @@ class Session:
             logger.exception(f"session {self.id}: speech recognition failed")
             self.outbox.json({"type": "error", "code": "stt_failed", "message": f"speech recognition failed: {exc}"},
                              force=True)
-            if self.sm.state is State.END_OF_TURN:
+            # only for the newest utterance: an older one failing must not cancel the one being transcribed now
+            if self.sm.state is State.END_OF_TURN and (utterance or self._utterance) == self._utterance:
                 self.sm.fire(Event.TRANSCRIPT_EMPTY)
 
     async def _transcribe(self, ev: VadEvent, utterance: int, previous: set | None = None) -> None:

@@ -5,7 +5,14 @@
 export function accessToken() {
   const fromUrl = new URLSearchParams(location.search).get('token')
   try {
-    if (fromUrl) sessionStorage.setItem('avatarToken', fromUrl)
+    if (fromUrl) {
+      sessionStorage.setItem('avatarToken', fromUrl)
+      // kept for the tab: out of the address bar, so it is not in the history, a screenshot or a link
+      // copied from the bar (the owner's token gives settings and leads)
+      const url = new URL(location.href)
+      url.searchParams.delete('token')
+      history.replaceState(history.state, '', url.pathname + url.search + url.hash)
+    }
     return fromUrl ?? sessionStorage.getItem('avatarToken') ?? ''
   } catch {
     return fromUrl ?? ''

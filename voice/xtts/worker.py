@@ -77,10 +77,6 @@ async def serve(tts: XTTS, host: str, port: int) -> None:
     async def handle(ws) -> None:
         async for msg in ws:
             req = json.loads(msg)
-            if req["type"] == "voice":
-                await asyncio.to_thread(tts.set_voice, Path(req["wav"]))
-                await ws.send(json.dumps({"type": "voice_ok"}))
-                continue
             if req["type"] != "synth":
                 continue
             async with lock:
@@ -107,13 +103,21 @@ async def serve(tts: XTTS, host: str, port: int) -> None:
                     first = first or (time.perf_counter() - t0) * 1000
                     await ws.send(CHUNK.pack(req["id"], seq, 0) + pcm.tobytes())
                     seq += 1
-                await fut
+                error = None
+                try:
+                    await fut
+                except Exception as exc:          # CUDA out of memory, an over-long text: this clause fails,
+                    error = str(exc)[:200]        # the connection (and every later reply) stays usable
+                    logger.exception("XTTS synthesis failed")
                 await ws.send(CHUNK.pack(req["id"], seq, 1))
-                await ws.send(json.dumps({"type": "done", "id": req["id"], "first_chunk_ms": round(first or 0, 1),
+                await ws.send(json.dumps({"type": "done", "id": req["id"], "error": error,
+                                          "first_chunk_ms": round(first or 0, 1),
                                           "total_ms": round((time.perf_counter() - t0) * 1000, 1),
                                           "audio_ms": round(samples / 24)}))
 
-    async with websockets.serve(handle, host, port, max_size=None):
+    # origins=[None]: only clients without an Origin header (the backend) - a web page open in the
+    # owner's browser could otherwise reach ws://127.0.0.1 and use the GPU (as in avatar/musetalk/worker.py)
+    async with websockets.serve(handle, host, port, max_size=None, origins=[None]):
         logger.info(f"XTTS worker on ws://{host}:{port}")
         await asyncio.Future()
 

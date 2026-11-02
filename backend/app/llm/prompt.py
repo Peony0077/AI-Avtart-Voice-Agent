@@ -105,6 +105,18 @@ def strip_control_tokens(text: str) -> str:
     return text
 
 
+def fit_transcript(text: str, max_chars: int | None) -> str:
+    """``text`` cut to ``max_chars``: its start and its end, the middle left out. For the background
+    lead/memory requests, which sent the whole session: a long sales chat overflowed the context, the
+    request failed, and the lead - names and contacts usually come near the end - was lost."""
+    if max_chars is None or len(text) <= max_chars:
+        return text
+    marker = "\n[... the middle of the conversation is left out ...]\n"
+    room = max(0, max_chars - len(marker))
+    head = room // 3
+    return text[:head] + marker + text[len(text) - (room - head):]
+
+
 def estimate_tokens(text: str) -> int:
     return int(len(text) / CHARS_PER_TOKEN) + MESSAGE_OVERHEAD_TOKENS
 

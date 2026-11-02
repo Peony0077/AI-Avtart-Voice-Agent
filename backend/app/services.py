@@ -134,7 +134,8 @@ class Services:
 
         async def run() -> None:
             try:
-                text = await self.llm.complete(memory_request(store.load(), transcript), max_tokens=160)
+                text = await self.llm.complete(memory_request(store.load(), transcript, self._transcript_room(160)),
+                                               max_tokens=160)
                 if not text.strip():
                     return
                 if store.save(text, generation):
@@ -146,12 +147,20 @@ class Services:
 
         self._queue_llm_job("memory update", run)
 
+    def _transcript_room(self, reply_tokens: int) -> int | None:
+        """Characters a background job's transcript may use: the context minus the reply and ~500 tokens
+        of instructions/memory, at 3 characters a token (below prompt.CHARS_PER_TOKEN: digits, emails and
+        names tokenize worse than plain English)."""
+        settings = getattr(self, "settings", None)      # (None: a stripped-down Services in the tests)
+        return None if settings is None else max(2000, (settings.llm.context - reply_tokens - 500) * 3)
+
     def capture_lead(self, transcript: str, session_id: str, visitor_id: str | None = None) -> None:
         """After a conversation: the lead in it, if any (leads.py), saved for the owner (background).
         The log says only whether there was one: names and contact details stay out of the logs."""
         async def run() -> None:
             try:
-                text = await self.llm.complete(lead_request(transcript, self.persona.company), max_tokens=320)
+                text = await self.llm.complete(lead_request(transcript, self.persona.company,
+                                                            self._transcript_room(320)), max_tokens=320)
                 lead = parse_lead(text)
                 if is_lead(lead):
                     self.lead_store.save(lead, session_id, visitor_id)
@@ -255,6 +264,9 @@ class Services:
                 self.load_report["avatar_s"] = round(time.perf_counter() - t0, 2)
             except Exception as exc:  # noqa: BLE001 - voice still works without the avatar
                 logger.error(f"avatar worker unavailable: {exc!r}")
+                # in /health and the page too: only the log said why there was no avatar (e.g. the
+                # profile's avatar_id not built yet, logs/avatar-worker.log)
+                self.warnings.append(f"avatar unavailable ({type(exc).__name__}); see logs/avatar-worker.log")
         self.load_report["vram_used_mib_after_load"] = gpu_snapshot().get("vram_used_mib", -1)
         logger.info(f"services ready: {self.load_report}")
 

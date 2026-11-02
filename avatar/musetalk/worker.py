@@ -39,7 +39,7 @@ from catchup import audible_ms, batch_frames, first_on_time, stride_for
 from common import AVATARS
 from engine import SR_MIN_FACE, Loop, LoopDelta, MuseTalkEngine
 from gestures import choose_gesture, cycle_windows, earliest_start, next_window
-from h264 import H264Stream, ffmpeg_exe
+from h264 import H264Stream, ffmpeg_exe, pick_encoder
 from motion import EXPRESSION_TO_LOOP
 from speech_body import breath_levels, frame_rms, lift_body, settle, to_lift
 
@@ -162,6 +162,9 @@ class AvatarWorker:
         # process takes ~70 ms to start; a reply must not wait for it).
         self.codec = "jpeg"
         self.h264_kbps, self.h264_idle_kbps, self.h264_encoder = h264_kbps, h264_idle_kbps, h264_encoder
+        # the NVENC probe (an ffmpeg run, 0.3-1 s) now, at start-up: done on the first "codec" message it
+        # blocked the event loop - no idle frames, no audio read - while a page was connecting
+        pick_encoder(h264_encoder)
         self._idle_stream: H264Stream | None = None
         self._idle_restarted_at = 0.0
         self._spare: H264Stream | None = None
@@ -328,6 +331,7 @@ class AvatarWorker:
             start = self.idx + max(-6, self.lead_frames + self.start_hold_frames - IDLE_LAG_FRAMES
                                    + round(self.start_bias))
             if self.turn is not None:
+                self.turn.cancelled = True         # its queued clauses are not rendered before the new reply's
                 self._end_stream(self.turn)        # a newer reply replaces it
             self.turn = Turn(turn_id, base_idx=start, loop=self.speech_loop, stream=self._take_stream())
             logger.info(f"turn {turn_id}: speaking with loop '{self.speech_loop}' from frame {self.turn.base_idx}")

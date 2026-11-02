@@ -8,18 +8,27 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.staticfiles import StaticFiles
-from loguru import logger
+from app.core.config import get_settings
 
-from app.api.ws import manager, token_matches
-from app.api.ws import router as ws_router
-from app.core.config import REPO_ROOT, get_settings
-from app.core.gpu import gpu_snapshot
-from app.core.logging import setup_logging
-from app.services import Services
+# Before anything imports huggingface_hub (app.core.logging imports kokoro, which does): it reads HF_HOME
+# and HF_HUB_OFFLINE once, at import. Set later (in Services), a plain `uvicorn app.main:app` start looked
+# for the models in ~/.cache/huggingface. (run.sh / run.ps1 set both before the backend starts.)
+os.environ.setdefault("HF_HOME", str(get_settings().model_home / "hf"))
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
+from fastapi import FastAPI, HTTPException, Request  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+from loguru import logger  # noqa: E402
+
+from app.api.ws import manager, token_matches  # noqa: E402
+from app.api.ws import router as ws_router  # noqa: E402
+from app.core.config import REPO_ROOT  # noqa: E402
+from app.core.gpu import gpu_snapshot  # noqa: E402
+from app.core.logging import setup_logging  # noqa: E402
+from app.services import Services  # noqa: E402
 
 
 @asynccontextmanager

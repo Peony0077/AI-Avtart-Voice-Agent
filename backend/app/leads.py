@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from app.core.files import write_text_atomic
-from app.llm.prompt import strip_control_tokens
+from app.llm.prompt import fit_transcript, strip_control_tokens
 
 FIELDS = ("name", "email", "phone", "company", "need", "timeline", "budget", "interest", "next_step", "notes")
 INTEREST = ("low", "medium", "high")
@@ -22,8 +22,10 @@ _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[a-z]{2,}$", re.I)
 _MAX_FIELD = 300
 
 
-def lead_request(transcript: str, company: str = "") -> list[dict]:
-    """LLM request: the conversation -> one JSON object with the lead's fields."""
+def lead_request(transcript: str, company: str = "", max_chars: int | None = None) -> list[dict]:
+    """LLM request: the conversation -> one JSON object with the lead's fields. ``max_chars``: the
+    transcript's room in the context (prompt.fit_transcript)."""
+    transcript = fit_transcript(transcript, max_chars)
     business = f" for {strip_control_tokens(company)}" if company else ""
     return [
         {"role": "system", "content": (

@@ -14,6 +14,7 @@ export function useVoice(conv) {
   const turnRef = useRef(0)           // newest turn announced by the server
   const rejectUpToRef = useRef(0)     // turns <= this id are stale (interrupted)
   const mutedRef = useRef(false)
+  const speakerOnRef = useRef(false)  // the server was told to speak replies (Speaker on)
   const [active, setActive] = useState(false)      // microphone on
   const [speaker, setSpeaker] = useState(false)    // assistant replies are spoken
   const [muted, setMuted] = useState(false)
@@ -41,7 +42,7 @@ export function useVoice(conv) {
     const releaseHold = () => {
       const h = holdRef.current
       dropHold()
-      if (!h || h.turnId <= rejectUpToRef.current || h.turnId !== turnRef.current) return
+      if (!h || mutedRef.current || h.turnId <= rejectUpToRef.current || h.turnId !== turnRef.current) return
       for (const samples of h.packets) engineRef.current?.pushFloat(h.turnId, samples)
       if (h.end) engineRef.current?.endTurn(h.turnId)
     }
@@ -134,6 +135,25 @@ export function useVoice(conv) {
     return () => clearInterval(id)
   }, [active])
 
+  // A phone lock, a call or another app suspends the playback AudioContext (iOS: "interrupted"); nothing
+  // resumed it, so every later reply was silent - and the avatar never lip-synced - until a reload.
+  useEffect(() => {
+    const wake = () => {
+      const ctx = engineRef.current?.playCtx
+      if (document.visibilityState === 'visible' && ctx && ctx.state !== 'running' && ctx.state !== 'closed') {
+        ctx.resume().catch(() => {})
+      }
+    }
+    document.addEventListener('visibilitychange', wake)
+    window.addEventListener('pageshow', wake)
+    window.addEventListener('pointerdown', wake)     // a tap is a user gesture: always enough to resume
+    return () => {
+      document.removeEventListener('visibilitychange', wake)
+      window.removeEventListener('pageshow', wake)
+      window.removeEventListener('pointerdown', wake)
+    }
+  }, [])
+
   // the page goes away: microphone and AudioContexts off (they kept the microphone in use)
   useEffect(() => () => {
     clearTimeout(silentTimerRef.current)
@@ -167,8 +187,14 @@ export function useVoice(conv) {
   // Typed messages: speak the reply too (avatar lip sync needs the audio). Called from the Send handler.
   const ensureSpeaker = useCallback(() => {
     if (mutedRef.current || conv.session?.voice_available === false) return
-    if (engineRef.current?.playCtx) return
     const e = engine()
+    if (speakerOnRef.current && e.playCtx) {
+      if (e.playCtx.state !== 'running') e.playCtx.resume().catch(() => {})   // inside the Send click
+      return
+    }
+    // (not "playCtx exists": a microphone that was refused left playback made but the speaker off, and
+    // every typed reply came back silent)
+    speakerOnRef.current = true
     send({ type: 'speaker', enabled: true })     // before the text message: the server speaks this turn
     setSpeaker(true)
     e.startPlayback().catch((err) => { setError(err.message ?? String(err)); report('speaker_start', err) })
@@ -178,7 +204,11 @@ export function useVoice(conv) {
     const next = !mutedRef.current
     mutedRef.current = next
     setMuted(next)
-    if (next) engineRef.current?.flush()
+    if (next) {
+      engineRef.current?.flush()
+      clearTimeout(holdRef.current?.timer)     // a reply's held first audio is not played either
+      holdRef.current = null
+    }
     send({ type: 'speaker', enabled: !next })
   }, [conv])
 
@@ -203,6 +233,7 @@ export function useVoice(conv) {
       }
       send({ type: 'voice', enabled: true, mic: e.micInfo })
       if (!mutedRef.current) send({ type: 'speaker', enabled: true })
+      speakerOnRef.current = true
       send({ type: 'greet' })     // she says hello (once a session, only before anything else was said)
       setSpeaker(true)
       setActive(true)

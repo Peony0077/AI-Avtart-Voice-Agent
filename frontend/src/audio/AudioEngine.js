@@ -38,7 +38,11 @@ export class AudioEngine extends EventTarget {
   // A start that failed (the worklet did not load) is undone completely, so the next call tries again:
   // kept half-made, every later reply was silent until the page was reloaded.
   async startPlayback() {
-    if (this.playCtx) return this._playbackReady
+    if (this.playCtx) {
+      // suspended meanwhile (phone locked, a call): this runs inside a click, so it may run again
+      if (this.playCtx.state !== 'running' && this.playCtx.state !== 'closed') this.playCtx.resume().catch(() => {})
+      return this._playbackReady
+    }
     const ctx = new AudioContext({ sampleRate: TTS_SAMPLE_RATE, latencyHint: 'interactive' })
     this.playCtx = ctx
     const ready = (async () => {

@@ -42,6 +42,8 @@ for attempt in 1 2 3; do
   : > "$LOG"
   setsid "$CF" tunnel --no-autoupdate --url "http://127.0.0.1:$PORT" >"$LOG" 2>&1 < /dev/null &
   CF_PID=$!
+  # Ctrl+C while waiting for the link: no cloudflared is left behind (replaced by the final trap below)
+  trap 'kill "$CF_PID" 2>/dev/null' EXIT
   for _ in $(seq 1 60); do
     sleep 1
     kill -0 "$CF_PID" 2>/dev/null || break
@@ -56,7 +58,9 @@ for attempt in 1 2 3; do
 done
 [ -n "$URL" ] || { echo "tunnel did not start after 3 attempts; see $LOG" >&2; exit 1; }
 echo "$CF_PID" > logs/tunnel.pid
+trap - EXIT
 umask 077
+rm -f logs/tunnel_url.txt logs/customer_url.txt     # (an old file keeps its old permissions when rewritten)
 echo "$URL/?token=$AVATAR_ACCESS_TOKEN" > logs/tunnel_url.txt
 echo "$URL/?token=$AVATAR_CUSTOMER_TOKEN" > logs/customer_url.txt
 echo

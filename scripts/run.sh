@@ -28,7 +28,12 @@ done
 mkdir -p logs
 PIDFILE=logs/backend.pid
 
+# a pid file may be stale (a crash, wsl --shutdown): pids are reused, so only a process that is still ours
+# (its command line contains $2) is signalled - not whatever user program now has that number
+ours() { [ -n "$1" ] && tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -qF -- "$2"; }
+
 stop_all() {
+  if [ -f "$PIDFILE" ] && ! ours "$(cat "$PIDFILE")" "app.main:app"; then rm -f "$PIDFILE"; fi
   if [ -f "$PIDFILE" ]; then
     pid="$(cat "$PIDFILE")"
     # the backend runs in its own process group (setsid): stop the whole group
@@ -37,9 +42,13 @@ stop_all() {
     kill -KILL -- "-$pid" 2>/dev/null || true
     rm -f "$PIDFILE"
   fi
-  if [ "$KEEP_TUNNEL" = 0 ] && [ -f logs/tunnel.pid ]; then
-    kill "$(cat logs/tunnel.pid)" 2>/dev/null || true
+  if [ "$KEEP_TUNNEL" = 0 ]; then
+    if [ -f logs/tunnel.pid ] && ours "$(cat logs/tunnel.pid)" "$ROOT/tools/cloudflared/"; then
+      kill "$(cat logs/tunnel.pid)" 2>/dev/null || true
+    fi
     rm -f logs/tunnel.pid
+    # a quick tunnel whose link never came (Ctrl+C while tunnel.sh waited) has no pid file
+    pkill -f "$ROOT/tools/cloudflared/cloudflared-" 2>/dev/null || true
   fi
   # helpers of ours left behind by a killed backend (matched by this repo's paths only)
   pkill -f "$ROOT/tools/llama.cpp/" 2>/dev/null || true
@@ -81,12 +90,17 @@ if [ "$FOREGROUND" = 1 ]; then exec "${UV[@]}"; fi
 setsid "${UV[@]}" >logs/uvicorn.log 2>&1 < /dev/null &
 echo $! > "$PIDFILE"
 echo "backend pid $(cat "$PIDFILE") (profile ${AVATAR_PROFILE:-from .env/default}); waiting for health..."
-for _ in $(seq 1 300); do
+# up to 10 min: the LLM (up to 180 s), the voice and the avatar worker (up to 240 s) start one after another
+for _ in $(seq 1 600); do
   sleep 1
   if ! kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then tail -40 logs/uvicorn.log; echo "backend exited during startup" >&2; exit 1; fi
-  if HEALTH="$(curl -sf "http://127.0.0.1:$PORT/health")"; then break; fi
+  if HEALTH="$(curl -sf -m 3 "http://127.0.0.1:$PORT/health")"; then break; fi
 done
-[ -n "${HEALTH:-}" ] || { echo "backend did not become healthy in 300 s (see logs/uvicorn.log)" >&2; exit 1; }
+if [ -z "${HEALTH:-}" ]; then
+  echo "backend did not become healthy in 600 s (see logs/uvicorn.log); stopping it" >&2
+  stop_all
+  exit 1
+fi
 echo "$HEALTH"
 if [ "$KEEP_TUNNEL" = 1 ]; then
   echo "Owner link (unchanged):     $(cat logs/tunnel_url.txt)"

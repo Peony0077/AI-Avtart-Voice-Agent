@@ -23,7 +23,7 @@ from pathlib import Path
 from loguru import logger
 
 from app.core.files import write_text_atomic
-from app.llm.prompt import strip_control_tokens
+from app.llm.prompt import fit_transcript, strip_control_tokens
 
 MAX_NAME = 40
 MAX_PERSONALITY = 600
@@ -155,7 +155,7 @@ class VisitorMemories:
         return store
 
 
-def memory_request(earlier: str | None, user_said: str) -> list[dict]:
+def memory_request(earlier: str | None, user_said: str, max_chars: int | None = None) -> list[dict]:
     """LLM request: the earlier memory merged with what the user said in the latest conversation.
 
     Only the user's own words go in: given the whole conversation the 4B model also "remembered" what
@@ -171,6 +171,7 @@ def memory_request(earlier: str | None, user_said: str) -> list[dict]:
             f"At most {MAX_MEMORY_WORDS - 10} words, plain sentences, no lists. If there is nothing new worth "
             "keeping, repeat the earlier memory.")},
         {"role": "user", "content": f"Earlier memory: {strip_control_tokens(earlier or 'none')}\n\nWhat the user "
-                                    f"said in the latest conversation:\n{strip_control_tokens(user_said)}\n\n"
+                                    f"said in the latest conversation:\n"
+                                    f"{strip_control_tokens(fit_transcript(user_said, max_chars))}\n\n"
                                     "Updated memory:"},
     ]

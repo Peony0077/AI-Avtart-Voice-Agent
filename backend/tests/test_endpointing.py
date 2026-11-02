@@ -22,3 +22,13 @@ def test_unfinished(text):
 ])
 def test_finished(text):
     assert not looks_unfinished(text)
+
+
+@pytest.mark.parametrize("text", ["Where are you from?", "What are you looking for?", "What is this about?"])
+def test_a_question_ending_in_a_preposition_is_finished(text):
+    assert not looks_unfinished(text)
+
+
+@pytest.mark.parametrize("text", ["I'm looking for", "Tell me about", "It's a question of"])
+def test_a_preposition_without_a_question_mark_still_continues(text):
+    assert looks_unfinished(text)

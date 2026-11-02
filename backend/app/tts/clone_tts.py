@@ -24,6 +24,9 @@ from app.tts.base import TTSResult
 CHUNK = struct.Struct("<IIB")
 
 
+RECV_TIMEOUT_S = 30.0   # longest wait for the next chunk of a clause (first chunk ~0.5 s)
+
+
 class CloneTTS:
     name = "clone"
     sample_rate = 24000
@@ -63,7 +66,8 @@ class CloneTTS:
         req = next(self._ids)
         self.ws.send(json.dumps({"type": "synth", "id": req, "text": text}))
         while True:
-            msg = self.ws.recv()
+            # a hung worker raises here instead of holding the GPU lock (every STT/TTS job) forever
+            msg = self.ws.recv(timeout=RECV_TIMEOUT_S)
             if isinstance(msg, bytes):
                 rid, _seq, last = CHUNK.unpack_from(msg)
                 if rid != req:
@@ -75,6 +79,8 @@ class CloneTTS:
                 data = json.loads(msg)
                 if data.get("type") == "done" and data.get("id") == req:
                     self.last_stats = data
+                    if data.get("error"):
+                        raise RuntimeError(f"XTTS: {data['error']}")
                     return
 
     def synthesize(self, text: str) -> TTSResult:
