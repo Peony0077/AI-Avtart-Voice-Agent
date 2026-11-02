@@ -97,6 +97,11 @@ def _street(m: re.Match) -> str:
 
 
 _SPEECH_RULES: list[tuple[re.Pattern, object]] = [
+    # a US phone number digit by digit, as people say one: "(832) 295-0852" -> "8 3 2, 2 9 5, 0 8 5 2" (Kokoro
+    # read it "eight hundred thirty-two, two hundred ninety-five eight fifty-two"). Before the range rule.
+    (re.compile(r"(?<![\d$])(?:\+?1[ .-]?)?\((\d{3})\)\s?(\d{3})[ .-](\d{4})(?!\d)"
+                r"|(?<![\d$.,])(?:\+?1[ .-])?(\d{3})[.-](\d{3})[.-](\d{4})(?![\d.,]\d)"),
+     lambda m: ", ".join(" ".join(g) for g in m.groups() if g)),
     (re.compile(r"(\d)\s?°\s?C\b"), r"\1 degrees Celsius"),
     (re.compile(r"(\d)\s?°\s?F\b"), r"\1 degrees Fahrenheit"),
     (re.compile(r"(\d)\s?°"), r"\1 degrees"),

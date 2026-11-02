@@ -49,6 +49,12 @@ stop_all() {
     rm -f logs/tunnel.pid
     # a quick tunnel whose link never came (Ctrl+C while tunnel.sh waited) has no pid file
     pkill -f "$ROOT/tools/cloudflared/cloudflared-" 2>/dev/null || true
+    # agent.h-townparty.com's tunnel to HPN's droplet (scripts/agent.sh): the loop, then its ssh
+    if [ -f logs/agent_tunnel.pid ] && ours "$(cat logs/agent_tunnel.pid)" "agent_tunnel_loop.sh"; then
+      kill "$(cat logs/agent_tunnel.pid)" 2>/dev/null || true
+    fi
+    rm -f logs/agent_tunnel.pid
+    pkill -f "hpn_agent_tunnel .*-R 172.31.0.1:18080:" 2>/dev/null || true
   fi
   # helpers of ours left behind by a killed backend (matched by this repo's paths only)
   pkill -f "$ROOT/tools/llama.cpp/" 2>/dev/null || true

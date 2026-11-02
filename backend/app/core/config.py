@@ -109,6 +109,19 @@ class AvatarCfg(BaseModel):
                                 # keep-warm, and it slowed the LLM's first clause (~65 ms p50)
 
 
+class HPNCfg(BaseModel):
+    """Houston Party Network mode (app/hpn): the avatar is HPN's Event helper for its customers. Every
+    answer is the website helper's own (knowledge/hpn, refreshed by scripts/hpn_refresh.py); the LLM writes
+    no answers and keeps no memory or leads, it only re-matches a question the helper was unsure of."""
+    enabled: bool = False
+    knowledge_dir: str = "knowledge/hpn"
+    llm_match: bool = True            # an unclear question: the local LLM picks which of HPN's questions it was
+    llm_match_timeout_s: float = 4.0
+    # a customer's contact details, confirmed, sent to HPN as an enquiry (app/hpn/enquiry.py): "live" posts to
+    # h-townparty.com (a Lead, Craig emailed), "test" does everything but send, "off" takes no details
+    enquiries: str = "test"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AVATAR_", env_nested_delimiter="__",
                                       env_file=REPO_ROOT / ".env", extra="ignore")
@@ -123,7 +136,11 @@ class Settings(BaseSettings):
     tts: TTSCfg = TTSCfg()
     rag: RAGCfg = RAGCfg()
     avatar: AvatarCfg = AvatarCfg()
+    hpn: HPNCfg = HPNCfg()
     voice_enabled: bool = True
+    # conversations at once (api/ws.py SessionManager; one avatar stream each, avatar/musetalk/worker.py
+    # --streams). More customers wait in line. The GPU's lip sync is shared: overlapping replies take turns.
+    conversations: int = 1
     access_token: str | None = None   # required as ?token=... on /ws and /api when set (remote access): the owner's link
     customer_token: str | None = None   # the customer link: talks to her, no settings or leads (api/ws.py)
     vram_min_free_gib: float = 0.8

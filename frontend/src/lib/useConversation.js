@@ -101,6 +101,11 @@ export function useConversation() {
           }
           upsertAssistant(msg.turn_id, (m) => ({ ...m, text: msg.interrupted ? msg.text : m.text, interrupted: msg.interrupted, done: true }))
           break
+        case 'helper_reply':
+          // HPN mode: the formatted answer (paragraphs, cards, links, chips) arrives before the spoken text;
+          // the page shows it, while llm_delta still fills `text` (the spoken version: transcript, tests)
+          upsertAssistant(msg.turn_id, (m) => ({ ...m, reply: msg.reply, matched: msg.matched ?? null }))
+          break
         case 'citations':
           upsertAssistant(msg.turn_id, (m) => ({ ...m, citations: msg.sources }))
           break

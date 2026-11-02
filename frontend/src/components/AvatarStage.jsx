@@ -62,6 +62,7 @@ export default function AvatarStage({ conv, voice }) {
   const statsRef = useRef({ idle: 0, speech: 0, drawnSpeech: 0, late: 0, avOffsets: [], arrivals: [], clock: null, startGaps: [],
     arrivedLate: 0, arrivedTimed: 0, recentArrivals: [], decodeMs: [], tails: 0, idleHolds: 0 })
   const [size, setSize] = useState(null)
+  const [hasFrame, setHasFrame] = useState(false)
 
   // only refs inside: the draw loop's copy from the first render stays valid
   const setStartHold = (ms) => {
@@ -345,6 +346,10 @@ export default function AvatarStage({ conv, voice }) {
         ctx.imageSmoothingEnabled = true
         ctx.imageSmoothingQuality = 'high'          // (a resize resets the context: set every frame)
         ctx.drawImage(frame, 0, 0, w, h)
+        if (!st.firstFrameDrawn) {
+          st.firstFrameDrawn = true
+          setHasFrame(true)
+        }
         if (next && alpha > 0.02) {
           ctx.globalAlpha = alpha
           ctx.drawImage(next, 0, 0, w, h)
@@ -379,14 +384,18 @@ export default function AvatarStage({ conv, voice }) {
   }, [voice.engineRef])
 
   const available = conv.session?.avatar_available
-  const canTalk = conv.status === 'open' && conv.session?.voice_available !== false && !conv.waiting
   return (
-    <section className="stage" aria-label="Avatar">
+    <section className={`stage${hasFrame ? ' stage--playing' : ''}`} aria-label="AI Agent">
       {available ? (
-        <canvas ref={canvasRef} data-testid="avatar-canvas" width={size?.[0] ?? 512} height={size?.[1] ?? 512} />
-      ) : conv.session ? (
-        <div className="stage-placeholder">Avatar disabled (start with profile “avatar”)</div>
+        <canvas ref={canvasRef} data-testid="avatar-canvas" aria-label={`${conv.session?.persona ?? 'Your event helper'}, AI Agent video`} width={size?.[0] ?? 512} height={size?.[1] ?? 512} />
       ) : null}
+      {(!hasFrame || !available) && !conv.waiting && conv.status !== 'ended (inactive)' && (
+        <div className="stage-placeholder" role="status">
+          <span className="stage-placeholder__monogram">{conv.session?.persona?.slice(0, 1) ?? 'H'}</span>
+          <strong>{conv.session && !available ? 'Let’s keep the conversation going.' : 'A warm welcome is on its way.'}</strong>
+          <span>{conv.session && !available ? 'The avatar is unavailable. You can still type your questions below.' : 'Connecting you to your HPN event helper…'}</span>
+        </div>
+      )}
       {conv.waiting && (
         <div className="stage-waiting" role="status" data-testid="waiting">
           <strong>{conv.session?.persona ?? 'She'} is talking with another customer right now.</strong>
@@ -397,29 +406,6 @@ export default function AvatarStage({ conv, voice }) {
         <div className="stage-waiting" role="status" data-testid="ended-inactive">
           <strong>The conversation ended after a while without activity.</strong>
           <button type="button" onClick={() => location.reload()}>Talk again</button>
-        </div>
-      )}
-      {canTalk && (
-        <div className="stage-voice">
-          {voice.micHint && (
-            <p className="stage-hint" data-testid="mic-hint">
-              Your Bluetooth headset's microphone makes voices sound like a phone call.{' '}
-              <button type="button" onClick={() => voice.useMic(voice.micHint.deviceId)}>Use {voice.micHint.label}</button>{' '}
-              <button type="button" className="secondary" onClick={voice.dismissMicHint}>Keep</button>
-            </p>
-          )}
-          {voice.error && <p className="stage-error" role="alert" data-testid="stage-error">{voice.error}</p>}
-          {voice.active ? (
-            <span className={`listening ${voice.speechDetected ? 'hot' : ''}`} data-testid="listening">
-              <span className="dot" />
-              {voice.speechDetected ? 'Hearing you…' : 'Listening – just speak'}
-            </span>
-          ) : (
-            // the microphone only starts on a tap (browsers require it): make that impossible to miss
-            <button type="button" className="talk" data-testid="talk" onClick={voice.start} disabled={voice.starting}>
-              {voice.starting ? 'Allow the microphone…' : voice.error ? 'Try again' : `🎤 Tap to talk to ${conv.session?.persona ?? 'her'}`}
-            </button>
-          )}
         </div>
       )}
     </section>

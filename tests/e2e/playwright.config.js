@@ -40,6 +40,18 @@ export default defineConfig({
       },
     },
     {
+      // Houston Party Network mode: run against a backend started with --profile hpn
+      name: 'hpn',
+      testMatch: /(phase7_hpn|load_hpn)\.spec\.js/,
+      use: {
+        launchOptions: {
+          args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',
+            `--use-file-for-fake-audio-capture=${fixture(process.env.FAKE_MIC ?? 'mic_hpn_wedding.wav')}%noloop`,
+            '--autoplay-policy=no-user-gesture-required'],
+        },
+      },
+    },
+    {
       name: 'voice',
       testMatch: /(phase[2-5]_.*|phase6_(?!mic_start).*|soak)\.spec\.js/,
       use: {

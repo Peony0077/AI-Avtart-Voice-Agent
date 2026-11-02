@@ -1,0 +1,41 @@
+# Houston Party Network: the avatar as HPN's Event helper for its customers (h-townparty.com).
+# Every answer is the website's Event helper's own (knowledge/hpn: refresh it with scripts/hpn_refresh.py);
+# the LLM writes no answers, keeps no memory and takes no leads; it only re-matches an unclear question.
+#   scripts/tunnel.sh --profile hpn --detach      (owner + customer links)
+# Otherwise the same as avatar.yaml: voice pipeline + realistic neural avatar (LivePortrait loops + MuseTalk lip sync).
+# Build the avatar once first (1024x1024, 25 fps, Real-ESRGAN; ~1.5-2 h on an RTX 4070 Ti SUPER incl. head gestures):
+#   avatar/musetalk/.venv/bin/python avatar/musetalk/clean_hair.py data/avatars/dev_girl/photo.png      (-> photo_clean.png)
+#   avatar/musetalk/.venv/bin/python avatar/musetalk/build_avatar.py --photo data/avatars/dev_girl/photo_clean.png --id dev_girl_hd_clean
+#   (Windows: avatar\musetalk\.venv\Scripts\python ...; on the RTX 3060 use --size 512 --fps 20 and decoder: taesd)
+#   or from a video of a real person (docs/RECORDING_A_VIDEO_AVATAR.md):  ...build_avatar.py --video data/avatars/<name>/video.mp4 --id <name>
+# Conversations at once (api/ws.py; one avatar stream each, avatar/musetalk/worker.py --streams). The GPU's lip
+# sync is shared: replies that overlap take turns batch by batch, and each one's catch-up keeps it in step with
+# its voice (fewer frames for a moment). More customers wait in line, as before.
+conversations: 3
+llm:
+  context: 4096
+  max_tokens: 320
+stt:
+  model: openai/whisper-large-v3-turbo
+tts:
+  engine: kokoro
+  voice: af_heart
+  speed: 0.95       # a touch slower: calmer and clearer for customers (owner: "warm, friendly voice")
+avatar:
+  enabled: true
+  avatar_id: dev_girl_hd         # dev_girl_hd_clean once built: the photo without its flyaway hair (clean_hair.py);
+  # 1024x1024 at 25 fps, photo and faces super-resolved (owner, 2026-10-10: "the quality is
+  #                          bad, the resolution is not good"); dev_girl_v3: the 512x512, 20 fps build
+  decoder: vae          # the SD VAE: more faithful than TAESD; with the mouth super-resolved ~24 ms/frame on the
+  #                       RTX 4070 Ti SUPER at 1024x1024 (budget at 25 fps: 40 ms)
+  upscaler: x2plus      # Real-ESRGAN for the lower face (avatar/musetalk/upscale.py); '' = bicubic
+  h264_encoder: auto    # NVENC when available (49.8 dB vs 45.3 for the old x264 ultrafast at 2.5 Mbit/s)
+  jpeg_quality: 90
+  gate_frames: 2        # lip-synced frames before the first audio
+hpn:
+  enabled: true
+  knowledge_dir: knowledge/hpn
+  llm_match: true
+  enquiries: live         # confirmed contact details go to HPN's inbox as leads (Craig is emailed); "test": sent nowhere
+rag:
+  enabled: false          # HPN's answers come from its own knowledge, not from documents

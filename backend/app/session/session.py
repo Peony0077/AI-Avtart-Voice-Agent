@@ -34,6 +34,11 @@ from app.behavior.meta import MetaStreamParser
 from app.behavior.speech_text import SpeechTextStream
 from app.core.gpu import locked_thread
 from app.core.logging import write_metrics
+from app.hpn import enquiry as hpn_enquiry
+from app.hpn import match as hpn_match
+from app.hpn.engine import Engine as HelperEngine
+from app.hpn.engine import mask_private
+from app.hpn.voice import spoken as helper_spoken
 from app.leads import worth_reading
 from app.llm.client import LLMStats
 from app.llm.prompt import ConversationMemory, lead_rules
@@ -140,9 +145,19 @@ class Session:
         self.started = False              # waits in line until SessionManager starts it
         self.ready = False                # started, and what the page sent while it waited applied (api/ws.py)
         self.pending: dict[str, dict] = {}   # the page's hello, visible, voice, ... while it waited (by type)
+        # this conversation's avatar stream (one per conversation slot, set by api/ws.py SessionManager when it
+        # starts); the services' only one by default
+        self.avatar_link = getattr(services, "avatar", None)
         self.sm = StateMachine()
         self.turns = TurnRegistry()
         persona = services.persona
+        # Houston Party Network mode: every answer is the Event helper's (app/hpn); no memory, no leads
+        self.hpn = HelperEngine(services.hpn_kb, persona.name) if services.hpn_kb is not None else None
+        self._hpn_last: str | None = None          # the previous answer's intent ("and tomorrow?")
+        # a customer's details, confirmed, sent to HPN as an enquiry (app/hpn/enquiry.py)
+        self.enquiry = (hpn_enquiry.EnquiryFlow(self.hpn.business(), mode=services.settings.hpn.enquiries)
+                        if self.hpn is not None and services.settings.hpn.enquiries != "off" else None)
+        self._hpn_last_title: str | None = None
         # each customer has their own memory; the owner's is data/memory.json
         self.memory_store = (services.memory_store if role == "owner"
                              else services.visitor_memories.store(visitor_id or ""))
@@ -184,7 +199,14 @@ class Session:
         self.sm.subscribe(self._on_state_change)
         self._closed = False
 
+    @property
+    def avatar_ready(self) -> bool:
+        link = getattr(self, "avatar_link", None)
+        return link is not None and link.connected
+
     def _long_term(self) -> str | None:
+        if getattr(self, "hpn", None) is not None:
+            return None                   # HPN mode keeps no memory of customers
         return self.memory_store.load() if self.svc.persona.memory and self.memory_store is not None else None
 
     def _apply_business(self) -> None:
@@ -200,10 +222,20 @@ class Session:
         self.outbox.start()
         self.outbox.json({"type": "session", "session_id": self.id, "persona": self.memory.persona,
                           "profile": self.cfg.profile, "voice_available": self.svc.voice_ready,
-                          "avatar_available": self.svc.avatar_ready,
-                          "avatar": self.svc.avatar.hello if self.svc.avatar_ready else None, "role": self.role,
-                          "server_time": time.time()}, force=True)
+                          "avatar_available": self.avatar_ready,
+                          "avatar": self.avatar_link.hello if self.avatar_ready else None, "role": self.role,
+                          "hpn": self._hpn_session(), "server_time": time.time()}, force=True)
         self.sm.fire(Event.START)
+
+    def _hpn_session(self) -> dict | None:
+        if self.hpn is None:
+            return None
+        from app.hpn.engine import STARTER_CHIPS
+        from app.hpn.knowledge import SITE
+
+        b = self.hpn.business()
+        return {"site": SITE, "phone_display": b["phone_display"], "phone_e164": b["phone_e164"],
+                "email": b["email"], "chips": STARTER_CHIPS}
 
     async def close(self, reason: str = "closed") -> None:
         if self._closed:
@@ -211,16 +243,17 @@ class Session:
         self._closed = True
         if self.turns.current:
             self.turns.current.cancel()
-        self.svc.avatar_reset()
+        self.svc.avatar_reset(link=self.avatar_link)
         self._drop_prefetch()
         for task in (*self._stt_tasks, self._spec[1] if self._spec else None, self._summary_task, self._warm_task):
             if task and not task.done():
                 task.cancel()
         self.sm.try_fire(Event.STOP)
         await self.outbox.stop()
-        if self.svc.persona.memory and self.memory_store is not None and (said := self.memory.user_said()):
+        if (self.hpn is None and self.svc.persona.memory and self.memory_store is not None
+                and (said := self.memory.user_said())):
             self.svc.remember(said, self._memory_gen, self.memory_store)   # what she remembers next time
-        if self.svc.persona.lead_gen and worth_reading(self.memory.said):
+        if self.hpn is None and self.svc.persona.lead_gen and worth_reading(self.memory.said):
             self.svc.capture_lead(self.memory.lead_transcript(), self.id, self.visitor_id)   # leads.py
         if (mic := self.mic_stats.summary()) is not None:
             logger.info(f"session {self.id} microphone audio: {mic}")
@@ -239,12 +272,12 @@ class Session:
             self._update_voice_out()
             # H.264 when the browser decodes it (WebCodecs, secure pages): ~1 Mbit/s instead of 6.7 (h264.py)
             self.video_codec = "h264" if "h264" in (msg.get("video") or []) else "jpeg"
-            self.svc.avatar_codec(self.video_codec)      # remembered: sent again if the worker restarts
+            self.svc.avatar_codec(self.video_codec, link=self.avatar_link)      # remembered: sent again if the worker restarts
             self.audio_codec = "opus" if "opus" in (msg.get("audio") or []) else "pcm"
             if msg.get("ack"):                           # the page acknowledges what it received (outbox.py)
                 self.outbox.window = VIDEO_WINDOW
             self.video_scale = self._video_ceiling = 1.0  # a new connection starts at full quality
-            self._apply_video_rate(*video_kbps(self.svc.avatar.hello if self.svc.avatar_ready else None))
+            self._apply_video_rate(*video_kbps(self.avatar_link.hello if self.avatar_ready else None))
             logger.info(f"session {self.id}: video {self.video_codec}, voice {self.audio_codec}, "
                         f"window {'on' if self.outbox.window else 'off'}")
             try:      # the customer's time zone (minutes east of UTC), for questions about the time
@@ -313,12 +346,12 @@ class Session:
                 gap = float(msg.get("gap"))
             except (TypeError, ValueError):
                 gap = None
-            if gap is not None and abs(gap) <= 40 and self.svc.avatar_ready:
-                self.svc.avatar_start_gap(gap)
+            if gap is not None and abs(gap) <= 40 and self.avatar_ready:
+                self.svc.avatar_start_gap(gap, link=self.avatar_link)
         elif kind == "start_hold":
             # the page holds a reply's first audio this long (its jitter buffer, AvatarStage.jsx)
             try:
-                self.svc.avatar_start_hold(max(0, min(1000, int(msg.get("ms") or 0))))
+                self.svc.avatar_start_hold(max(0, min(1000, int(msg.get("ms") or 0))), link=self.avatar_link)
             except (TypeError, ValueError):
                 pass
         elif kind == "client_error":
@@ -389,6 +422,12 @@ class Session:
         if self._greeted or self.turns.current is not None or not self.voice_out:
             return
         self._greeted = True
+        if self.hpn is not None:
+            self.hpn.name = self.svc.persona.name
+            reply = self.hpn.start().as_dict()
+            await self.start_turn("greeting", GREETING_TEXT, script=helper_spoken(reply),
+                                  helper={"reply": reply, "matched": None})
+            return
         if self.memory.long_term:
             messages = [{"role": "system", "content": self.memory.build("")[0]["content"]},
                         {"role": "user", "content": "(The user has just come back and opened the conversation. "
@@ -437,7 +476,7 @@ class Session:
         self._drop_prefetch()
         stt = asyncio.create_task(self._stt(ev.audio), name="stt-spec")
         self._spec = (ev.speech_end_t, stt)
-        if self.cfg.llm.prefetch_on_pause:
+        if self.cfg.llm.prefetch_on_pause and self.hpn is None:     # HPN answers take a millisecond
             self._prefetch = AnswerPrefetch(ev.speech_end_t, stt, self._prefetch_text, self._retrieve_text,
                                             self.memory.build, self.svc.llm, pause_after=self._pause_after())
 
@@ -530,7 +569,7 @@ class Session:
                 while time.time() < deadline and not superseded():
                     await asyncio.sleep(0.03)
                 if superseded():                            # the user went on: this part starts the turn
-                    logger.info(f"utterance continues after a pause: {text!r}")
+                    logger.info(f"utterance continues after a pause: {self._loggable(text)!r}")
                     self._carry_text = text
                     return
             if text and self._looks_like_echo(text):
@@ -567,13 +606,18 @@ class Session:
         info = dict(self.svc.stt.last_info) if self.svc.stt else {}
         info.update(duration_ms=round(len(audio) / 16), rms_dbfs=round(float(20 * np.log10(max(rms, 1e-6))), 1),
                     peak=round(float(np.abs(audio).max()), 3) if len(audio) else 0.0)
-        logger.info(f"turn {turn_id} heard {text!r} {info}")
-        if self.cfg.stt.debug_audio:
+        logger.info(f"turn {turn_id} heard {self._loggable(text)!r} {info}")
+        if self.cfg.stt.debug_audio and self.hpn is None:    # HPN mode keeps no voice (avatar_overrides.json)
             folder = self.cfg.log_dir / "stt_debug"
             folder.mkdir(parents=True, exist_ok=True)
             stem = folder / f"{time.strftime('%Y%m%d-%H%M%S')}_{self.id}_turn{turn_id}"
             sf.write(stem.with_suffix(".wav"), audio, 16000)
             stem.with_suffix(".txt").write_text(f"{text}\n{info}\n", encoding="utf-8")
+
+    def _loggable(self, text: str) -> str:
+        """What the log may keep of what the user said: in HPN mode card numbers, phone numbers and email
+        addresses are masked (HPN's own rule, and what the avatar tells customers)."""
+        return mask_private(text) if self.hpn is not None else text
 
     def _looks_like_echo(self, text: str) -> bool:
         """True if the transcript mostly repeats the assistant's last words (speaker → mic leak)."""
@@ -587,7 +631,7 @@ class Session:
     # ------------------------------------------------------------------ turns
     async def start_turn(self, source: str, text: str, t0: float | None = None,
                          prefetch: AnswerPrefetch | None = None, messages: list[dict] | None = None,
-                         script: str | None = None) -> TurnContext:
+                         script: str | None = None, helper: dict | None = None) -> TurnContext:
         """A turn answering ``text``: from the prefetched answer, the LLM (with ``messages`` instead of
         the conversation, e.g. the greeting) or a fixed ``script`` (no LLM)."""
         if self.sm.state in ACTIVE:
@@ -606,14 +650,16 @@ class Session:
         self.sm.fire(Event.TEXT_INPUT if source in ("text", "greeting") else Event.TRANSCRIPT_READY)
         self.outbox.json({"type": "user_message", "turn_id": turn.turn_id, "text": text, "source": source},
                          turn.turn_id, force=True)
-        task = asyncio.create_task(self._run_turn(turn, prefetch, messages, script), name=f"turn-{turn.turn_id}")
+        task = asyncio.create_task(self._run_turn(turn, prefetch, messages, script, helper),
+                                   name=f"turn-{turn.turn_id}")
         turn.tasks.append(task)
         return turn
 
     async def _run_turn(self, turn: TurnContext, prefetch: AnswerPrefetch | None = None,
-                        messages: list[dict] | None = None, script: str | None = None) -> None:
+                        messages: list[dict] | None = None, script: str | None = None,
+                        helper: dict | None = None) -> None:
         try:
-            await self._respond(turn, prefetch, messages, script)
+            await self._respond(turn, prefetch, messages, script, helper)
         except asyncio.CancelledError:
             pass
         except Exception as exc:  # noqa: BLE001
@@ -626,9 +672,16 @@ class Session:
                 self.sm.fire(Event.RECOVER)
 
     async def _respond(self, turn: TurnContext, prefetch: AnswerPrefetch | None = None,
-                       messages: list[dict] | None = None, script: str | None = None) -> None:
+                       messages: list[dict] | None = None, script: str | None = None,
+                       helper: dict | None = None) -> None:
         tid = turn.turn_id
         citations: list[dict] = []
+        if self.hpn is not None and prefetch is None and messages is None and script is None:
+            # HPN mode: the Event helper's answer (app/hpn), said as written - no LLM writes it
+            helper = await self._hpn_answer(turn)
+            script = helper_spoken(helper["reply"])
+        if helper is not None:                 # the page shows the formatted answer, cards and buttons
+            self.outbox.json({"type": "helper_reply", "turn_id": tid, **helper}, tid, force=True)
         if prefetch is not None:               # answer already streaming since the VAD pause
             stats = prefetch.stats
             deltas = prefetch.deltas()
@@ -648,7 +701,7 @@ class Session:
         if self.voice_out:
             speech = SpeechOutput(turn, self.svc.tts, self.outbox, self.svc.gpu_lock,
                                   on_first_audio=lambda: self._first_output(turn),
-                                  avatar_sink=self.svc.avatar_sink_for(self, turn) if self.svc.avatar_ready else None,
+                                  avatar_sink=self.svc.avatar_sink_for(self, turn) if self.avatar_ready else None,
                                   audio_codec=self.audio_codec)
             turn.speech = speech
             chunker = ClauseChunker()
@@ -734,7 +787,7 @@ class Session:
                 self.outbox.json({"type": "error", "code": "voice_failed", "turn_id": tid,
                                   "message": f"the voice failed for this reply: {speech.error}"}, force=True)
             if speech.avatar_sink is not None and speech.total_ms > 0:
-                self.svc.avatar_speech_end(tid, speech.total_ms)     # the avatar closes its mouth after the last word
+                self.svc.avatar_speech_end(tid, speech.total_ms, link=self.avatar_link)     # the avatar closes its mouth after the last word
             if speech.total_ms > 0:
                 # wait for the browser to finish playing (bounded)
                 timeout = speech.total_ms / 1000 + 8.0
@@ -751,6 +804,54 @@ class Session:
                          tid, force=True)
         self._emit_metrics(turn, stats, interrupted=False)
         self._maybe_summarize()
+
+    async def _hpn_answer(self, turn: TurnContext) -> dict:
+        """The Event helper's reply to the turn; an unclear question re-matched by the LLM (app/hpn/match.py)."""
+        engine = self.hpn
+        engine.name = self.svc.persona.name
+        text = turn.user_text
+        flow, dropped = self.enquiry, False
+        reply = None
+        if flow is not None and flow.active:
+            reply = flow.handle(text)
+            if reply is None:                 # they asked something else: nothing is sent, and they are told
+                flow.draft.step, dropped = "cancelled", True
+        if reply is None and flow is not None and flow.wants_to_start(text):
+            reply = flow.start(text)
+        if reply is not None and reply.intent == "enquiry.sending":
+            status, body = await hpn_enquiry.post(flow.pending, self.id)
+            reply = flow.finish(status, body)
+        if reply is not None:
+            flow.remember(text, reply.intent)
+            self._hpn_last = reply.intent
+            logger.info(f"turn {turn.turn_id}: HPN enquiry step {reply.intent}")
+            return {"reply": reply.as_dict(), "matched": None}
+        reply = engine.ask(text, last=self._hpn_last)
+        if dropped:
+            reply.text = f"I haven't sent your details.\n\n{reply.text}"
+        matched = None
+        if reply.kind == "fallback" and self.cfg.hpn.llm_match:
+            cands = hpn_match.candidates(engine)
+            try:
+                turn.mark("llm_request")
+                answer = await asyncio.wait_for(
+                    self.svc.llm.complete(hpn_match.prompt(cands, text, self._hpn_last_title), max_tokens=6,
+                                          temperature=0.0), self.cfg.hpn.llm_match_timeout_s)
+                pick = hpn_match.parse(answer, len(cands))
+            except Exception as exc:  # noqa: BLE001 - the helper's own "not sure" answer stands
+                logger.warning(f"turn {turn.turn_id}: HPN re-match failed: {exc!r}")
+                pick = 0
+            if pick:
+                again = engine.ask(cands[pick - 1].question, last=self._hpn_last)
+                if again.confident and again.kind in ("answer", "live"):
+                    reply, matched = again, cands[pick - 1].label
+            logger.info(f"turn {turn.turn_id}: HPN re-match -> {matched or 'none'}")
+        self._hpn_last = reply.intent
+        self._hpn_last_title = matched or (reply.intent if reply.kind in ("answer", "live") else None)
+        if flow is not None:
+            flow.remember(text, reply.intent)
+        logger.info(f"turn {turn.turn_id}: HPN answer {reply.intent} (confident {reply.confident})")
+        return {"reply": reply.as_dict(), "matched": matched}
 
     async def _retrieve(self, turn: TurnContext) -> tuple[str | None, list[dict]]:
         knowledge, citations, turn.rag_stats = await self._retrieve_text(turn.user_text)
@@ -812,9 +913,9 @@ class Session:
         if event == "started":
             self._drops_mark = self.dropped_speech_frames + self.dropped_idle_frames
             turn.mark("client_first_audio")
-            self.svc.avatar_playback(turn.turn_id, "started")
+            self.svc.avatar_playback(turn.turn_id, "started", link=self.avatar_link)
         elif event == "progress":
-            self.svc.avatar_playback(turn.turn_id, "progress", turn.played_ms)   # lets the avatar catch up
+            self.svc.avatar_playback(turn.turn_id, "progress", turn.played_ms, link=self.avatar_link)   # lets the avatar catch up
         elif event == "ended":
             if self.video_codec == "h264" and self.page_visible:
                 self._adapt_video(self.dropped_speech_frames + self.dropped_idle_frames > self._drops_mark)
@@ -822,7 +923,7 @@ class Session:
             if turn.playback_gap_ms > 300:
                 logger.warning(f"turn {turn.turn_id}: {turn.playback_gap_ms:.0f} ms of gaps in the spoken reply")
             turn.playback_ended.set()
-            self.svc.avatar_playback(turn.turn_id, "ended")
+            self.svc.avatar_playback(turn.turn_id, "ended", link=self.avatar_link)
 
     def _ask_keyframe(self, speech: bool, idle: bool = True) -> None:
         """Frames were dropped: the worker continues from a keyframe (at most every 2 s; the streams have
@@ -831,14 +932,14 @@ class Session:
             return
         self._keyframe_asked = time.time()
         if idle:
-            self.svc.avatar_idle_keyframe()
+            self.svc.avatar_idle_keyframe(link=self.avatar_link)
         if speech:
-            self.svc.avatar_speech_keyframe()
+            self.svc.avatar_speech_keyframe(link=self.avatar_link)
 
     def _apply_video_rate(self, speech: int, idle: int) -> None:
         """The worker's bitrates. (The outbox window stays VIDEO_WINDOW: scaled with an HD bitrate it queued
         ~1.5 s of video ahead of the voice on an 800 kbit/s link.)"""
-        self.svc.avatar_bitrate(speech, idle)
+        self.svc.avatar_bitrate(speech, idle, link=self.avatar_link)
 
     def _adapt_video(self, congested: bool) -> bool:
         """The video's bitrate follows the connection: when frames had to be dropped (the link is slower
@@ -850,7 +951,7 @@ class Session:
         now = time.time()
         if congested and now - self._adapted_at < 2.0:
             return False
-        full = video_kbps(self.svc.avatar.hello if self.svc.avatar_ready else None)
+        full = video_kbps(self.avatar_link.hello if self.avatar_ready else None)
         floor = VIDEO_SCALE_MIN * VIDEO_KBPS[0] / full[0]
         fit = None
         delivered = self.outbox.delivery_kbps() if congested else None
@@ -957,8 +1058,8 @@ class Session:
         self.sm.fire(Event.BARGE_IN)
         turn.cancel()
         self.outbox.json({"type": "interrupt", "turn_id": turn.turn_id, "reason": reason}, force=True)
-        if self.svc.avatar_ready:
-            await self.svc.avatar_cancel(turn.turn_id)
+        if self.avatar_ready:
+            await self.svc.avatar_cancel(turn.turn_id, link=self.avatar_link)
         heard = self._heard_text(turn)
         # The user went on talking right after a pause, before hearing much of the reply: that was the
         # same question, not an interruption. The next utterance completes it (seen in user testing:
@@ -992,6 +1093,8 @@ class Session:
 
     # ------------------------------------------------------------------ memory
     def _maybe_summarize(self) -> None:
+        if self.hpn is not None:
+            return                        # nothing to summarize for: HPN answers do not use the conversation
         if not self.memory.needs_summary() or (self._summary_task and not self._summary_task.done()):
             return
 
@@ -1027,14 +1130,14 @@ class Session:
                 # a greeting, thanks or good news gets a smile right away instead of the thinking look
                 behavior = smile_for_user_text(self.turns.current.user_text) or behavior
             self._send_behavior(None, behavior)
-        if self.svc.avatar_ready:
-            self.svc.avatar_state(new.value)
+        if self.avatar_ready:
+            self.svc.avatar_state(new.value, link=self.avatar_link)
 
     def _send_behavior(self, turn: TurnContext | None, behavior) -> None:
         self.outbox.json({"type": "behavior", "turn_id": turn.turn_id if turn else 0, **behavior.to_dict()},
                          force=turn is None)
-        if self.svc.avatar_ready:
-            self.svc.avatar_behavior(behavior.to_dict())
+        if self.avatar_ready:
+            self.svc.avatar_behavior(behavior.to_dict(), link=self.avatar_link)
 
     def _emit_metrics(self, turn: TurnContext, stats: LLMStats | None, interrupted: bool) -> None:
         t0 = turn.timings.get("t0", turn.started_at)

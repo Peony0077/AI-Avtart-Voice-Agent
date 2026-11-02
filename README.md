@@ -34,7 +34,8 @@ photo → audio + video back to the browser.
 | `avatar/musetalk/` | Avatar worker process (own venv): LivePortrait loops + MuseTalk lip sync |
 | `voice/xtts/` | XTTS-v2 cloned-voice worker process (own venv) |
 | `scripts/` | run helpers, setup, benchmarks, model downloads, ingestion |
-| `config/profiles/` | configuration profiles (`default`, `avatar`, `avatar_clone`, `clone`, `lite`) |
+| `config/profiles/` | configuration profiles (`default`, `avatar`, `avatar_clone`, `clone`, `lite`, `hpn`) |
+| `knowledge/hpn/` | Houston Party Network's Event-helper knowledge, prices and schedule (the `hpn` profile) |
 | `constraints/` | pins that protect the CUDA PyTorch build |
 | `tests/e2e/` | Playwright end-to-end tests (fake microphone) |
 
@@ -141,6 +142,32 @@ Paths in the Windows commands below become `.venv/bin/python` and `avatar/museta
 Not ported yet: LAN HTTPS (`run.ps1 -Https`; use the tunnel) and the XTTS and LiteAvatar setup scripts (so the
 `clone` profile falls back to the stock voice, and `pick_clone_voice.py` does not run). Under WSL2 `--host 0.0.0.0`
 prints WSL's internal address, which other devices cannot reach: use the tunnel.
+
+## Houston Party Network (profile `hpn`)
+
+The avatar as the **Event helper** of h-townparty.com for HPN's customers: every answer is the website helper's
+own (Craig's 111 topics, live prices, the venue schedule), word for word; the page looks like HPN's site and its
+buttons open h-townparty.com. The LLM writes no answers and keeps no memory or leads: it only picks which of
+HPN's questions an unclear (often misheard) question meant. Details and what differs from the website:
+[`knowledge/hpn/README.md`](knowledge/hpn/README.md).
+
+```bash
+.venv/bin/python scripts/hpn_refresh.py      # the knowledge from the HPN project + today's prices and nights
+scripts/tunnel.sh --profile hpn --detach     # owner and customer links (logs/tunnel_url.txt, customer_url.txt)
+```
+
+**Several customers at once:** `conversations: 3` in the profile. Each conversation has its own avatar stream
+(its own idle video, reply, face and video encoder) from one avatar process that loads the models and the
+avatar's frames once (`avatar/musetalk/worker.py --streams`). Listening and idle cost almost nothing; lip sync
+runs on the GPU only while she speaks, so when two replies overlap they take turns batch by batch and each keeps
+pace with its voice by showing fewer frames for a moment. More customers wait in line as before (a conversation
+inactive for 90 s gives its place up). Measured on this PC: upload ~180 Mbit/s (a customer needs ~2.5), 12 NVENC
+encoders at once without error; the limit is the lip sync (~24 ms of GPU per 1024x1024 frame, 40 ms per frame
+at 25 fps). Load test: `LOAD_CUSTOMERS=3 npx playwright test --project hpn load_hpn` (tests/e2e). More
+customers need a second GPU machine.
+
+The avatar's photo had flyaway hair that the animation made stand out; `avatar/musetalk/clean_hair.py` removes
+it before the build (`photo_clean.png`, avatar `dev_girl_hd_clean`).
 
 ## Make it yours
 

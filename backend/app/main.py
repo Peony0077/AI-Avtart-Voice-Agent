@@ -40,9 +40,11 @@ async def lifespan(app: FastAPI):
     services.conversation_busy = manager.busy    # background LLM jobs give way to the conversation
     app.state.services = services
     await services.start()
-    if services.avatar is not None:
-        # a restarted avatar worker numbers its frames from 0 again: the page starts its idle video over
-        services.avatar.on_hello = lambda hello: manager.active and manager.active.avatar_restarted(hello)
+    # up to settings.conversations at once, each with its own avatar stream (the manager also wires each
+    # stream's frames and a restarted worker's hello to the conversation in its slot)
+    slots = len(services.avatars) if services.avatars else max(1, settings.conversations)
+    manager.configure(slots, services.avatars)
+    logger.info(f"conversations at once: {slots}")
     yield
     await manager.shutdown()                      # every session (also those waiting) and the manager's tasks
     await services.stop()                         # runs the memory/lead jobs those sessions queued first
@@ -72,12 +74,19 @@ async def health(request: Request) -> dict:
         "llm_restarts": services.llm_server.restarts,
         "llm_ready": services.llm_server.ready.is_set() or not services.settings.llm.manage_server,
         "active_session": manager.active.id if manager.active else None,
+        "active_sessions": [x.id for x in manager.sessions],
+        "conversations": manager.capacity,
         "waiting_sessions": len(manager.waiting),
         "background_jobs": services.pending_background(),   # memory / lead jobs not finished yet
+        "avatar_streams": [{"slot": link.slot, "connected": link.connected,
+                            "session": next((x.id for x in manager.sessions if getattr(x, "avatar_link", None) is link), None),
+                            "segment_fps": link.stats["segment_fps"][-5:], "first_frame_ms": link.stats["first_frame_ms"][-5:],
+                            "skipped_frames": link.stats["skipped_frames"]} for link in services.avatars],
         "avatar": {"connected": services.avatar_ready, "restarts": services.avatar.restarts,
                    "hello": services.avatar.hello, "stats": services.avatar.stats} if services.avatar else None,
         "load_report": services.load_report,
         "warnings": services.warnings,
+        "hpn": services.hpn_status(),
         "voice_ready": services.voice_ready,
         "tts_engine": services.settings.tts.engine if services.tts else None,
         "rag_chunks": services.rag.rows if services.rag else 0,

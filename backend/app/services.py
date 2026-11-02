@@ -57,7 +57,9 @@ class Services:
         self.stt = None
         self.tts = None
         self.rag = None
-        self.avatar = None
+        self.avatar = None              # the first avatar connection (the one that runs the worker process)
+        self.avatars: list = []         # one per conversation slot (settings.conversations)
+        self.hpn_kb = None              # Houston Party Network mode: the Event helper's knowledge (app/hpn)
         self.load_report: dict[str, float] = {}
         self.warnings: list[str] = []
         self.gpu_lock = asyncio.Lock()  # serialises our own GPU bursts (STT / TTS)
@@ -247,10 +249,12 @@ class Services:
         if self.settings.llm.manage_server:
             await asyncio.to_thread(self.llm_server.start)
         self.load_report["llm_server_s"] = round(time.perf_counter() - t0, 2)
+        if self.settings.hpn.enabled:
+            self._load_hpn()           # before the LLM warm-up: it warms the HPN matching prompt
         await self._warm_llm()
         if self.settings.voice_enabled:
             await asyncio.to_thread(self._load_voice)
-        if self.settings.rag.enabled:
+        if self.settings.rag.enabled and not self.settings.hpn.enabled:   # HPN answers come from its knowledge
             await asyncio.to_thread(self._load_rag)
         if self.settings.avatar.enabled and not self.vram_ok("avatar"):
             self.warnings.append("avatar disabled for lack of VRAM")
@@ -259,8 +263,14 @@ class Services:
 
             t0 = time.perf_counter()
             self.avatar = AvatarClient(self.settings)
+            self.avatars = [self.avatar]
             try:
                 await self.avatar.start()
+                # one more connection per further conversation slot (the worker serves --streams of them)
+                for slot in range(1, max(1, self.settings.conversations)):
+                    link = AvatarClient(self.settings, slot=slot)
+                    await link.start(60.0)
+                    self.avatars.append(link)
                 self.load_report["avatar_s"] = round(time.perf_counter() - t0, 2)
             except Exception as exc:  # noqa: BLE001 - voice still works without the avatar
                 logger.error(f"avatar worker unavailable: {exc!r}")
@@ -331,6 +341,29 @@ class Services:
             self.warnings.append(msg)
             self.persona = replace(self.persona, voice=self.tts.voice)   # (persona.json is left as it is)
 
+    def _load_hpn(self) -> None:
+        """HPN mode without its knowledge would leave the LLM to make answers up: refused at start-up."""
+        from app.hpn.knowledge import Knowledge
+
+        t0 = time.perf_counter()
+        folder = self.settings.repo_path(self.settings.hpn.knowledge_dir)
+        try:
+            self.hpn_kb = Knowledge.load(folder)
+        except Exception as exc:
+            raise RuntimeError(f"HPN mode: the knowledge in {folder} could not be read ({exc!r}); run "
+                               "scripts/hpn_refresh.py") from exc
+        kb = self.hpn_kb
+        self.load_report["hpn_s"] = round(time.perf_counter() - t0, 3)
+        logger.info(f"HPN knowledge: {len(kb.topics)} topics, {len(kb.offerings)} packages and add-ons, "
+                    f"{len(kb.slots)} nights at {len(kb.venues)} venues; {kb.sources}")
+
+    def hpn_status(self) -> dict | None:
+        kb = self.hpn_kb
+        if kb is None:
+            return None
+        return {"topics": len(kb.topics), "offerings": len(kb.offerings), "nights": len(kb.slots),
+                "venues": len(kb.venues), "excluded_categories": list(kb.excluded_categories), **kb.sources}
+
     def _load_rag(self) -> None:
         index = self.settings.repo_path(self.settings.rag.index_dir)
         if not index.exists():
@@ -352,6 +385,19 @@ class Services:
         personality and business as a conversation's (session.py; a customer without a memory of earlier
         conversations) - with the configured name alone the cached prefix ended after a few words."""
         t0 = time.perf_counter()
+        if self.hpn_kb is not None:
+            # HPN mode: the LLM only re-matches unclear questions (app/hpn/match.py): its long list is the
+            # prompt to cache
+            from app.hpn import match
+            from app.hpn.engine import Engine
+
+            try:
+                engine = Engine(self.hpn_kb, self.persona.name)
+                await self.llm.complete(match.prompt(match.candidates(engine), "hello"), max_tokens=4, temperature=0.0)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"LLM warm-up failed: {exc!r}")
+            self.load_report["llm_warmup_s"] = round(time.perf_counter() - t0, 2)
+            return
         p = self.persona
         prompt = system_prompt(p.name, knowledge_enabled=self.settings.rag.enabled,
                                behavior_tag=self.settings.llm.behavior_tag, personality=p.personality,
@@ -363,93 +409,108 @@ class Services:
         self.load_report["llm_warmup_s"] = round(time.perf_counter() - t0, 2)
 
     # ---- avatar hooks; no-ops when no avatar worker is connected ----
+    # Each takes the conversation's own avatar connection (``link``: Session.avatar_link, one per conversation
+    # slot); without one, the first (one conversation at a time, and the tests).
+    def _link(self, link):
+        return link if link is not None else self.avatar
+
+    def _live(self, link):
+        link = self._link(link)
+        return link if link is not None and link.connected else None
+
     def avatar_sink_for(self, session, turn):
+        link = self._link(getattr(session, "avatar_link", None))
+
         async def sink(turn_id: int, seq: int, pcm, pts_ms: int) -> None:
             if seq != 1:
                 # Later clauses play after the audio already queued in the browser; holding them until
                 # their first frame existed made gaps of up to 1.5 s between sentences (seen in user
                 # testing). Their frames carry pts and are drawn by the audio clock (late ones skipped).
-                self.avatar.send_audio(turn_id, seq, pcm, pts_ms)
+                link.send_audio(turn_id, seq, pcm, pts_ms)
                 return
-            ms = await self.avatar.speak(turn_id, seq, pcm, pts_ms)
+            ms = await link.speak(turn_id, seq, pcm, pts_ms)
             turn.mark("avatar_first_frame")
             turn.avatar_first_ms = ms
         return sink
 
-    async def avatar_cancel(self, turn_id: int) -> None:
-        if self.avatar_ready:
-            self.avatar.send_json({"type": "cancel", "turn_id": turn_id})
+    async def avatar_cancel(self, turn_id: int, link=None) -> None:
+        if (live := self._live(link)) is not None:
+            live.send_json({"type": "cancel", "turn_id": turn_id})
 
-    def avatar_reset(self) -> None:
+    def avatar_reset(self, link=None) -> None:
         """Session closed (e.g. the tab was closed while the avatar spoke): back to the idle stream."""
-        if self.avatar is not None:
-            self.avatar.codec = "jpeg"            # the worker goes back to JPEG on reset
-            self.avatar.start_hold_ms = 0
-        if self.avatar_ready:
-            self.avatar.send_json({"type": "reset"})
+        link = self._link(link)
+        if link is not None:
+            link.codec = "jpeg"                   # the worker goes back to JPEG on reset
+            link.start_hold_ms = 0
+            link.kbps = None
+        if (live := self._live(link)) is not None:
+            live.send_json({"type": "reset"})
 
-    def avatar_state(self, state: str) -> None:
-        if self.avatar_ready:
-            self.avatar.send_json({"type": "state", "state": state})
+    def avatar_state(self, state: str, link=None) -> None:
+        if (live := self._live(link)) is not None:
+            live.send_json({"type": "state", "state": state})
 
-    def avatar_behavior(self, behavior: dict) -> None:
-        if self.avatar_ready:
-            self.avatar.send_json({"type": "behavior", "expression": behavior.get("expression"),
-                                   "emotion": behavior.get("emotion"), "gesture": behavior.get("gesture"),
-                                   "intensity": behavior.get("intensity"), "source": behavior.get("source")})
+    def avatar_behavior(self, behavior: dict, link=None) -> None:
+        if (live := self._live(link)) is not None:
+            live.send_json({"type": "behavior", "expression": behavior.get("expression"),
+                            "emotion": behavior.get("emotion"), "gesture": behavior.get("gesture"),
+                            "intensity": behavior.get("intensity"), "source": behavior.get("source")})
 
-    def avatar_speech_end(self, turn_id: int, total_ms: float) -> None:
+    def avatar_speech_end(self, turn_id: int, total_ms: float, link=None) -> None:
         """All of the reply's audio has gone to the worker: it renders the closing tail after it."""
-        if self.avatar_ready:
-            self.avatar.send_json({"type": "speech_end", "turn_id": turn_id, "total_ms": round(total_ms)})
+        if (live := self._live(link)) is not None:
+            live.send_json({"type": "speech_end", "turn_id": turn_id, "total_ms": round(total_ms)})
 
-    def avatar_codec(self, codec: str) -> None:
+    def avatar_codec(self, codec: str, link=None) -> None:
         """The browser's video codec: "h264" (WebCodecs) or "jpeg" (avatar/musetalk/h264.py)."""
-        if self.avatar is not None:
-            self.avatar.codec = codec
-        if self.avatar is not None and self.avatar.connected:
-            self.avatar.send_json({"type": "codec", "codec": codec})
+        link = self._link(link)
+        if link is not None:
+            link.codec = codec
+        if (live := self._live(link)) is not None:
+            live.send_json({"type": "codec", "codec": codec})
 
-    def avatar_idle_keyframe(self) -> None:
+    def avatar_idle_keyframe(self, link=None) -> None:
         """Idle H.264 frames were dropped (slow link): the worker starts the idle stream again from a keyframe."""
-        if self.avatar is not None and self.avatar.connected:
-            self.avatar.send_json({"type": "idle_keyframe"})
+        if (live := self._live(link)) is not None:
+            live.send_json({"type": "idle_keyframe"})
 
-    def avatar_bitrate(self, speech_kbps: int, idle_kbps: int) -> None:
+    def avatar_bitrate(self, speech_kbps: int, idle_kbps: int, link=None) -> None:
         """H.264 bitrates for the current connection (session._adapt_video); remembered for a worker restart."""
-        if self.avatar is not None:
-            self.avatar.kbps = (speech_kbps, idle_kbps)
-        if self.avatar is not None and self.avatar.connected:
-            self.avatar.send_json({"type": "bitrate", "speech": speech_kbps, "idle": idle_kbps})
+        link = self._link(link)
+        if link is not None:
+            link.kbps = (speech_kbps, idle_kbps)
+        if (live := self._live(link)) is not None:
+            live.send_json({"type": "bitrate", "speech": speech_kbps, "idle": idle_kbps})
 
-    def avatar_speech_keyframe(self) -> None:
+    def avatar_speech_keyframe(self, link=None) -> None:
         """The reply's video was dropped (slow link, hidden page): the worker continues it from a keyframe."""
-        if self.avatar is not None and self.avatar.connected:
-            self.avatar.send_json({"type": "speech_keyframe"})
+        if (live := self._live(link)) is not None:
+            live.send_json({"type": "speech_keyframe"})
 
-    def avatar_start_hold(self, ms: int) -> None:
+    def avatar_start_hold(self, ms: int, link=None) -> None:
         """The page holds each reply's first audio ``ms`` longer (lip-synced frames arrived late over the
         network): the worker starts the reply's frames as much later in the loop."""
-        if self.avatar is not None:
-            self.avatar.start_hold_ms = ms
-        if self.avatar is not None and self.avatar.connected:
-            self.avatar.send_json({"type": "start_hold", "ms": ms})
+        link = self._link(link)
+        if link is not None:
+            link.start_hold_ms = ms
+        if (live := self._live(link)) is not None:
+            live.send_json({"type": "start_hold", "ms": ms})
 
-    def avatar_start_gap(self, gap: float) -> None:
+    def avatar_start_gap(self, gap: float, link=None) -> None:
         """How many loop frames the first lip-synced frame was ahead of the idle frame on screen (the
         page measures it): the worker starts the next reply that much closer (worker.start_bias)."""
-        if self.avatar is not None and self.avatar.connected:
-            self.avatar.send_json({"type": "start_gap", "gap": gap})
+        if (live := self._live(link)) is not None:
+            live.send_json({"type": "start_gap", "gap": gap})
 
-    def avatar_playback(self, turn_id: int, event: str, played_ms: float = 0.0) -> None:
-        if self.avatar_ready:
-            self.avatar.send_json({"type": "playback", "turn_id": turn_id, "event": event,
-                                   "played_ms": round(played_ms)})
+    def avatar_playback(self, turn_id: int, event: str, played_ms: float = 0.0, link=None) -> None:
+        if (live := self._live(link)) is not None:
+            live.send_json({"type": "playback", "turn_id": turn_id, "event": event, "played_ms": round(played_ms)})
 
     async def stop(self) -> None:
         await self.drain_background()               # (needs the LLM server: before it stops)
-        if self.avatar is not None:
-            await self.avatar.stop()
+        for link in reversed(self.avatars or ([self.avatar] if self.avatar is not None else [])):
+            await link.stop()                       # the first (it runs the worker process) last
         if self.tts is not None and hasattr(self.tts, "close"):
             self.tts.close()
         await self.llm.aclose()

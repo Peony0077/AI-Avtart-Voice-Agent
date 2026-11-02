@@ -60,7 +60,8 @@ class LLMClient:
 
     async def stream_chat(self, messages: list[dict], stats: LLMStats | None = None,
                           max_tokens: int | None = None, pause_after: Callable[[str], bool] | None = None,
-                          resume: Callable[[], Awaitable[None]] | None = None) -> AsyncIterator[str]:
+                          resume: Callable[[], Awaitable[None]] | None = None,
+                          temperature: float | None = None) -> AsyncIterator[str]:
         """Stream the reply. With ``pause_after``/``resume``: whenever ``pause_after(text so far)`` is true
         (e.g. a new speakable clause exists) generation stops until ``resume()`` returns, then continues the
         same reply from the text so far (llama-server reuses its cache: only the new tokens are processed).
@@ -69,7 +70,7 @@ class LLMClient:
         the GPU with the first clause's synthesis and the avatar's first lip-sync frames, and those are
         what the user waits for (measured: Kokoro 78 -> ~170 ms, avatar first frames ~170 -> ~330 ms)."""
         if pause_after is None or resume is None:
-            async for delta in self._stream_chat(messages, stats, max_tokens):
+            async for delta in self._stream_chat(messages, stats, max_tokens, temperature):
                 yield delta
             return
         text = ""
@@ -119,12 +120,12 @@ class LLMClient:
                     break
 
     async def _stream_chat(self, messages: list[dict], stats: LLMStats | None = None,
-                           max_tokens: int | None = None) -> AsyncIterator[str]:
+                           max_tokens: int | None = None, temperature: float | None = None) -> AsyncIterator[str]:
         body = {
             "model": "local",
             "messages": messages,
             "stream": True,
-            "temperature": self.cfg.temperature,
+            "temperature": self.cfg.temperature if temperature is None else temperature,
             "top_p": self.cfg.top_p,
             "top_k": 20,
             "min_p": 0.0,
@@ -183,6 +184,7 @@ class LLMClient:
             if not data:
                 raise LLMError(f"llama-server sent no reply (HTTP {resp.status_code}): {' | '.join(other) or 'empty'}")
 
-    async def complete(self, messages: list[dict], max_tokens: int = 16) -> str:
-        """Non-streaming helper (warm-up, summaries)."""
-        return "".join([piece async for piece in self.stream_chat(messages, max_tokens=max_tokens)])
+    async def complete(self, messages: list[dict], max_tokens: int = 16, temperature: float | None = None) -> str:
+        """Non-streaming helper (warm-up, summaries; ``temperature`` 0 for a choice that must not vary)."""
+        return "".join([piece async for piece in self.stream_chat(messages, max_tokens=max_tokens,
+                                                                  temperature=temperature)])

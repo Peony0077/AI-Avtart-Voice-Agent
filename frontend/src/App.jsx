@@ -2,168 +2,133 @@ import { useEffect, useRef, useState } from 'react'
 import { useConversation } from './lib/useConversation.js'
 import { useVoice } from './lib/useVoice.js'
 import AvatarStage from './components/AvatarStage.jsx'
+import AvatarVoiceControls from './components/AvatarVoiceControls.jsx'
+import { useMobileViewport } from './lib/useMobileViewport.js'
 import MetricsPanel from './components/MetricsPanel.jsx'
 import SettingsDialog from './components/SettingsDialog.jsx'
 import LeadsDialog from './components/LeadsDialog.jsx'
+import ConversationPanel from './components/ConversationPanel.jsx'
+import Icon from './components/Icon.jsx'
+import ThemeControl from './components/ThemeControl.jsx'
 
-const STATE_LABEL = {
-  IDLE: 'Idle',
-  LISTENING: 'Listening',
-  END_OF_TURN: 'Got it…',
-  THINKING: 'Thinking…',
-  SPEAKING: 'Speaking',
-  INTERRUPTED: 'Interrupted',
-  ERROR: 'Error',
-}
-
+const SITE = 'https://h-townparty.com'
 export default function App() {
   const conv = useConversation()
   const voice = useVoice(conv)
-  const [draft, setDraft] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [leadsOpen, setLeadsOpen] = useState(false)
-  // the customer link shows only the conversation; the owner's tools appear once the session says
-  // "owner" (role is null until then: a customer waiting in line is not shown them)
+  const inputRef = useRef(null)
+  const appRef = useRef(null)
+  const keyboardOpen = useMobileViewport(appRef)
   const owner = conv.role === 'owner'
-  const listRef = useRef(null)
-  const busy = conv.state === 'THINKING' || conv.state === 'SPEAKING'
-  // "Listening" only while the microphone is really on: the badge said Listening with the microphone
-  // off, so the owner talked to her and nothing was heard
-  const badge = conv.state !== 'LISTENING' ? { cls: conv.state, label: STATE_LABEL[conv.state] ?? conv.state }
-    : !voice.active ? { cls: 'READY', label: 'Ready · mic off' }
-      : { cls: 'LISTENING', label: voice.speechDetected ? 'Hearing you…' : 'Listening' }
-
-  // her name and what she remembers about this person (a customer's "Forget me" button). Once per
-  // session: keyed on the whole session object, every persona reply asked for the persona again (a
-  // request every round trip, 2026-10-05)
+  const hpn = conv.session?.hpn ?? null
+  const name = conv.session?.persona ?? 'your event helper'
+  const videoSize = conv.session?.avatar?.size
+  const videoAspect = videoSize?.[0] > 0 && videoSize?.[1] > 0 ? videoSize[0] / videoSize[1] : 1
+  const ready = conv.status === 'open' && !!conv.session && !conv.waiting
+  const status = conv.waiting ? `You're number ${conv.waiting} in line`
+    : !ready ? conv.status === 'ended (inactive)' ? 'Conversation ended' : 'Connecting…'
+      : conv.state === 'THINKING' || conv.state === 'END_OF_TURN' ? 'Thinking…'
+        : conv.state === 'SPEAKING' ? 'Speaking'
+          : voice.active ? voice.speechDetected ? 'Hearing you…' : 'Listening'
+            : 'Ready to chat'
   const sessionId = conv.session?.session_id
+
   useEffect(() => {
     if (sessionId) conv.loadPersona()
   }, [sessionId, conv.loadPersona])
-
-  useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight })
-  }, [conv.messages])
-
-  const submit = (e) => {
-    e.preventDefault()
-    const text = draft.trim()
-    if (!text) return
-    voice.ensureSpeaker()        // typed messages are spoken (and lip-synced) too; needs this user gesture
-    conv.sendText(text)
-    setDraft('')
+  const send = (text) => {
+    if (!ready || !text.trim()) return
+    voice.ensureSpeaker()
+    conv.sendText(text.trim())
+  }
+  const typeInstead = () => {
+    inputRef.current?.focus({ preventScroll: true })
   }
 
   return (
-    <div className={`app ${conv.role ?? 'pending'}`}>
+    <div ref={appRef} className={`app ${conv.role ?? 'pending'}${hpn ? ' hpn' : ''}${keyboardOpen ? ' keyboard-open' : ''}`}>
+      <a className="skip-link" href="#conversation-input">Skip to conversation</a>
       <header className="topbar">
-        <strong>{conv.session?.persona ?? 'AI Avatar'}</strong>
-        <span className={`badge state-${badge.cls}`} data-testid="state" data-state={conv.state}>{badge.label}</span>
-        <span className={owner ? 'muted' : 'muted conn-customer'} data-testid="conn-status">{conv.status}</span>
-        <span className="voice-controls">
-          {voice.active ? (
-            <button type="button" className="danger" data-testid="voice-stop" onClick={voice.stop}>Stop voice</button>
-          ) : (
-            <button type="button" data-testid="voice-start" onClick={voice.start}
-              disabled={conv.status !== 'open' || conv.session?.voice_available === false || voice.starting}>
-              {voice.starting ? 'Starting…' : 'Start voice'}</button>
-          )}
-          {voice.active && (
-            <span className={`mic ${voice.speechDetected ? 'hot' : ''}`} data-testid="mic" title="microphone level">
-              <span className="mic-bar" style={{ width: `${Math.min(100, voice.level * 400)}%` }} />
-            </span>
-          )}
-          {voice.speaker && (
-            <button type="button" className="secondary" data-testid="speaker-toggle" onClick={voice.toggleMute}
-              title={voice.muted ? 'Replies are text only' : 'Replies are spoken'}>
-              {voice.muted ? 'Unmute' : 'Mute'}
-            </button>
-          )}
-          {conv.notice && <span className="muted" data-testid="notice">{conv.notice}</span>}
-        </span>
-        <span className="tools">
-          <button type="button" className="secondary" onClick={() => downloadTranscript(conv)}
-            disabled={!conv.messages.length} data-testid="transcript">Transcript</button>
-          {owner && (
-            <button type="button" className="secondary" onClick={() => setLeadsOpen(true)}
-              disabled={conv.status !== 'open'} data-testid="leads-open">Leads</button>
-          )}
-          {owner && (
-            <button type="button" className="secondary" onClick={() => setSettingsOpen(true)}
-              disabled={conv.status !== 'open'} data-testid="settings-open">Settings</button>
-          )}
-          {!owner && conv.persona?.remembered && (
-            <button type="button" className="secondary" onClick={conv.forgetMemory} data-testid="forget-customer"
-              title="She remembers what you told her last time; this erases it">Forget me</button>
-          )}
-        </span>
-        {owner && conv.behavior && (
-          <span className="muted" data-testid="behavior">
-            {conv.behavior.emotion} · {conv.behavior.gesture} · {conv.behavior.intensity}
-          </span>
-        )}
+        <div className="topbar__inner">
+          <a className="brand" href={SITE} target="_blank" rel="noopener noreferrer" aria-label="Houston Party Network website (opens in a new tab)">
+            <img className="brand__logo" src="/brand/hpn-logo-white.svg" alt="Houston Party Network" width="91" height="40" />
+            <span className="brand__text"><strong>HOUSTON PARTY NETWORK</strong><span>Your event. Our energy.</span></span>
+          </a>
+          <nav className="header-links" aria-label="HPN">
+            <a href={`${SITE}/night-out/`} target="_blank" rel="noopener noreferrer">Find a night out <Icon name="external" size={14} /></a>
+            <a className="header-plan" href={`${SITE}/plan-my-event/`} target="_blank" rel="noopener noreferrer">Plan my event <Icon name="arrow" size={16} /></a>
+          </nav>
+          <ThemeControl />
+          {owner && <details className="owner-menu">
+            <summary aria-label="Owner tools"><Icon name="settings" /></summary>
+            <div className="owner-menu__items">
+              <span>Owner tools</span>
+              <button onClick={() => setSettingsOpen(true)} disabled={!ready} data-testid="settings-open">Settings</button>
+              <button onClick={() => setLeadsOpen(true)} disabled={!ready} data-testid="leads-open">Leads</button>
+              <MetricsPanel metrics={conv.metrics} />
+            </div>
+          </details>}
+          <span className="visually-hidden" data-testid="conn-status">{conv.status}</span>
+        </div>
       </header>
 
-      <main className="layout">
-        <AvatarStage conv={conv} voice={voice} />
+      <main className="experience">
+        <h1 className="visually-hidden">Houston Party Network AI Agent</h1>
 
-        <section className="chat" aria-label="Conversation">
-          <ol className="messages" ref={listRef} data-testid="messages">
-            {conv.messages.map((m, i) => (
-              <li key={i} className={`msg ${m.role}`} data-role={m.role} data-turn={m.turnId}>
-                <span className="text">{m.text || (m.role === 'assistant' && !m.error ? '…' : '')}</span>
-                {m.interrupted && <span className="tag">interrupted</span>}
-                {m.error && <span className="error" role="alert" data-testid="turn-error">{m.error}</span>}
-                {m.citations?.length > 0 && (
-                  <ul className="sources" data-testid="sources">
-                    {m.citations.map((c) => (
-                      <li key={c.n} title={c.snippet}>
-                        [{c.n}] {c.title}{c.section ? ` · ${c.section}` : ''}{c.page ? ` · p.${c.page}` : ''} <span className="muted">({c.score})</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </li>
-            ))}
-          </ol>
-          <form className="composer" onSubmit={submit}>
-            <input
-              aria-label="Message"
-              data-testid="input"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="Type a message…"
-              autoComplete="off"
-            />
-            <button type="submit" data-testid="send" disabled={!draft.trim() || conv.status !== 'open'}>Send</button>
-            <button type="button" data-testid="stop" onClick={conv.interrupt} disabled={!busy} className="secondary">
-              Stop
-            </button>
-          </form>
-        </section>
+        <div className="layout" style={{'--avatar-aspect': videoAspect}}>
+          <section className="stage-col" aria-label="Your AI event helper">
+            <div className="avatar-heading">
+              <span className="avatar-heading__identity"><span className="avatar-heading__icon"><Icon name="agent" size={20} /></span>
+                <span><strong>{conv.session?.persona ? `Meet ${name}` : 'Meet your event helper'}</strong><small>HPN’s AI Agent</small></span>
+              </span>
+              <span className={`badge ${ready ? `state-${voice.active ? conv.state : 'READY'}` : 'state-OFFLINE'}`} data-testid="state" data-state={conv.state} role="status">
+                <span className="badge__dot" />{status}
+              </span>
+            </div>
+            <div className="stage-wrap" id="agent-video">
+              <AvatarStage conv={conv} voice={voice} />
+              <span className="avatar-disclosure"><Icon name="sparkles" size={12} /> AI AGENT</span>
+            </div>
+            <AvatarVoiceControls conv={conv} voice={voice} />
+            <div className="controls">
+              <div className="voice-controls">
+                <button type="button" className={`control-button ${voice.active ? 'is-active' : ''}`} data-testid={voice.active ? 'voice-stop' : 'voice-start'}
+                  onClick={voice.active ? voice.stop : voice.start} disabled={!voice.active && (!ready || conv.session?.voice_available === false || voice.starting)}
+                  aria-label={voice.active ? 'Turn microphone off' : 'Turn microphone on'} title={voice.active ? 'Turn microphone off' : 'Turn microphone on'}>
+                  <Icon name={voice.active ? 'mic' : 'micOff'} size={18} /><span>{voice.active ? 'Mic on' : 'Mic off'}</span>
+                </button>
+                {voice.speaker && <button type="button" className="control-button" data-testid="speaker-toggle" onClick={voice.toggleMute}
+                  title={voice.muted ? 'Unmute spoken replies' : 'Mute spoken replies'}>
+                  <Icon name={voice.muted ? 'volumeOff' : 'volume'} size={18} />{voice.muted ? 'Unmute' : 'Mute'}
+                </button>}
+              </div>
+              <button type="button" className="type-instead" onClick={typeInstead}><Icon name="keyboard" size={17} />Type instead</button>
+            </div>
+            <div className="stage-footnote">
+              <span>{voice.active ? 'You can interrupt naturally. Just start speaking.' : 'Your microphone stays off until you choose to talk.'}</span>
+              {voice.active && <span className={`mic ${voice.speechDetected ? 'hot' : ''}`} data-testid="mic"><span className="mic-bar" style={{width: `${Math.min(100, voice.level * 400)}%`}} /></span>}
+            </div>
+            {conv.notice && <p className="notice" role="status" data-testid="notice">{conv.notice}</p>}
+          </section>
+
+          <ConversationPanel conv={conv} ready={ready} onSend={send} inputRef={inputRef} />
+        </div>
+
+
       </main>
 
-      {owner && <MetricsPanel metrics={conv.metrics} />}
+      <footer className="site-footer">
+        <div className="site-footer__inner"><span className="footer-location"><Icon name="pin" size={15} />Made for good times in Greater Houston.</span>
+          <nav aria-label="Help and information">
+            <a href={`${SITE}/contact-us/`} target="_blank" rel="noopener noreferrer">Talk to our team <Icon name="external" size={12} /></a>
+            <a href={`${SITE}/terms-and-privacy/`} target="_blank" rel="noopener noreferrer">Privacy</a>
+            <a href={SITE} target="_blank" rel="noopener noreferrer">h-townparty.com <Icon name="external" size={12} /></a>
+          </nav>
+        </div>
+      </footer>
       {owner && <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} conv={conv} voice={voice} />}
       {owner && <LeadsDialog open={leadsOpen} onClose={() => setLeadsOpen(false)} conv={conv} />}
     </div>
   )
-}
-
-// The conversation as a text file (like Anam's session transcripts), made in the page: nothing is sent.
-function downloadTranscript(conv) {
-  const name = conv.session?.persona ?? 'Avatar'
-  const time = (at) => (at ? new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')
-  const lines = conv.messages
-    .filter((m) => m.text)
-    .map((m) => `[${time(m.at)}] ${m.role === 'user' ? 'You' : name}: ${m.text}${m.interrupted ? ' (interrupted)' : ''}`)
-  const text = `Conversation with ${name} - ${new Date().toLocaleString()}\n\n${lines.join('\n')}\n`
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `conversation-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.txt`
-  document.body.append(a)              // some browsers ignore a click on a link outside the page
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

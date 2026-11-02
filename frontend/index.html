@@ -2,8 +2,25 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Avatar</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#8D0BAB" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      // Apply the saved/device theme before styles render to avoid a light flash.
+      (() => {
+        let preference = 'system'
+        try { preference = localStorage.getItem('hpn-color-theme') || 'system' } catch {}
+        const theme = preference === 'light' || preference === 'dark' ? preference : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        document.documentElement.dataset.theme = theme
+        document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#17151b' : '#f8f7fa'
+      })()
+    </script>
+    <meta name="description" content="Houston Party Network's AI Agent" />
+    <title>Houston Party Network · AI Agent</title>
+    <link rel="icon" type="image/png" href="/brand/favicon.png" />
+    <link rel="apple-touch-icon" href="/brand/icon-192.png" />
+    <link rel="preload" href="/fonts/montserrat-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/archivo-black-400.woff2" as="font" type="font/woff2" crossorigin />
   </head>
   <body>
     <div id="root"></div>

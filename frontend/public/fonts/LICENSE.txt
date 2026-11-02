@@ -1,0 +1,9 @@
+Fonts in this directory are licensed under the SIL Open Font License, Version 1.1.
+
+  Archivo Black — Copyright (c) Omnibus-Type
+  Montserrat    — Copyright (c) The Montserrat Project Authors
+
+Full licence: https://openfontlicense.org/
+The OFL permits redistribution and embedding in web pages. It forbids selling the fonts
+on their own and requires that Reserved Font Names are not reused on modified versions.
+Neither applies here: these files are unmodified and served as part of the site.

@@ -27,9 +27,14 @@ FrameSink = Callable[[bytes, int, int], None]  # (packet, kind, turn_id)
 
 
 class AvatarClient:
-    def __init__(self, settings: Settings) -> None:
+    """One connection to the avatar worker: one conversation's avatar stream. ``slot`` 0 also starts the
+    worker process and restarts it when it dies; the others only connect to it (worker.py --streams)."""
+
+    def __init__(self, settings: Settings, slot: int = 0) -> None:
         self.settings = settings
         self.cfg = settings.avatar
+        self.slot = slot
+        self.manages_process = slot == 0 and settings.avatar.manage_worker
         self.proc: subprocess.Popen | None = None
         self.ws = None
         self.connected = False
@@ -49,7 +54,7 @@ class AvatarClient:
 
     # ------------------------------------------------------------------ lifecycle
     async def start(self, timeout_s: float = 240.0) -> None:
-        if self.cfg.manage_worker:
+        if self.manages_process:
             self._spawn()
         await self._connect(timeout_s)
         self._watchdog = asyncio.create_task(self._watch(), name="avatar-watchdog")
@@ -61,7 +66,8 @@ class AvatarClient:
         cmd = [str(py), str(script), "--avatar", self.cfg.avatar_id, "--port", port,
                "--quality", str(self.cfg.jpeg_quality), "--gate-frames", str(self.cfg.gate_frames), "--decoder", self.cfg.decoder,
                "--warm-burst-ms", str(self.cfg.warm_burst_ms), "--late-ms", str(self.cfg.late_ms),
-               "--upscaler", getattr(self.cfg, "upscaler", "x2plus"), "--h264-encoder", getattr(self.cfg, "h264_encoder", "auto")]
+               "--upscaler", getattr(self.cfg, "upscaler", "x2plus"), "--h264-encoder", getattr(self.cfg, "h264_encoder", "auto"),
+               "--streams", str(max(1, getattr(self.settings, "conversations", 1)))]
         free_port(int(port), "worker.py")
         logger.info(f"starting avatar worker: {' '.join(cmd)}")
         with (self.settings.log_dir / "avatar-worker.log").open("ab") as log:   # the child keeps its own handle
@@ -82,7 +88,7 @@ class AvatarClient:
                 self.hello = json.loads(await asyncio.wait_for(self.ws.recv(), 10))
                 self.connected = True
                 self._reader = asyncio.create_task(self._read(), name="avatar-reader")
-                logger.info(f"avatar worker connected: {self.hello}")
+                logger.info(f"avatar worker connected (slot {self.slot}): {self.hello}")
                 if self.codec != "jpeg":          # a restarted worker starts with JPEG frames
                     self.send_json({"type": "codec", "codec": self.codec})
                 if self.start_hold_ms:
@@ -102,10 +108,10 @@ class AvatarClient:
             dead = self.proc is not None and self.proc.poll() is not None
             if (dead or not self.connected) and not self._stopping:
                 self.restarts += 1
-                logger.error(f"avatar worker down (restart #{self.restarts})")
+                logger.error(f"avatar worker down (slot {self.slot}, restart #{self.restarts})")
                 self.connected = False
                 try:
-                    if dead and self.cfg.manage_worker:
+                    if dead and self.manages_process:
                         await asyncio.to_thread(self._spawn)     # free_port waits for a stale process: not on the loop
                     await self._connect(240.0)
                 except Exception as exc:  # noqa: BLE001

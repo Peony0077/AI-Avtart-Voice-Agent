@@ -86,7 +86,7 @@ async def test_a_normal_close_or_a_handover_moves_the_line_on_at_once(grace):
         await m.attach(s)
     await m.detach(a, code=1000)                              # the page closed itself
     assert m.active is b and b.started
-    m._handed_over = b                                        # inactive with people waiting (4002)
+    m._handed_over.add(b)                                     # inactive with people waiting (4002)
     await m.detach(b, code=4002)
     assert m.active is c and c.started
 
@@ -186,3 +186,110 @@ async def test_a_closed_tab_is_held_shorter_than_a_lost_connection(monkeypatch):
     await m.detach(a, code=1001)
     await asyncio.sleep(0.15)
     assert m.active is b and b.started
+
+
+# --- several conversations at once (settings.conversations, 3 Nov 2026) -------------------------------
+
+class FakeLink:
+    def __init__(self, slot):
+        self.slot, self.frame_sink, self.on_hello, self.connected = slot, None, None, True
+
+
+def multi(capacity=2):
+    m = SessionManager()
+    links = [FakeLink(i) for i in range(capacity)]
+    m.configure(capacity, links)
+    return m, links
+
+
+async def test_two_customers_talk_at_once_and_the_third_waits(grace):
+    m, links = multi(2)
+    a, b, c = FakeSession(visitor="aaaa-1111"), FakeSession(visitor="bbbb-2222"), FakeSession(visitor="cccc-3333")
+    assert await m.attach(a) is True and await m.attach(b) is True
+    assert await m.attach(c) is False and m.waiting == [c]
+    assert m.sessions == [a, b] and a.started and b.started and not c.started
+    # each conversation has its own avatar stream, feeding its own page
+    assert a.avatar_link is links[0] and b.avatar_link is links[1]
+    assert links[0].frame_sink == a.on_avatar_frame and links[1].frame_sink == b.on_avatar_frame
+    assert '"position": 1' in c.ws.sent[-1]
+
+
+async def test_whoever_leaves_frees_their_stream_for_the_next_in_line(grace):
+    m, links = multi(2)
+    a, b, c = FakeSession(visitor="aaaa-1111"), FakeSession(visitor="bbbb-2222"), FakeSession(visitor="cccc-3333")
+    for s in (a, b, c):
+        await m.attach(s)
+    await m.detach(b, code=1000)                          # b closed the page
+    assert m.sessions == [a, c] and c.started and c.ready
+    assert c.avatar_link is links[1] and links[1].frame_sink == c.on_avatar_frame
+    assert links[0].frame_sink == a.on_avatar_frame       # a is not disturbed
+
+
+async def test_a_reload_gets_its_own_stream_back_and_a_lost_connection_keeps_its_slot(grace):
+    m, links = multi(2)
+    a, b, c = FakeSession(visitor="aaaa-1111"), FakeSession(visitor="bbbb-2222"), FakeSession(visitor="cccc-3333")
+    for s in (a, b):
+        await m.attach(s)
+    b2 = FakeSession(visitor="bbbb-2222")                 # b reloads its page
+    assert await m.attach(b2) is True and b.closed and b.ws.closed == 4001
+    assert b2.avatar_link is links[1] and m.sessions == [a, b2]
+    await m.detach(a, code=1006)                          # a's connection drops: its slot is kept
+    assert await m.attach(c) is False                     # nobody takes a's slot during the grace period
+    a2 = FakeSession(visitor="aaaa-1111")
+    assert await m.attach(a2) is True and a2.avatar_link is links[0]
+    assert m.waiting == [c]
+
+
+async def test_a_held_slot_goes_to_the_line_when_nobody_comes_back(grace):
+    m, links = multi(2)
+    a, b, c = FakeSession(visitor="aaaa-1111"), FakeSession(visitor="bbbb-2222"), FakeSession(visitor="cccc-3333")
+    for s in (a, b, c):
+        await m.attach(s)
+    await m.detach(a, code=1006)
+    assert not c.started
+    await asyncio.sleep(0.15)                              # the grace period ends
+    assert c.started and c.avatar_link is links[0] and m.sessions == [b, c]
+
+
+async def test_when_full_the_longest_inactive_conversation_is_handed_over(monkeypatch):
+    monkeypatch.setattr(ws_mod, "IDLE_HANDOVER_S", 0.0)
+    m, _ = multi(2)
+    a, b, c = FakeSession(visitor="aaaa-1111"), FakeSession(visitor="bbbb-2222"), FakeSession(visitor="cccc-3333")
+    for s in (a, b):
+        await m.attach(s)
+    a.sm = b.sm = SimpleNamespace(state=None)
+    a.last_activity, b.last_activity = time.time() - 50, time.time() - 10
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(ws_mod.asyncio, "sleep", lambda s: real_sleep(0.01))
+    await m.attach(c)
+    await real_sleep(0.1)
+    assert a.ws.closed == 4002 and b.ws.closed is None      # a was idle longest
+    assert a in m._handed_over
+
+
+async def test_busy_when_any_conversation_is_busy():
+    m, _ = multi(2)
+    a, b = FakeSession(visitor="aaaa-1111"), FakeSession(visitor="bbbb-2222")
+    for s in (a, b):
+        await m.attach(s)
+    a.sm, b.sm = SimpleNamespace(state=None), SimpleNamespace(state=ws_mod.State.THINKING)
+    a.last_activity = b.last_activity = time.time() - 10
+    assert m.busy()
+    b.sm = SimpleNamespace(state=None)
+    assert not m.busy()
+
+
+async def test_customers_arriving_10_s_and_15_s_apart_all_start_at_once_and_a_fourth_waits(grace):
+    """The owner's case (3 Nov 2026): A starts, B 10 s later, C 15 s later - all three talk at the same time,
+    each with their own avatar stream; A and B are not disturbed by the newcomers; D waits for a free place."""
+    m, links = multi(3)
+    a, b, c, d = (FakeSession(visitor=f"{x * 4}-1111") for x in "abcd")
+    assert await m.attach(a) is True
+    a.last_activity = time.time() - 10                     # A has been talking for 10 s
+    assert await m.attach(b) is True and a.started and not a.closed
+    assert await m.attach(c) is True and not a.closed and not b.closed
+    assert m.sessions == [a, b, c] and [s.avatar_link for s in (a, b, c)] == links
+    assert all(link.frame_sink == s.on_avatar_frame for link, s in zip(links, (a, b, c), strict=True))
+    assert await m.attach(d) is False and m.waiting == [d] and not d.started
+    await m.detach(b, code=1000)                           # B leaves: D gets B's stream, A and C go on
+    assert d.started and d.avatar_link is links[1] and m.sessions == [a, c, d]

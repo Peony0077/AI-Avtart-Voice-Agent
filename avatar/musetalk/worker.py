@@ -16,6 +16,12 @@ Protocol (WebSocket, one client = the backend):
 Idle frames are paced at fps. Speech frames are rendered as fast as possible and
 carry a pts on the turn's audio timeline; the browser shows them by audio clock.
 
+Several conversations at once (--streams N, 2026-11-03): the backend opens one WebSocket per conversation and
+each gets its own AvatarWorker - its own idle video, reply, expression, gestures and video encoders - while
+the models and the avatar's loops (gigabytes of RAM) are loaded once (Shared) and shared. The GPU stages take
+turns (one lock): when two replies overlap, each one's frame-time estimate rises and its catch-up rules
+(catchup.py: smaller batches, every 2nd/3rd frame, skipping late frames) keep it in step with its audio.
+
 Run: avatar\\musetalk\\.venv\\Scripts\\python avatar\\musetalk\\worker.py --avatar dev_girl
 """
 from __future__ import annotations
@@ -109,10 +115,32 @@ class Turn:
         return audible_ms(self.played_ms, self.played_at, time.perf_counter(), at)
 
 
-class AvatarWorker:
-    def __init__(self, avatar_id: str, batch: int, quality: int, lead_ms: int, gate_frames: int = 4,
-                 warm_burst_ms: int = 0, late_ms: int = 100, decoder: str = "vae", h264_kbps: int = 700,
-                 h264_idle_kbps: int = 350, h264_encoder: str = "auto", upscaler: str = "x2plus") -> None:
+class LockedEngine:
+    """The engine shared by every conversation: its GPU stages (audio features, lip-synced faces) run one at
+    a time, so two replies take turns batch by batch; compositing (CPU) runs in parallel. The time a batch
+    waits for the lock counts in its stream's frame-time estimate, which is what makes the catch-up work."""
+
+    def __init__(self, engine: MuseTalkEngine) -> None:
+        self._engine = engine
+        self._lock = threading.Lock()
+
+    def faces(self, *args, **kwargs):
+        with self._lock:
+            return self._engine.faces(*args, **kwargs)
+
+    def audio_features(self, *args, **kwargs):
+        with self._lock:
+            return self._engine.audio_features(*args, **kwargs)
+
+    def __getattr__(self, name):                 # compose, batch_size, load_s ... as they are
+        return getattr(self._engine, name)
+
+
+class Shared:
+    """What every conversation shares: the avatar's loops and gesture variants (RAM) and the models (VRAM)."""
+
+    def __init__(self, avatar_id: str, batch: int, decoder: str = "vae", upscaler: str = "x2plus",
+                 h264_encoder: str = "auto") -> None:
         folder = AVATARS / avatar_id
         meta = json.loads((folder / "avatar.json").read_text(encoding="utf-8"))
         self.fps = meta["fps"]
@@ -130,15 +158,34 @@ class AvatarWorker:
                 if expression in self.loops and (vdir / "delta.pkl").exists():
                     self.variants[(expression, gesture)] = self.loops[expression].with_delta(LoopDelta.load(vdir))
             self.gesture_windows[gesture] = cycle_windows([tuple(w) for w in gm["windows"]], n_forward, pingpong)
-        self._gesture: tuple[str, int, int] | None = None      # (gesture, first frame, end frame), absolute
-        self._reply_gesture: tuple[str, float] | None = None   # requested by the LLM for the next reply
         # large avatars (face box wider than SR_MIN_FACE px): the lower face is super-resolved before it is
         # pasted (engine.py), so the mouth is as crisp as the Real-ESRGAN loops around it
         face_w = float(np.median([c[2] - c[0] for c in next(iter(self.loops.values())).coords]))
         use_sr = bool(upscaler) and face_w > SR_MIN_FACE
-        self.engine = MuseTalkEngine(fps=self.fps, batch_size=batch, decoder=decoder, upscaler=upscaler if use_sr else None)
-        self.engine.use_sr = use_sr
-        self.warmup_s = self.engine.warmup(next(iter(self.loops.values())))
+        engine = MuseTalkEngine(fps=self.fps, batch_size=batch, decoder=decoder, upscaler=upscaler if use_sr else None)
+        engine.use_sr = use_sr
+        self.warmup_s = engine.warmup(next(iter(self.loops.values())))
+        self.engine = LockedEngine(engine)
+        # the NVENC probe (an ffmpeg run, 0.3-1 s) now, at start-up: done on the first "codec" message it
+        # blocked the event loop - no idle frames, no audio read - while a page was connecting
+        pick_encoder(h264_encoder)
+        logger.info(f"avatar {avatar_id}: {len(self.loops)} loops, fps {self.fps}, warmup {self.warmup_s}s, "
+                    f"{len(self.variants)} gesture variants")
+
+
+class AvatarWorker:
+    """One conversation's avatar: its own idle video, reply, expression, gestures and video encoders."""
+
+    def __init__(self, shared: Shared, quality: int, lead_ms: int, gate_frames: int = 4,
+                 warm_burst_ms: int = 0, late_ms: int = 100, h264_kbps: int = 700,
+                 h264_idle_kbps: int = 350, h264_encoder: str = "auto", stream_id: int = 0) -> None:
+        self.stream_id = stream_id
+        self.fps = shared.fps
+        self.loops, self.variants = shared.loops, shared.variants
+        self.gesture_windows, self.cycle = shared.gesture_windows, shared.cycle
+        self.engine, self.warmup_s = shared.engine, shared.warmup_s
+        self._gesture: tuple[str, int, int] | None = None      # (gesture, first frame, end frame), absolute
+        self._reply_gesture: tuple[str, float] | None = None   # requested by the LLM for the next reply
         self.quality = quality
         self.gate_frames = gate_frames
         self.warm_burst_ms = warm_burst_ms
@@ -162,9 +209,6 @@ class AvatarWorker:
         # process takes ~70 ms to start; a reply must not wait for it).
         self.codec = "jpeg"
         self.h264_kbps, self.h264_idle_kbps, self.h264_encoder = h264_kbps, h264_idle_kbps, h264_encoder
-        # the NVENC probe (an ffmpeg run, 0.3-1 s) now, at start-up: done on the first "codec" message it
-        # blocked the event loop - no idle frames, no audio read - while a page was connecting
-        pick_encoder(h264_encoder)
         self._idle_stream: H264Stream | None = None
         self._idle_restarted_at = 0.0
         self._spare: H264Stream | None = None
@@ -175,8 +219,6 @@ class AvatarWorker:
         self.ws = None
         self.stats = {"segments": 0, "frames": 0, "render_ms": 0.0, "late_first_frames": 0, "skipped": 0, "strided": 0,
                       "gestures": {}}
-        logger.info(f"avatar {avatar_id}: {len(self.loops)} loops x {len(self.idle_loop and self.loops[self.idle_loop])} frames, "
-                    f"fps {self.fps}, warmup {self.warmup_s}s, {len(self.variants)} gesture variants")
 
     # ------------------------------------------------------------------ protocol
     async def handle(self, ws) -> None:
@@ -188,7 +230,7 @@ class AvatarWorker:
         try:
             # (inside the try: a backend that dropped during the hello left self.ws set, and every later
             # connection was refused as "busy" until the worker restarted)
-            await ws.send(json.dumps({"type": "hello", "fps": self.fps, "loops": list(self.loops),
+            await ws.send(json.dumps({"type": "hello", "stream": self.stream_id, "fps": self.fps, "loops": list(self.loops),
                                       "frames": len(self.loops[self.idle_loop]), "size": self.loops[self.idle_loop].size,
                                       "load_s": self.engine.load_s, "warmup_s": self.warmup_s,
                                       "gestures": sorted({g for _, g in self.variants})}))
@@ -215,7 +257,7 @@ class AvatarWorker:
             while not self.queue.empty():              # the old turn's segments: not rendered for the next backend
                 self.queue.get_nowait()
             self._set_codec("jpeg")
-            logger.info("backend disconnected")
+            logger.info(f"stream {self.stream_id}: backend disconnected")
 
     def _on_json(self, msg: dict) -> None:
         kind = msg.get("type")
@@ -872,14 +914,29 @@ async def main() -> None:
                     "(upscale.py); '' = bicubic")
     ap.add_argument("--h264-encoder", choices=("auto", "libx264", "nvenc"), default="auto",
                     help="auto: NVENC when the GPU and ffmpeg have it (h264.py), else libx264")
+    ap.add_argument("--streams", type=int, default=1, help="conversations at once (one backend connection each)")
     args = ap.parse_args()
-    worker = AvatarWorker(args.avatar, args.batch, args.quality, args.lead_ms, args.gate_frames, args.warm_burst_ms,
-                          args.late_ms, args.decoder, args.h264_kbps, args.h264_idle_kbps, args.h264_encoder,
-                          args.upscaler)
+    shared = Shared(args.avatar, args.batch, args.decoder, args.upscaler, args.h264_encoder)
+    streams: dict[int, AvatarWorker] = {}
+
+    async def handle(ws) -> None:
+        free = [i for i in range(max(1, args.streams)) if i not in streams]
+        if not free:
+            await ws.close(code=4001, reason="busy")
+            return
+        worker = AvatarWorker(shared, args.quality, args.lead_ms, args.gate_frames, args.warm_burst_ms, args.late_ms,
+                              args.h264_kbps, args.h264_idle_kbps, args.h264_encoder, stream_id=free[0])
+        streams[free[0]] = worker
+        logger.info(f"stream {free[0]}: backend connected ({len(streams)} of {args.streams})")
+        try:
+            await worker.handle(ws)
+        finally:
+            streams.pop(free[0], None)
+
     # origins=[None]: only clients without an Origin header (the backend). A web page open in the user's
     # browser could otherwise connect to 127.0.0.1 and drive the avatar.
-    async with websockets.serve(worker.handle, args.host, args.port, max_size=None, ping_interval=20, origins=[None]):
-        logger.info(f"avatar worker listening on ws://{args.host}:{args.port}")
+    async with websockets.serve(handle, args.host, args.port, max_size=None, ping_interval=20, origins=[None]):
+        logger.info(f"avatar worker listening on ws://{args.host}:{args.port} ({args.streams} streams)")
         await asyncio.Future()
 
 

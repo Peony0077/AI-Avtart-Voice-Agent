@@ -1,0 +1,41 @@
+# agent.h-townparty.com -- HPN's AI avatar (this project, -AI-Avtart-Voice-Agent; not the HPN website).
+#
+# Installed on HPN's droplet as /opt/edge/conf/sites-enabled/30-agent.caddy by
+# deploy/hpn-edge/setup-server.sh (which validates the whole Caddyfile before a graceful reload, and
+# checks h-townparty.com and bingo afterwards). The website's and bingo's files are not touched.
+#
+# The droplet has no GPU: the avatar runs on the owner's PC. That PC keeps an SSH tunnel open to the
+# droplet (scripts/agent.sh, user agent-tunnel, which may open only this one port), listening on the
+# edge_hpn bridge's gateway 172.31.0.1:18080 -- reachable from this container, not from the internet.
+#
+# Caddy requests and renews this name's Let's Encrypt certificate itself (DNS: A agent -> 162.243.127.176).
+
+https://agent.h-townparty.com {
+	tls {
+		issuer acme {
+			email info@h-townparty.com
+		}
+	}
+
+	# Not for search engines: the page is the avatar, reached through links.
+	header X-Robots-Tag "noindex, nofollow"
+
+	# No gzip: the avatar's video and voice are binary WebSocket frames (Caddy passes the upgrade as is).
+	reverse_proxy 172.31.0.1:18080 {
+		# Each frame goes out at once (streaming), never buffered.
+		flush_interval -1
+		# The PC reconnecting its tunnel: hold a new request a few seconds instead of a 502 at once.
+		lb_try_duration 5s
+		lb_try_interval 250ms
+		transport http {
+			dial_timeout 5s
+		}
+	}
+
+	# The PC (or its tunnel) is off: say so plainly instead of a bare 502.
+	handle_errors 502 503 504 {
+		header Content-Type "text/html; charset=utf-8"
+		header Cache-Control "no-store"
+		respond `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Houston Party Network · AI Avatar</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#161616;color:#f7f7f7;font-family:Montserrat,system-ui,sans-serif;text-align:center;padding:24px}h1{font-family:'Archivo Black',system-ui,sans-serif;font-size:1.6rem;margin:0 0 12px}p{margin:6px 0;color:#c4c4c4}a{color:#dda2ee}</style></head><body><main><h1>The AI avatar is resting right now</h1><p>Please try again a little later.</p><p>Planning an event? Visit <a href="https://h-townparty.com/">h-townparty.com</a>, call <a href="tel:+18322950852">(832) 295-0852</a> or email <a href="mailto:Info@H-TownParty.com">Info@H-TownParty.com</a>.</p></main></body></html>` 503
+	}
+}

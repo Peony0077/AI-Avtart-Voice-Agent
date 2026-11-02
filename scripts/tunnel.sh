@@ -57,15 +57,17 @@ for attempt in 1 2 3; do
   sleep 5
 done
 [ -n "$URL" ] || { echo "tunnel did not start after 3 attempts; see $LOG" >&2; exit 1; }
+ENTRY_PATH=/
+[ "$PROFILE" = hpn ] && ENTRY_PATH=/houston-party-network/
 echo "$CF_PID" > logs/tunnel.pid
 trap - EXIT
 umask 077
 rm -f logs/tunnel_url.txt logs/customer_url.txt     # (an old file keeps its old permissions when rewritten)
-echo "$URL/?token=$AVATAR_ACCESS_TOKEN" > logs/tunnel_url.txt
-echo "$URL/?token=$AVATAR_CUSTOMER_TOKEN" > logs/customer_url.txt
+echo "$URL$ENTRY_PATH?token=$AVATAR_ACCESS_TOKEN" > logs/tunnel_url.txt
+echo "$URL$ENTRY_PATH?token=$AVATAR_CUSTOMER_TOKEN" > logs/customer_url.txt
 echo
-echo "Owner link (settings, leads):       $URL/?token=$AVATAR_ACCESS_TOKEN"
-echo "Customer link (conversation only):  $URL/?token=$AVATAR_CUSTOMER_TOKEN"
+echo "Owner link (settings, leads):       $URL$ENTRY_PATH?token=$AVATAR_ACCESS_TOKEN"
+echo "Customer link (conversation only):  $URL$ENTRY_PATH?token=$AVATAR_CUSTOMER_TOKEN"
 echo "(use headphones; allow the microphone when the browser asks)"
 if [ "$DETACH" = 1 ]; then echo "tunnel pid $CF_PID runs in the background; stop everything with scripts/run.sh --stop"; exit 0; fi
 echo "tunnel pid $CF_PID - press Ctrl+C to stop"

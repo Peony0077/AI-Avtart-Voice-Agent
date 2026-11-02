@@ -1,0 +1,756 @@
+{
+ "read_at": "2026-11-02T17:20:29-06:00",
+ "source": "https://h-townparty.com/api/plan/catalog/ over the export's catalogue",
+ "differences_from_export": [],
+ "items": [
+  {
+   "slug": "foam-dj",
+   "kind": "addon",
+   "name": "Professional DJ for Your Foam Party",
+   "badge": "",
+   "price_usd": "250.00",
+   "price_is_from": true,
+   "price_display": "Starting at $250",
+   "hourly_display": "",
+   "tagline": "",
+   "summary": "Add a professional DJ and emcee to Foam Blast or Foam Frenzy: live music, announcements and crowd interaction.",
+   "features": [],
+   "suits_event_types": [
+    "foam"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": null,
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [],
+   "hourly_rates": [],
+   "sort_order": 5,
+   "includes_lead": "",
+   "included_addons": []
+  },
+  {
+   "slug": "photo-booth",
+   "kind": "addon",
+   "name": "Photo Booth",
+   "badge": "",
+   "price_usd": "275.00",
+   "price_is_from": true,
+   "price_display": "Starting at $275",
+   "hourly_display": "",
+   "tagline": "",
+   "summary": "A photo booth for guests to use through the night.",
+   "features": [],
+   "suits_event_types": [
+    "corporate",
+    "foam",
+    "party",
+    "school"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": null,
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [
+    "headliner-wedding-experience"
+   ],
+   "hourly_rates": [],
+   "sort_order": 10,
+   "includes_lead": "",
+   "included_addons": []
+  },
+  {
+   "slug": "photo-booth-print-station",
+   "kind": "addon",
+   "name": "Photo Booth Print Station",
+   "badge": "",
+   "price_usd": null,
+   "price_is_from": false,
+   "price_display": "Price on request",
+   "hourly_display": "",
+   "tagline": "",
+   "summary": "Instant prints from the photo booth, so guests take a copy home.",
+   "features": [],
+   "suits_event_types": [
+    "corporate",
+    "foam",
+    "party",
+    "school"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": null,
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [
+    "headliner-wedding-experience"
+   ],
+   "hourly_rates": [],
+   "sort_order": 12,
+   "includes_lead": "",
+   "included_addons": []
+  },
+  {
+   "slug": "audio-guest-book",
+   "kind": "addon",
+   "name": "Audio Guest Book",
+   "badge": "",
+   "price_usd": "150.00",
+   "price_is_from": false,
+   "price_display": "$150",
+   "hourly_display": "",
+   "tagline": "",
+   "summary": "Guests leave voice messages instead of signing a book — a keepsake you can listen back to.",
+   "features": [],
+   "suits_event_types": [
+    "corporate",
+    "foam",
+    "party",
+    "school"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": null,
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [
+    "headliner-wedding-experience"
+   ],
+   "hourly_rates": [],
+   "sort_order": 20,
+   "includes_lead": "",
+   "included_addons": []
+  },
+  {
+   "slug": "video-guest-book",
+   "kind": "addon",
+   "name": "Video Guest Book",
+   "badge": "",
+   "price_usd": "300.00",
+   "price_is_from": false,
+   "price_display": "$300",
+   "hourly_display": "",
+   "tagline": "",
+   "summary": "Guests record a short video message instead of signing a book — the same keepsake, with their faces in it.",
+   "features": [],
+   "suits_event_types": [
+    "corporate",
+    "foam",
+    "party",
+    "school"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": null,
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [],
+   "hourly_rates": [],
+   "sort_order": 25,
+   "includes_lead": "",
+   "included_addons": []
+  },
+  {
+   "slug": "guest-book-booth",
+   "kind": "addon",
+   "name": "Guest Book Booth",
+   "badge": "",
+   "price_usd": "150.00",
+   "price_is_from": false,
+   "price_display": "$150",
+   "hourly_display": "",
+   "tagline": "",
+   "summary": "The physical booth for the audio or video guest book: somewhere to sit, lit and signed, so guests use it instead of walking past it.",
+   "features": [],
+   "suits_event_types": [
+    "corporate",
+    "foam",
+    "party",
+    "school"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": null,
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [],
+   "hourly_rates": [],
+   "sort_order": 27,
+   "includes_lead": "",
+   "included_addons": []
+  },
+  {
+   "slug": "karaoke-addon",
+   "kind": "addon",
+   "name": "Karaoke",
+   "badge": "",
+   "price_usd": "250.00",
+   "price_is_from": false,
+   "price_display": "$250",
+   "hourly_display": "",
+   "tagline": "",
+   "summary": "Microphones, screen and an extensive song library so guests can take the stage.",
+   "features": [],
+   "suits_event_types": [
+    "corporate",
+    "foam",
+    "party",
+    "school"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": null,
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [],
+   "hourly_rates": [],
+   "sort_order": 35,
+   "includes_lead": "",
+   "included_addons": []
+  },
+  {
+   "slug": "wireless-uplighting",
+   "kind": "addon",
+   "name": "Wireless Uplighting",
+   "badge": "",
+   "price_usd": "500.00",
+   "price_is_from": false,
+   "price_display": "$500",
+   "hourly_display": "",
+   "tagline": "",
+   "summary": "Wireless uplights set around the room, colour-controlled through the night.",
+   "features": [],
+   "suits_event_types": [
+    "corporate",
+    "foam",
+    "party",
+    "school"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": null,
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [
+    "signature-wedding",
+    "headliner-wedding-experience"
+   ],
+   "hourly_rates": [],
+   "sort_order": 40,
+   "includes_lead": "",
+   "included_addons": []
+  },
+  {
+   "slug": "dancing-on-a-cloud",
+   "kind": "addon",
+   "name": "Dancing on a Cloud",
+   "badge": "",
+   "price_usd": "350.00",
+   "price_is_from": false,
+   "price_display": "$350",
+   "hourly_display": "",
+   "tagline": "",
+   "summary": "Dry-ice fog that rolls across the dance floor, so a first dance or any big moment happens on a cloud. Subject to venue approval.",
+   "features": [],
+   "suits_event_types": [
+    "wedding",
+    "party",
+    "foam",
+    "corporate",
+    "school"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": null,
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [
+    "headliner-wedding-experience"
+   ],
+   "hourly_rates": [],
+   "sort_order": 45,
+   "includes_lead": "",
+   "included_addons": []
+  },
+  {
+   "slug": "monograms",
+   "kind": "addon",
+   "name": "Monograms",
+   "badge": "",
+   "price_usd": null,
+   "price_is_from": false,
+   "price_display": "Price on request",
+   "hourly_display": "",
+   "tagline": "",
+   "summary": "Your name, logo or theme projected on the wall. Digital, so it can be colour, animation or photographs — not just initials.",
+   "features": [],
+   "suits_event_types": [
+    "corporate",
+    "foam",
+    "party",
+    "school"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": null,
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [],
+   "hourly_rates": [],
+   "sort_order": 70,
+   "includes_lead": "",
+   "included_addons": []
+  },
+  {
+   "slug": "led-party-sticks",
+   "kind": "addon",
+   "name": "LED Party Sticks",
+   "badge": "",
+   "price_usd": "100.00",
+   "price_is_from": true,
+   "price_display": "Starting at $100",
+   "hourly_display": "",
+   "tagline": "",
+   "summary": "Glowing batons for the dance floor. Guests keep them, so they double as a party favour.",
+   "features": [],
+   "suits_event_types": [
+    "wedding",
+    "party",
+    "foam",
+    "corporate",
+    "school"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": null,
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [
+    "headliner-wedding-experience"
+   ],
+   "hourly_rates": [],
+   "sort_order": 90,
+   "includes_lead": "",
+   "included_addons": []
+  },
+  {
+   "slug": "jukebox-bingo-private",
+   "kind": "addon",
+   "name": "Jukebox Bingo",
+   "badge": "",
+   "price_usd": null,
+   "price_is_from": false,
+   "price_display": "Price on request",
+   "hourly_display": "",
+   "tagline": "",
+   "summary": "Our music bingo night, booked privately for your event — a host, the screens and the prizes. The same show HPN runs weekly in Houston bars.",
+   "features": [],
+   "suits_event_types": [
+    "corporate",
+    "foam",
+    "party",
+    "school"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": null,
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [],
+   "hourly_rates": [],
+   "sort_order": 120,
+   "includes_lead": "",
+   "included_addons": []
+  },
+  {
+   "slug": "reception-essentials",
+   "kind": "package",
+   "name": "Reception Essentials",
+   "badge": "",
+   "price_usd": "799.00",
+   "price_is_from": true,
+   "price_display": "Starting at $799",
+   "hourly_display": "",
+   "tagline": "",
+   "summary": "A professional DJ and emcee for couples who have the ceremony covered and want a polished, energetic reception.",
+   "features": [
+    "Up to 4 hours of reception coverage",
+    "Professional DJ and emcee",
+    "Professional reception sound system",
+    "Wireless microphone for announcements and toasts",
+    "Dance-floor party lighting",
+    "Personalized music selections and do-not-play list",
+    "Online planning access",
+    "Reception timeline review",
+    "Coordination with the venue and other vendors",
+    "Setup and teardown"
+   ],
+   "suits_event_types": [
+    "wedding"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": null,
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [],
+   "hourly_rates": [],
+   "sort_order": 10,
+   "includes_lead": "",
+   "included_addons": []
+  },
+  {
+   "slug": "signature-wedding",
+   "kind": "package",
+   "name": "Signature Wedding",
+   "badge": "Most Popular",
+   "price_usd": "1495.00",
+   "price_is_from": true,
+   "price_display": "Starting at $1,495",
+   "hourly_display": "",
+   "tagline": "",
+   "summary": "Complete entertainment coverage from the ceremony through the final dance.",
+   "features": [
+    "Up to 5 hours of ceremony and reception coverage",
+    "Separate ceremony sound system",
+    "Wireless ceremony microphones",
+    "Prelude, processional, recessional, and ceremony music",
+    "Cocktail-hour music",
+    "Enhanced dance-floor lighting",
+    "Wireless uplighting",
+    "Dedicated planning consultation",
+    "Ceremony and reception timeline coordination",
+    "DJ assistant/event technician"
+   ],
+   "suits_event_types": [
+    "wedding"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": "reception-essentials",
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [
+    "wireless-uplighting"
+   ],
+   "hourly_rates": [],
+   "sort_order": 20,
+   "includes_lead": "Everything in Reception Essentials, plus:",
+   "included_addons": [
+    "wireless-uplighting"
+   ]
+  },
+  {
+   "slug": "headliner-wedding-experience",
+   "kind": "package",
+   "name": "Headliner Wedding Experience",
+   "badge": "",
+   "price_usd": "2295.00",
+   "price_is_from": true,
+   "price_display": "Starting at $2,295",
+   "hourly_display": "",
+   "tagline": "",
+   "summary": "The complete HPN wedding experience with full wedding coverage and additional entertainment for guests.",
+   "features": [
+    "Photo booth & Print Station (4 hours)",
+    "Audio guest book",
+    "Expanded lighting production",
+    "Dancing on a Cloud for the first dance",
+    "Dedicated event technician",
+    "LED Party Sticks"
+   ],
+   "suits_event_types": [
+    "wedding"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": "signature-wedding",
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [
+    "photo-booth",
+    "photo-booth-print-station",
+    "audio-guest-book",
+    "wireless-uplighting",
+    "dancing-on-a-cloud",
+    "led-party-sticks"
+   ],
+   "hourly_rates": [],
+   "sort_order": 30,
+   "includes_lead": "Everything in Signature Wedding, plus:",
+   "included_addons": [
+    "audio-guest-book",
+    "dancing-on-a-cloud",
+    "led-party-sticks",
+    "photo-booth",
+    "photo-booth-print-station",
+    "wireless-uplighting"
+   ]
+  },
+  {
+   "slug": "party-essentials",
+   "kind": "package",
+   "name": "Party Essentials",
+   "badge": "",
+   "price_usd": "549.00",
+   "price_is_from": true,
+   "price_display": "Starting at $549 for 3 hours",
+   "hourly_display": "then $175 for each extra hour",
+   "tagline": "Everything needed to bring professional sound, music, and energy to your celebration.",
+   "summary": "Professional sound, great music, and party lighting for birthdays, anniversaries, graduations, and private celebrations. Tell us what you want to hear, and we’ll build the atmosphere around your guests.",
+   "features": [
+    "Up to 3 hours of DJ entertainment",
+    "Professional DJ and emcee",
+    "Professional sound system",
+    "Wireless microphone for announcements",
+    "Standard dance-floor lighting",
+    "Personalized music selections",
+    "Guest song requests",
+    "Online event-planning access",
+    "Setup and teardown"
+   ],
+   "suits_event_types": [
+    "corporate",
+    "party",
+    "school"
+   ],
+   "min_guests": null,
+   "max_guests": 150,
+   "builds_on": null,
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [],
+   "hourly_rates": [
+    {
+     "label": "Time",
+     "included_hours": 3,
+     "extra_hour_price_usd": "175.00",
+     "max_hours": null
+    }
+   ],
+   "sort_order": 40,
+   "includes_lead": "",
+   "included_addons": []
+  },
+  {
+   "slug": "signature-party",
+   "kind": "package",
+   "name": "Signature Party",
+   "badge": "Most Popular",
+   "price_usd": "849.00",
+   "price_is_from": true,
+   "price_display": "Starting at $849 for 5 hours",
+   "hourly_display": "then $175 for each extra hour",
+   "tagline": "More time, more lighting, and more flexibility for a complete evening of entertainment.",
+   "summary": "Our most popular private-party package gives you up to five hours of entertainment, enhanced lighting, and the flexibility to take your event from background music and introductions to a full dance floor.",
+   "features": [
+    "Up to 5 hours of DJ entertainment",
+    "Enhanced dance-floor lighting",
+    "Expanded sound appropriate for larger celebrations",
+    "Additional planning and timeline support",
+    "Coordination of introductions, announcements, and special moments"
+   ],
+   "suits_event_types": [
+    "corporate",
+    "party",
+    "school"
+   ],
+   "min_guests": null,
+   "max_guests": 150,
+   "builds_on": "party-essentials",
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [],
+   "hourly_rates": [
+    {
+     "label": "Time",
+     "included_hours": 5,
+     "extra_hour_price_usd": "175.00",
+     "max_hours": null
+    }
+   ],
+   "sort_order": 50,
+   "includes_lead": "Everything in Party Essentials, plus:",
+   "included_addons": []
+  },
+  {
+   "slug": "headliner-party",
+   "kind": "package",
+   "name": "Headliner Party",
+   "badge": "",
+   "price_usd": "1399.00",
+   "price_is_from": true,
+   "price_display": "Starting at $1,399 for 5 hours",
+   "hourly_display": "then $175 for each extra hour",
+   "tagline": "A complete party experience with extended entertainment and your choice of two enhancements.",
+   "summary": "Turn your party into a complete entertainment experience. Enjoy up to five hours of DJ service, expanded lighting, and two enhancements selected to fit your guests, venue, and vision.",
+   "features": [
+    "Expanded lighting production",
+    "Your choice of two qualifying enhancements",
+    "Dedicated event technician when required by the selected enhancements"
+   ],
+   "suits_event_types": [
+    "corporate",
+    "party",
+    "school"
+   ],
+   "min_guests": null,
+   "max_guests": 150,
+   "builds_on": "signature-party",
+   "choice_count": 2,
+   "choice_options": [
+    "photo-booth",
+    "photo-booth-print-station",
+    "audio-guest-book",
+    "karaoke-addon",
+    "wireless-uplighting",
+    "dancing-on-a-cloud",
+    "led-party-sticks"
+   ],
+   "incompatible_with": [],
+   "hourly_rates": [
+    {
+     "label": "Time",
+     "included_hours": 5,
+     "extra_hour_price_usd": "175.00",
+     "max_hours": null
+    }
+   ],
+   "sort_order": 60,
+   "includes_lead": "Everything in Signature Party, plus:",
+   "included_addons": []
+  },
+  {
+   "slug": "foam-blast",
+   "kind": "package",
+   "name": "Foam Blast",
+   "badge": "",
+   "price_usd": "349.00",
+   "price_is_from": true,
+   "price_display": "Starting at $349 for the first hour",
+   "hourly_display": "then $150 for each extra hour",
+   "tagline": "A high-energy foam experience for birthdays and smaller celebrations.",
+   "summary": "Turn your backyard or party space into a mountain of foam. We bring the equipment, foam solution, music, and an attendant to operate everything while your guests jump in and have fun.",
+   "features": [
+    "Up to 1 hour of foam entertainment",
+    "Professional foam cannon",
+    "Foam solution included",
+    "Trained on-site attendant",
+    "Delivery and setup within the standard service area",
+    "Party music playlist",
+    "Setup and equipment removal",
+    "Designed for approximately 30 participants at a time"
+   ],
+   "suits_event_types": [
+    "foam"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": null,
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [],
+   "hourly_rates": [
+    {
+     "label": "Foam",
+     "included_hours": 1,
+     "extra_hour_price_usd": "150.00",
+     "max_hours": null
+    }
+   ],
+   "sort_order": 70,
+   "includes_lead": "",
+   "included_addons": []
+  },
+  {
+   "slug": "foam-frenzy",
+   "kind": "package",
+   "name": "Foam Frenzy",
+   "badge": "Most Popular",
+   "price_usd": "499.00",
+   "price_is_from": true,
+   "price_display": "Starting at $499 for 2 hours",
+   "hourly_display": "then $150 for each extra hour",
+   "tagline": "More foam time for larger parties, schools, daycares, and group celebrations.",
+   "summary": "Double the foam time and keep the party going. This is our most popular choice for birthdays, schools, daycares, church groups, and neighborhood celebrations.",
+   "features": [
+    "Up to 2 hours of foam entertainment",
+    "Additional foam solution",
+    "Extended on-site attendant",
+    "Music throughout the foam party",
+    "Designed for approximately 50 participants at a time"
+   ],
+   "suits_event_types": [
+    "foam"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": "foam-blast",
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [],
+   "hourly_rates": [
+    {
+     "label": "Foam",
+     "included_hours": 2,
+     "extra_hour_price_usd": "150.00",
+     "max_hours": null
+    }
+   ],
+   "sort_order": 80,
+   "includes_lead": "Everything in Foam Blast, plus:",
+   "included_addons": []
+  },
+  {
+   "slug": "foam-party-live",
+   "kind": "package",
+   "name": "Foam Party Live",
+   "badge": "",
+   "price_usd": "799.00",
+   "price_is_from": true,
+   "price_display": "Starting at $799 for a 3-hour event with 2 hours of foam",
+   "hourly_display": "then $150 per extra event hour, $150 per extra foam hour",
+   "tagline": "A complete hosted party combining a professional DJ with two hours of foam.",
+   "summary": "Foam party meets dance party. A professional DJ hosts the celebration with music, announcements, and crowd interaction while our foam operator keeps the foam flying. It is a complete party experience handled by one entertainment team.",
+   "features": [
+    "Up to 3 hours of total event entertainment",
+    "Up to 2 hours of foam entertainment",
+    "Professional foam cannon",
+    "Foam solution included",
+    "Professional DJ and emcee",
+    "Sound system and microphones",
+    "Family-friendly music customized for the event",
+    "Interactive announcements and party hosting",
+    "Foam operator",
+    "Delivery, setup, and equipment removal"
+   ],
+   "suits_event_types": [
+    "foam"
+   ],
+   "min_guests": null,
+   "max_guests": null,
+   "builds_on": null,
+   "choice_count": 0,
+   "choice_options": [],
+   "incompatible_with": [],
+   "hourly_rates": [
+    {
+     "label": "Event",
+     "included_hours": 3,
+     "extra_hour_price_usd": "150.00",
+     "max_hours": null
+    },
+    {
+     "label": "Foam",
+     "included_hours": 2,
+     "extra_hour_price_usd": "150.00",
+     "max_hours": null
+    }
+   ],
+   "sort_order": 90,
+   "includes_lead": "",
+   "included_addons": []
+  }
+ ]
+}

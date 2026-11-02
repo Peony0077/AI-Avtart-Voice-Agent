@@ -52,6 +52,8 @@ SCRIPTS = {
     "mic_soak": [("silence", 1.0), ("say", "Tell me one short interesting fact."), ("silence", 16.0)],
     "mic_rag": [("silence", 1.5), ("say", "What are the opening hours of the Moonlight Bakery on Sundays?"),
                 ("silence", 14.0)],
+    # Houston Party Network (profile hpn, tests/e2e/phase7_hpn.spec.js)
+    "mic_hpn_wedding": [("silence", 1.5), ("say", "How much is a wedding?"), ("silence", 16.0)],
 }
 
 

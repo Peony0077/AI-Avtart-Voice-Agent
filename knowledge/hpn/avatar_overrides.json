@@ -1,0 +1,55 @@
+{
+ "why": "The Event helper's knowledge base (event-helper-knowledge.json) is used word for word, except what is listed here. The avatar is for HPN's customers, not its DJs or staff, and a few answers describe the website's text helper itself ('it uses no AI', 'what you type here'), which is not true of a talking avatar. Each rewrite keeps the original's facts about HPN and says only what is true of the avatar (backend/app/hpn: answers come from this knowledge, the voice and face are AI, nothing is sent to an outside AI service, phone numbers, emails and card numbers are masked in its log, no memory is kept in HPN mode; a customer's details go to HPN as an enquiry only when they confirm them (backend/app/hpn/enquiry.py)).",
+ "exclude_categories": [
+  "team"
+ ],
+ "topics": {
+  "helper-privacy": {
+   "answer": "I answer from Houston Party Network's own information. What you say is turned into text on our own avatar server to find the answer, and no outside AI service gets it. Your voice isn't kept.\n\nIf you ask me to pass your details to the team, I read them back first and send them only when you say yes: your name, email, phone and the questions you asked me go to Houston Party Network as an enquiry, like the contact form. Otherwise the text of your questions is kept in the server's log, so the team can see what I couldn't answer; card numbers, phone numbers and email addresses are taken out first. Please don't share card numbers or passwords here.",
+   "links": [
+    {
+     "label": "Terms & Privacy",
+     "path": "/terms-and-privacy/"
+    }
+   ],
+   "chips": [
+    "Privacy",
+    "Contact us"
+   ]
+  },
+  "concierge-replaced": {
+   "answer": "Until 29 October 2026 the website and the app had an AI chat, the event concierge. The website's Event helper has replaced it, and I give the Event helper's answers out loud: they come from Houston Party Network's own information, not made up by AI.\n\nThe conversations people had with the concierge are kept so we can follow up on them, until you ask us to delete them: call {phone} or email {email}.",
+   "links": [
+    {
+     "label": "Terms & Privacy",
+     "path": "/terms-and-privacy/"
+    },
+    {
+     "label": "Contact us",
+     "path": "/contact-us/"
+    }
+   ],
+   "chips": [
+    "What happens to what I type here?",
+    "Do you use AI?"
+   ]
+  },
+  "ai-check": {
+   "answer": "My answers come from Houston Party Network's own information and aren't written by AI, though I use AI to hear you and to speak, on our own avatar server. On the website, one feature uses AI, and only if you switch it on: **AI check of your plan**, on your event page in My events. With it on, our team can ask an AI assistant (Claude, made by Anthropic) before the day to read your planning answers and point out anything that doesn't add up, such as times that clash or a song on both your must-play and do-not-play lists.\n\nOnly then are your answers sent to Anthropic, and only our team sees what it says. It's off until you switch it on, and you can switch it off at any time.",
+   "links": [
+    {
+     "label": "My events",
+     "path": "/portal/"
+    },
+    {
+     "label": "Terms & Privacy",
+     "path": "/terms-and-privacy/"
+    }
+   ],
+   "chips": [
+    "What happens to what I type here?",
+    "Your planning form"
+   ]
+  }
+ }
+}

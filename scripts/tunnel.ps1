@@ -80,11 +80,12 @@ for ($attempt = 1; $attempt -le 3 -and -not $url; $attempt++) {
 if (-not $url) { throw "tunnel did not start after 3 attempts; see $log" }
 # written after run.ps1 wrote logs\backend.pid: the e2e tests take these links only while they are newer
 # than the running backend (tests\e2e\helpers.js)
-"$url/?token=$token" | Out-File (Join-Path $root 'logs\tunnel_url.txt') -Encoding ascii
-"$url/?token=$customer" | Out-File (Join-Path $root 'logs\customer_url.txt') -Encoding ascii
+$entryPath = if ($ProfileName -eq 'hpn') { '/houston-party-network/' } else { '/' }
+"${url}${entryPath}?token=$token" | Out-File (Join-Path $root 'logs\tunnel_url.txt') -Encoding ascii
+"${url}${entryPath}?token=$customer" | Out-File (Join-Path $root 'logs\customer_url.txt') -Encoding ascii
 Write-Host ''
-Write-Host "Owner link (settings, leads):       $url/?token=$token" -ForegroundColor Green
-Write-Host "Customer link (conversation only):  $url/?token=$customer" -ForegroundColor Green
+Write-Host "Owner link (settings, leads):       ${url}${entryPath}?token=$token" -ForegroundColor Green
+Write-Host "Customer link (conversation only):  ${url}${entryPath}?token=$customer" -ForegroundColor Green
 Write-Host '(use headphones; allow the microphone when the browser asks)'
 if ($Detach) { Write-Host "tunnel pid $($p.Id) runs in the background; stop everything with scripts\run.ps1 -Stop"; exit 0 }
 Write-Host "tunnel pid $($p.Id) - press Ctrl+C to stop"

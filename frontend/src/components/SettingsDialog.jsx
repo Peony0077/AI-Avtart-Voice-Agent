@@ -85,7 +85,7 @@ export default function SettingsDialog({ open, onClose, conv, voice }) {
       onClick={onClick} data-testid="settings">
       {!form ? <p className="muted">Loading…</p> : (
         <form onSubmit={save}>
-          <h2 id="settings-title">Avatar settings</h2>
+          <h2 id="settings-title">AI Agent settings</h2>
           <label>Name
             <input value={form.name} onChange={set('name')} maxLength={40} required data-testid="persona-name" />
           </label>

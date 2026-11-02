@@ -1,0 +1,568 @@
+{
+ "venues": [
+  {
+   "name": "Breakwater Grille",
+   "city": "Montgomery",
+   "street": "13109 Melville Dr",
+   "region": "TX",
+   "postcode": "77356",
+   "phone": "+19365821164"
+  },
+  {
+   "name": "Cedar Creek Saloon",
+   "city": "Waller",
+   "street": "20727 FM 362 at US290",
+   "region": "TX",
+   "postcode": "",
+   "phone": "+19369312214"
+  },
+  {
+   "name": "Cheers N Tomball",
+   "city": "Tomball",
+   "street": "916 W Main St",
+   "region": "TX",
+   "postcode": "77375",
+   "phone": "+12813512599"
+  },
+  {
+   "name": "Crazy Train Bar",
+   "city": "Magnolia",
+   "street": "38925 FM 1774",
+   "region": "TX",
+   "postcode": "77355",
+   "phone": "+12817894186"
+  },
+  {
+   "name": "Drifters Dive Bar",
+   "city": "Tomball",
+   "street": "401 1/2 Commerce St",
+   "region": "TX",
+   "postcode": "77375",
+   "phone": "+18327614582"
+  },
+  {
+   "name": "Franklin's Tower",
+   "city": "Spring",
+   "street": "4307 Treaschwig Rd",
+   "region": "TX",
+   "postcode": "77373",
+   "phone": "+12819823760"
+  },
+  {
+   "name": "Las Fuentes Mexican Restaurant",
+   "city": "Magnolia",
+   "street": "18306 FM 1488",
+   "region": "TX",
+   "postcode": "77354",
+   "phone": "+12813569923"
+  },
+  {
+   "name": "Lone Pint Brewery",
+   "city": "Magnolia",
+   "street": "507 Commerce St",
+   "region": "TX",
+   "postcode": "77355",
+   "phone": "+12817894061"
+  },
+  {
+   "name": "Molly Maguire's",
+   "city": "Houston",
+   "street": "15945 Kuykendahl Rd",
+   "region": "TX",
+   "postcode": "77068",
+   "phone": "+12815806167"
+  },
+  {
+   "name": "Molly Malone's",
+   "city": "Spring",
+   "street": "7824 Louetta Rd",
+   "region": "TX",
+   "postcode": "77379",
+   "phone": "+12813704949"
+  },
+  {
+   "name": "Molly's Pub - The Woodlands",
+   "city": "Spring",
+   "street": "24905 I-45",
+   "region": "TX",
+   "postcode": "77380",
+   "phone": "+12813671341"
+  },
+  {
+   "name": "Molly's Pub Conroe",
+   "city": "Conroe",
+   "street": "901 N Loop 336 W",
+   "region": "TX",
+   "postcode": "",
+   "phone": "+19364416167"
+  },
+  {
+   "name": "Molly's Pub Tomball",
+   "city": "Tomball",
+   "street": "28107 TX-249",
+   "region": "TX",
+   "postcode": "77375",
+   "phone": "+18325597385"
+  },
+  {
+   "name": "Mongo's",
+   "city": "Montgomery",
+   "street": "17099 Walden Rd Unit 140",
+   "region": "TX",
+   "postcode": "77356",
+   "phone": "+19364488237"
+  },
+  {
+   "name": "Olde City Pub",
+   "city": "Houston",
+   "street": "14124 Stuebner Airline Rd",
+   "region": "TX",
+   "postcode": "77069",
+   "phone": "+18322496167"
+  },
+  {
+   "name": "Tailgators Pub & Grill",
+   "city": "Magnolia",
+   "street": "33418 Egypt Ln, Suite L",
+   "region": "TX",
+   "postcode": "77354",
+   "phone": "+12812595343"
+  },
+  {
+   "name": "The Blue Lion Pub",
+   "city": "The Woodlands",
+   "street": "8000 McBeth Way, Suite 100",
+   "region": "TX",
+   "postcode": "77382",
+   "phone": "+18327915450"
+  },
+  {
+   "name": "Thirsty's Bar",
+   "city": "Pinehurst",
+   "street": "32015 TX-249, Suite 108",
+   "region": "TX",
+   "postcode": "77362",
+   "phone": "+12812598671"
+  },
+  {
+   "name": "Tony's Tavern",
+   "city": "Houston",
+   "street": "12779 Jones Rd #115",
+   "region": "TX",
+   "postcode": "",
+   "phone": "+12819709707"
+  }
+ ],
+ "slots": [
+  {
+   "id": "https://h-townparty.com/night-out/#slot-1",
+   "venue": "Molly Maguire's",
+   "service": "karaoke",
+   "label": "",
+   "weekday": 0,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-02"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-28",
+   "venue": "Breakwater Grille",
+   "service": "jukebox_bingo",
+   "label": "",
+   "weekday": 1,
+   "start_time": "18:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-03"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-18",
+   "venue": "Drifters Dive Bar",
+   "service": "jukebox_bingo",
+   "label": "",
+   "weekday": 1,
+   "start_time": "19:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-03"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-19",
+   "venue": "Molly's Pub Conroe",
+   "service": "jukebox_bingo",
+   "label": "",
+   "weekday": 1,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-03"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-29",
+   "venue": "Tailgators Pub & Grill",
+   "service": "karaoke",
+   "label": "",
+   "weekday": 1,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-03"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-30",
+   "venue": "Molly's Pub - The Woodlands",
+   "service": "jukebox_bingo",
+   "label": "",
+   "weekday": 2,
+   "start_time": "19:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-04"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-37",
+   "venue": "Mongo's",
+   "service": "jukebox_bingo",
+   "label": "",
+   "weekday": 2,
+   "start_time": "19:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-04"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-7",
+   "venue": "Cedar Creek Saloon",
+   "service": "karaoke",
+   "label": "",
+   "weekday": 2,
+   "start_time": "20:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-04"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-4",
+   "venue": "Olde City Pub",
+   "service": "karaoke",
+   "label": "",
+   "weekday": 2,
+   "start_time": "20:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-04"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-11",
+   "venue": "Tony's Tavern",
+   "service": "jukebox_bingo",
+   "label": "",
+   "weekday": 2,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-04"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-20",
+   "venue": "Breakwater Grille",
+   "service": "jukebox_bingo",
+   "label": "",
+   "weekday": 3,
+   "start_time": "18:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-05"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-31",
+   "venue": "Las Fuentes Mexican Restaurant",
+   "service": "karaoke",
+   "label": "",
+   "weekday": 3,
+   "start_time": "18:00",
+   "end_time": "21:00",
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-05"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-16",
+   "venue": "Molly's Pub Tomball",
+   "service": "jukebox_bingo",
+   "label": "",
+   "weekday": 3,
+   "start_time": "19:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-05"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-8",
+   "venue": "The Blue Lion Pub",
+   "service": "karaoke",
+   "label": "",
+   "weekday": 3,
+   "start_time": "19:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-05"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-32",
+   "venue": "Thirsty's Bar",
+   "service": "karaoke",
+   "label": "",
+   "weekday": 3,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-05"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-21",
+   "venue": "Lone Pint Brewery",
+   "service": "jukebox_bingo",
+   "label": "",
+   "weekday": 4,
+   "start_time": "18:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-06"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-24",
+   "venue": "Crazy Train Bar",
+   "service": "jukebox_bingo",
+   "label": "",
+   "weekday": 4,
+   "start_time": "19:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-06"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-13",
+   "venue": "Cheers N Tomball",
+   "service": "karaoke",
+   "label": "",
+   "weekday": 4,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-06"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-17",
+   "venue": "Drifters Dive Bar",
+   "service": "karaoke",
+   "label": "",
+   "weekday": 4,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-06"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-3",
+   "venue": "Molly Maguire's",
+   "service": "jukebox_bingo",
+   "label": "",
+   "weekday": 4,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-06"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-23",
+   "venue": "Molly Malone's",
+   "service": "jukebox_bingo",
+   "label": "",
+   "weekday": 4,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "fortnightly",
+   "anchor": "2026-11-13",
+   "next_date": "2026-11-13"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-14",
+   "venue": "Molly's Pub Tomball",
+   "service": "karaoke",
+   "label": "",
+   "weekday": 4,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-06"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-6",
+   "venue": "Olde City Pub",
+   "service": "jukebox_bingo",
+   "label": "",
+   "weekday": 4,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-06"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-9",
+   "venue": "Tony's Tavern",
+   "service": "karaoke",
+   "label": "",
+   "weekday": 4,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-06"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-33",
+   "venue": "Drifters Dive Bar",
+   "service": "karaoke",
+   "label": "Open mic karaoke",
+   "weekday": 5,
+   "start_time": "11:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-07"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-2",
+   "venue": "Molly Maguire's",
+   "service": "karaoke",
+   "label": "",
+   "weekday": 5,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-07"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-34",
+   "venue": "Molly Malone's",
+   "service": "karaoke",
+   "label": "",
+   "weekday": 5,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-07"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-15",
+   "venue": "Molly's Pub Tomball",
+   "service": "karaoke",
+   "label": "",
+   "weekday": 5,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-07"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-5",
+   "venue": "Olde City Pub",
+   "service": "karaoke",
+   "label": "",
+   "weekday": 5,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-07"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-10",
+   "venue": "Tony's Tavern",
+   "service": "karaoke",
+   "label": "",
+   "weekday": 5,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-07"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-26",
+   "venue": "Franklin's Tower",
+   "service": "jukebox_bingo",
+   "label": "",
+   "weekday": 6,
+   "start_time": "14:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-08"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-22",
+   "venue": "Lone Pint Brewery",
+   "service": "jukebox_bingo",
+   "label": "",
+   "weekday": 6,
+   "start_time": "16:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-08"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-35",
+   "venue": "Olde City Pub",
+   "service": "dj",
+   "label": "",
+   "weekday": 6,
+   "start_time": "20:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-08"
+  },
+  {
+   "id": "https://h-townparty.com/night-out/#slot-27",
+   "venue": "Molly's Pub - The Woodlands",
+   "service": "jukebox_bingo",
+   "label": "",
+   "weekday": 6,
+   "start_time": "21:00",
+   "end_time": null,
+   "cadence": "weekly",
+   "anchor": null,
+   "next_date": "2026-11-08"
+  }
+ ],
+ "read_at": "2026-11-02T17:20:29-06:00",
+ "source": "https://h-townparty.com/night-out/ (schema.org Event data)"
+}
