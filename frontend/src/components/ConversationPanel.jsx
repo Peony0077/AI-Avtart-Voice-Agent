@@ -37,7 +37,9 @@ export default function ConversationPanel({ conv, ready, onSend, inputRef }) {
   // the topic bar before the first message; after it, behind the Topics button (more room for the answers)
   const topicsInline = hpn && conv.messages.length === 0
   const subtitle = conv.waiting ? `You’re number ${conv.waiting} in line`
-    : !ready ? conv.status === 'ended (inactive)' ? 'Conversation ended — select Talk again to reconnect' : `Connecting to ${name}…`
+    : !ready ? conv.status === 'ended (inactive)' ? 'Conversation ended — select Talk again to reconnect'
+      : conv.status === 'access denied (token)' ? 'This link is incomplete: open the full link you were sent'
+        : `Connecting to ${name}…`
       : conv.state === 'SPEAKING' ? `${name} is speaking`
         : busy ? `${name} is preparing your answer` : 'Here to help with your next good time'
 

@@ -22,7 +22,7 @@ export default function AvatarVoiceControls({ conv, voice }) {
         // the microphone only starts on a tap (browsers require it): make that impossible to miss
         <button type="button" className="talk" data-testid="talk" onClick={voice.start} disabled={voice.starting}>
           {!voice.starting && !voice.error && <Icon name="mic" size={18} />}
-          {voice.starting ? 'Allow the microphone…' : voice.error ? 'Try again' : `Talk to ${conv.session?.persona ?? 'your event helper'}`}
+          {voice.starting ? 'Allow the microphone…' : voice.error ? 'Try again' : `Talk to ${conv.session?.persona ?? 'our AI avatar'}`}
         </button>
       )}
     </div>

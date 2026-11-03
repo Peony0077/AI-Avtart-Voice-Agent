@@ -19,6 +19,20 @@ export function accessToken() {
   }
 }
 
+// The customer link is meant to be shared: once the server says this is a customer page, its token goes back
+// into the address bar, so a link copied from there opens the conversation (without it the next Chrome was
+// refused: "access denied"). The owner's token (settings, leads) stays out of the bar.
+export function showSharedToken() {
+  try {
+    const token = sessionStorage.getItem('avatarToken')
+    const url = new URL(location.href)
+    if (token && !url.searchParams.get('token')) {
+      url.searchParams.set('token', token)
+      history.replaceState(history.state, '', url.pathname + url.search + url.hash)
+    }
+  } catch { /* no storage: the bar keeps what it has */ }
+}
+
 // A random id this browser keeps: each customer has their own memory on the server, and a reconnect
 // (same browser) continues its own conversation instead of waiting in line behind itself.
 export function visitorId() {

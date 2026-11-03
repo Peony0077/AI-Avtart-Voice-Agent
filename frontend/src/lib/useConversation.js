@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Connection } from './connection.js'
+import { Connection, showSharedToken } from './connection.js'
 import { h264Support } from './h264.js'
 import { opusSupport } from './opus.js'
 
@@ -65,6 +65,7 @@ export function useConversation() {
       switch (msg.type) {
         case 'session':
           roleRef.current = msg.role
+          if (msg.role === 'customer') showSharedToken()
           setSession(msg)
           setWaiting(null)
           // a reconnect starts a new session whose turn ids start again at 1: the earlier messages stay,

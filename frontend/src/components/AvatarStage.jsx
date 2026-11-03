@@ -387,19 +387,25 @@ export default function AvatarStage({ conv, voice }) {
   return (
     <section className={`stage${hasFrame ? ' stage--playing' : ''}`} aria-label="AI Agent">
       {available ? (
-        <canvas ref={canvasRef} data-testid="avatar-canvas" aria-label={`${conv.session?.persona ?? 'Your event helper'}, AI Agent video`} width={size?.[0] ?? 512} height={size?.[1] ?? 512} />
+        <canvas ref={canvasRef} data-testid="avatar-canvas" aria-label={`${conv.session?.persona ?? 'HPN'}, AI avatar video`} width={size?.[0] ?? 512} height={size?.[1] ?? 512} />
       ) : null}
-      {(!hasFrame || !available) && !conv.waiting && conv.status !== 'ended (inactive)' && (
+      {(!hasFrame || !available) && !conv.waiting && conv.status !== 'ended (inactive)' && !(conv.status === 'access denied (token)') && (
         <div className="stage-placeholder" role="status">
           <span className="stage-placeholder__monogram">{conv.session?.persona?.slice(0, 1) ?? 'H'}</span>
           <strong>{conv.session && !available ? 'Let’s keep the conversation going.' : 'A warm welcome is on its way.'}</strong>
-          <span>{conv.session && !available ? 'The avatar is unavailable. You can still type your questions below.' : 'Connecting you to your HPN event helper…'}</span>
+          <span>{conv.session && !available ? 'The avatar is unavailable. You can still type your questions below.' : 'Connecting you to Houston Party Network’s AI avatar…'}</span>
         </div>
       )}
       {conv.waiting && (
         <div className="stage-waiting" role="status" data-testid="waiting">
           <strong>{conv.session?.persona ?? 'She'} is talking with another customer right now.</strong>
           <span>You're number {conv.waiting} in line. This page connects you automatically - please stay.</span>
+        </div>
+      )}
+      {conv.status === 'access denied (token)' && (
+        <div className="stage-waiting" role="alert" data-testid="link-incomplete">
+          <strong>This link is incomplete or out of date.</strong>
+          <span>Please open the full link you were sent: it ends with ?token= and a code.</span>
         </div>
       )}
       {conv.status === 'ended (inactive)' && (

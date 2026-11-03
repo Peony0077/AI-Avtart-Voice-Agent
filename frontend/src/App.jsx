@@ -22,12 +22,13 @@ export default function App() {
   const keyboardOpen = useMobileViewport(appRef)
   const owner = conv.role === 'owner'
   const hpn = conv.session?.hpn ?? null
-  const name = conv.session?.persona ?? 'your event helper'
+  const name = conv.session?.persona ?? 'our AI avatar'
   const videoSize = conv.session?.avatar?.size
   const videoAspect = videoSize?.[0] > 0 && videoSize?.[1] > 0 ? videoSize[0] / videoSize[1] : 1
   const ready = conv.status === 'open' && !!conv.session && !conv.waiting
   const status = conv.waiting ? `You're number ${conv.waiting} in line`
-    : !ready ? conv.status === 'ended (inactive)' ? 'Conversation ended' : 'Connecting…'
+    : !ready ? conv.status === 'ended (inactive)' ? 'Conversation ended'
+      : conv.status === 'access denied (token)' ? 'Link incomplete' : 'Connecting…'
       : conv.state === 'THINKING' || conv.state === 'END_OF_TURN' ? 'Thinking…'
         : conv.state === 'SPEAKING' ? 'Speaking'
           : voice.active ? voice.speechDetected ? 'Hearing you…' : 'Listening'
@@ -77,10 +78,10 @@ export default function App() {
         <h1 className="visually-hidden">Houston Party Network AI Agent</h1>
 
         <div className="layout" style={{'--avatar-aspect': videoAspect}}>
-          <section className="stage-col" aria-label="Your AI event helper">
+          <section className="stage-col" aria-label="Houston Party Network AI avatar">
             <div className="avatar-heading">
               <span className="avatar-heading__identity"><span className="avatar-heading__icon"><Icon name="agent" size={20} /></span>
-                <span><strong>{conv.session?.persona ? `Meet ${name}` : 'Meet your event helper'}</strong><small>HPN’s AI Agent</small></span>
+                <span><strong>{conv.session?.persona ? `Meet ${name}` : 'Meet our AI avatar'}</strong><small>HPN’s AI Agent</small></span>
               </span>
               <span className={`badge ${ready ? `state-${voice.active ? conv.state : 'READY'}` : 'state-OFFLINE'}`} data-testid="state" data-state={conv.state} role="status">
                 <span className="badge__dot" />{status}
