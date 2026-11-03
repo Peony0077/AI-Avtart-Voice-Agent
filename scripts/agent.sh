@@ -12,17 +12,21 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-PROFILE=hpn PORT=8000
+PROFILE=hpn PORT=8000 DOMAIN=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --domain) DOMAIN="$2"; shift 2 ;;
     --profile) PROFILE="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
 done
-SITE=https://agent.h-townparty.com
-TOKENS=data/agent_tokens.env
 mkdir -p data logs
+# the name the droplet serves (deploy/hpn-edge/install.sh --apply <name>); remembered for the next start
+[ -n "$DOMAIN" ] && echo "$DOMAIN" > data/agent_domain
+DOMAIN="$(cat data/agent_domain 2>/dev/null || echo agent.h-townparty.com)"
+SITE="https://$DOMAIN"
+TOKENS=data/agent_tokens.env
 if [ ! -s "$TOKENS" ]; then
   ( umask 077
     printf 'AVATAR_ACCESS_TOKEN=%s\nAVATAR_CUSTOMER_TOKEN=%s\n' \

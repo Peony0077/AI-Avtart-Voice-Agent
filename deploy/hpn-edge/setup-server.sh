@@ -16,10 +16,12 @@
 #   bash setup-server.sh --check     # (default) what would be done; changes nothing
 #   bash setup-server.sh --apply
 #   bash setup-server.sh --off       # remove all four
+#   bash setup-server.sh --apply hpn-agent.lyly.earth   # another name (default agent.h-townparty.com)
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODE="${1:---check}"
-NAME=agent.h-townparty.com
+NAME="${2:-agent.h-townparty.com}"
+[[ "$NAME" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] || { echo "STOP: not a domain name: $NAME" >&2; exit 1; }
 USER_NAME=agent-tunnel
 NET=edge_hpn
 GW=172.31.0.1
@@ -146,7 +148,7 @@ if ! dns_ok; then
   exit 0
 fi
 [ -f "$SITE" ] && cp -p "$SITE" "$SITE.bak.$(date +%Y%m%d%H%M%S)"
-install -m 644 "$HERE/30-agent.caddy" "$SITE"
+sed "s/agent\.h-townparty\.com/$NAME/g" "$HERE/30-agent.caddy" > "$SITE.new" && chmod 644 "$SITE.new" && mv "$SITE.new" "$SITE"
 if ! caddy_validate; then
   rm -f "$SITE"; die "Caddy rejected 30-agent.caddy: removed, Caddy not reloaded (still running the old config)"
 fi

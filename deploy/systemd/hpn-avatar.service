@@ -1,0 +1,20 @@
+# HPN's AI avatar, started when this Linux (WSL) starts - also without anyone logged in (loginctl enable-linger).
+# Install (no sudo):
+#   cp deploy/systemd/hpn-avatar.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable hpn-avatar.service
+# Now: systemctl --user start hpn-avatar   Stop: systemctl --user stop hpn-avatar (= scripts/run.sh --stop)
+# Log: journalctl --user -u hpn-avatar, and logs/ in the project.
+[Unit]
+Description=HPN AI avatar (backend, avatar worker, tunnel)
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=%h/projects/-AI-Avtart-Voice-Agent
+ExecStart=%h/projects/-AI-Avtart-Voice-Agent/scripts/autostart.sh
+ExecStop=%h/projects/-AI-Avtart-Voice-Agent/scripts/run.sh --stop
+TimeoutStartSec=900
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target

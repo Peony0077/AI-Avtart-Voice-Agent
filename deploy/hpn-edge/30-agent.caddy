@@ -1,4 +1,4 @@
-# agent.h-townparty.com -- HPN's AI avatar (this project, -AI-Avtart-Voice-Agent; not the HPN website).
+# agent.h-townparty.com (or the name setup-server.sh is given) -- HPN's AI avatar (this project, -AI-Avtart-Voice-Agent; not the HPN website).
 #
 # Installed on HPN's droplet as /opt/edge/conf/sites-enabled/30-agent.caddy by
 # deploy/hpn-edge/setup-server.sh (which validates the whole Caddyfile before a graceful reload, and
