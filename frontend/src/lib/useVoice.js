@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AudioEngine } from '../audio/AudioEngine.js'
-import { betterThanBluetooth, setPreferredMic } from '../audio/microphones.js'
+import { betterThanBluetooth, isVirtualMic, otherMicrophones, preferredMic, setPreferredMic } from '../audio/microphones.js'
 import { pcm16ToFloat } from '../audio/AudioEngine.js'
 import { decodeOpus } from './opus.js'
 import { KIND_AUDIO, KIND_AUDIO_OPUS, packetKind, parsePacket } from './protocol.js'
+
+// below this RMS level for 5 s the microphone counts as sending no sound (armSilenceCheck)
+const SILENT_RMS = 0.0002
 
 // Voice: server audio → player (also for typed messages: the "speaker"), playback acks → server,
 // and optionally the microphone → server (binary PCM16 16 kHz).
@@ -23,6 +26,7 @@ export function useVoice(conv) {
   const [error, setError] = useState(null)
   const [starting, setStarting] = useState(false)   // waiting for the microphone (permission prompt)
   const [micHint, setMicHint] = useState(null)      // {label, deviceId}: a better microphone than a Bluetooth headset's
+  const [silentMic, setSilentMic] = useState(null)  // {label, others: [{deviceId, label}]}: the microphone sends no sound
   const silentTimerRef = useRef(null)
   const statsRef = useRef({ interrupts: [], blockedStale: 0, pushes: {}, gaps: {} })
   // A reply's first audio waits startHoldRef ms (set by AvatarStage from how late the lip-synced frames
@@ -219,6 +223,7 @@ export function useVoice(conv) {
 
   const start = useCallback(async () => {
     setError(null)
+    setSilentMic(null)
     setStarting(true)
     try {
       const e = engine()
@@ -237,16 +242,19 @@ export function useVoice(conv) {
       send({ type: 'greet' })     // she says hello (once a session, only before anything else was said)
       setSpeaker(true)
       setActive(true)
-      betterThanBluetooth(e.micInfo?.device).then(setMicHint)
-      // a muted or disabled microphone sends exact zeros: say so instead of "listening" to nothing
-      clearTimeout(silentTimerRef.current)
-      silentTimerRef.current = setTimeout(() => {
-        if (e.micOn && e.micPeak === 0) {
-          const err = { name: 'SilentMicrophone', message: 'only silence for 5 s' }
-          setError('Your microphone sends no sound: it may be muted (mute key or switch, or the system’s input device). Unmute it or pick another microphone, then speak again.')
-          report('voice_start', err)
+      // a virtual audio cable is no microphone: a real one instead, if this computer has one (and nobody
+      // chose the cable on purpose in this browser)
+      if (isVirtualMic(e.micInfo?.device) && !preferredMic()) {
+        const real = (await otherMicrophones(e.micInfo?.device))[0]
+        if (real) {
+          setPreferredMic(real.deviceId)
+          await e.restartMic((pcm) => conv.connRef.current?.sendBinary(pcm))
+          send({ type: 'voice', enabled: true, mic: e.micInfo })
+          report('voice_start', { name: 'VirtualMicrophone', message: `switched to ${e.micInfo?.device}` })
         }
-      }, 5000)
+      }
+      betterThanBluetooth(e.micInfo?.device).then(setMicHint)
+      armSilenceCheck(e)
     } catch (err) {
       setError(err.message ?? String(err))
       report('voice_start', err)
@@ -261,6 +269,7 @@ export function useVoice(conv) {
     await engineRef.current?.stopMic()
     setActive(false)
     setSpeechDetected(false)
+    setSilentMic(null)
     clearTimeout(silentTimerRef.current)
   }, [conv])
 
@@ -274,6 +283,9 @@ export function useVoice(conv) {
     try {
       await e.restartMic((pcm) => conv.connRef.current?.sendBinary(pcm))
       send({ type: 'voice', enabled: true, mic: e.micInfo })
+      setError(null)
+      setSilentMic(null)
+      armSilenceCheck(e)
       setMicHint(await betterThanBluetooth(e.micInfo?.device))
     } catch (err) {
       setError(err.message ?? String(err))
@@ -288,11 +300,29 @@ export function useVoice(conv) {
   const useMic = useCallback((deviceId) => {
     setPreferredMic(deviceId)
     setMicHint(null)
+    setSilentMic(null)
     restartMic()
   }, [restartMic])
 
+  // A muted, disabled or virtual microphone sends (next to) nothing: said, with the other microphones to
+  // pick from, instead of "listening" to nothing. Below ~-74 dBFS RMS: a virtual cable with nothing on it
+  // sent -69 dBFS peaks; a real microphone's own noise in a quiet room is well above.
+  function armSilenceCheck(e) {
+    clearTimeout(silentTimerRef.current)
+    silentTimerRef.current = setTimeout(async () => {
+      if (!e.micOn || e.micPeak >= SILENT_RMS) return
+      const label = e.micInfo?.device || 'Your microphone'
+      report('voice_start', { name: 'SilentMicrophone', message: `only silence for 5 s from ${label}` })
+      const others = (await otherMicrophones(e.micInfo?.device)).slice(0, 3)
+      setSilentMic({ label, others })
+      setError(others.length
+        ? `“${label}” sends no sound. Pick your microphone:`
+        : 'Your microphone sends no sound: it may be muted (mute key or switch, or the system’s input device). Unmute it or pick another microphone, then speak again.')
+    }, 5000)
+  }
+
   return { active, starting, speaker, muted, level, speechDetected, error, start, stop, ensureSpeaker, toggleMute,
-    engineRef, startHoldRef, micHint, useMic, restartMic, dismissMicHint: () => setMicHint(null) }
+    engineRef, startHoldRef, micHint, useMic, restartMic, dismissMicHint: () => setMicHint(null), silentMic }
 }
 
 // per-turn diagnostics (test hooks): the recent turns only, a long session added one entry per reply

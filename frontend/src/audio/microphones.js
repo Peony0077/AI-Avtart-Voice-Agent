@@ -36,6 +36,27 @@ export async function listMicrophones() {
   }
 }
 
+// Virtual audio devices that carry another program's sound, not a voice: a customer's Chrome took
+// "CABLE Output (VB-Audio Virtual Cable)" (Windows' default input) and sent only silence (3 Nov 2026).
+// Sound processors that pass the real microphone on (NVIDIA Broadcast, Krisp) are not listed.
+export function isVirtualMic(label = '') {
+  return /vb-audio|cable output|voicemeeter|virtual (audio )?cable|stereo mix|what u hear|wave out mix|steam streaming|obs virtual|loopback|blackhole|soundflower/i.test(label)
+}
+
+// A device's own name: Chrome calls Windows' default input "Default - <name>" (and "Communications - <name>").
+export function micName(label = '') {
+  return label.replace(/^(default|communications)\s*-\s*/i, '').trim()
+}
+
+// Real microphones other than the one in use (``currentLabel``), best first: not virtual, not a Bluetooth
+// headset's.
+export async function otherMicrophones(currentLabel = '') {
+  const current = micName(currentLabel)
+  const mics = (await listMicrophones()).filter((m) => m.deviceId !== 'default' && m.label
+    && micName(m.label) !== current && !isVirtualMic(m.label))
+  return mics.sort((a, b) => Number(isBluetoothMic(a.label)) - Number(isBluetoothMic(b.label)))
+}
+
 // A better choice than a Bluetooth headset's microphone, if this device has one (built-in, USB, wired).
 export async function betterThanBluetooth(currentLabel) {
   if (!isBluetoothMic(currentLabel)) return null

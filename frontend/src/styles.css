@@ -643,3 +643,6 @@ button.jump-latest { left: auto; right: var(--chat-inset); transform: none; box-
   button.jump-latest { display: none; }
   button.topics-toggle { font-size: 12px; }
 }
+/* the microphone that sends no sound: the others, one tap each */
+.stage-error button.mic-choice { display: block; width: 100%; margin-top: 6px; padding: 6px 10px; font-size: 12px;
+  text-align: left; border-radius: 8px; }

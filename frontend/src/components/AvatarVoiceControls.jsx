@@ -12,7 +12,15 @@ export default function AvatarVoiceControls({ conv, voice }) {
           <button type="button" className="secondary" onClick={voice.dismissMicHint}>Keep</button>
         </p>
       )}
-      {voice.error && <p className="stage-error" role="alert" data-testid="stage-error">{voice.error}</p>}
+      {voice.error && (
+        <p className="stage-error" role="alert" data-testid="stage-error">
+          {voice.error}
+          {voice.silentMic?.others?.map((m) => (
+            <button key={m.deviceId} type="button" className="mic-choice" data-testid="mic-choice"
+              onClick={() => voice.useMic(m.deviceId)}>Use {m.label}</button>
+          ))}
+        </p>
+      )}
       {voice.active ? (
         <span className={`listening ${voice.speechDetected ? 'hot' : ''}`} data-testid="listening">
           <span className="dot" />

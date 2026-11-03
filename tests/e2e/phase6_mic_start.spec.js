@@ -22,7 +22,7 @@ async function open(page) {
 
 test('the badge says Listening only with the microphone on; one tap on the avatar starts it', async ({ page }) => {
   const messages = await open(page)
-  await expect(page.getByTestId('state')).toHaveText('Ready · mic off')
+  await expect(page.getByTestId('state')).toHaveText('Ready to chat')
   await expect(page.getByTestId('talk')).toBeVisible()
   await page.getByTestId('talk').click()
   await waitFor(messages, (m) => m.type === 'voice' && m.enabled, 15_000)
@@ -44,7 +44,7 @@ test('a blocked microphone is explained on the avatar and reported to the server
   await page.getByTestId('talk').click()
   await expect(page.getByTestId('stage-error')).toContainText('microphone is blocked')
   await expect(page.getByTestId('talk')).toHaveText('Try again')
-  await expect(page.getByTestId('state')).toHaveText('Ready · mic off')
+  await expect(page.getByTestId('state')).toHaveText('Ready to chat')
   if (LOCAL) await expect.poll(() => logSince(size), { timeout: 10_000 }).toContain('browser problem (voice_start): NotAllowedError')
 })
 
@@ -68,4 +68,64 @@ test('a muted microphone (only silence) is pointed out instead of listening to n
   await expect(page.getByTestId('listening')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByTestId('stage-error')).toContainText('sends no sound', { timeout: 15_000 })
   if (LOCAL) await expect.poll(() => logSince(size), { timeout: 10_000 }).toContain('SilentMicrophone')
+})
+
+// Microphones a page can be given (3 Nov 2026: a customer's Chrome took "CABLE Output (VB-Audio Virtual
+// Cable)", Windows' default input, and sent only silence while the real microphone worked).
+function fakeMicrophones(page, devices, loud) {
+  return page.addInitScript(({ devices, loud }) => {
+    navigator.mediaDevices.enumerateDevices = async () =>
+      devices.map((d) => ({ kind: 'audioinput', groupId: 'g', toJSON() { return this }, ...d }))
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      const wanted = constraints?.audio?.deviceId?.ideal
+      const device = devices.find((d) => d.deviceId === wanted) ?? devices[0]
+      const ctx = new AudioContext()
+      const out = ctx.createMediaStreamDestination()
+      if (loud.includes(device.deviceId)) {                    // a real microphone: a voice-loud tone
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        gain.gain.value = 0.2
+        osc.connect(gain).connect(out)
+        osc.start()
+      }
+      const track = out.stream.getAudioTracks()[0]
+      Object.defineProperty(track, 'label', { value: device.label })
+      window.__micUsed = device.label
+      return out.stream
+    }
+  }, { devices, loud })
+}
+
+test('a virtual audio cable is not taken for the microphone: the real one is used at once', async ({ page }) => {
+  await fakeMicrophones(page, [
+    { deviceId: 'default', label: 'Default - CABLE Output (VB-Audio Virtual Cable)' },
+    { deviceId: 'cable', label: 'CABLE Output (VB-Audio Virtual Cable)' },
+    { deviceId: 'realmic', label: 'Microphone (Realtek(R) Audio)' },
+  ], ['realmic'])
+  const size = logSize()
+  await open(page)
+  await page.getByTestId('talk').click()
+  await expect(page.getByTestId('listening')).toBeVisible({ timeout: 15_000 })
+  await expect.poll(() => page.evaluate(() => window.__micUsed), { timeout: 10_000 }).toBe('Microphone (Realtek(R) Audio)')
+  await page.waitForTimeout(6500)                                // past the 5 s silence check
+  await expect(page.getByTestId('stage-error')).toHaveCount(0)
+  if (LOCAL) await expect.poll(() => logSince(size), { timeout: 10_000 }).toContain('VirtualMicrophone')
+})
+
+test('a microphone that sends no sound offers the others, and one tap switches', async ({ page }) => {
+  await fakeMicrophones(page, [
+    { deviceId: 'default', label: 'Default - Headset Microphone (Muted Device)' },
+    { deviceId: 'muted', label: 'Headset Microphone (Muted Device)' },
+    { deviceId: 'usb', label: 'Microphone (USB Audio)' },
+  ], ['usb'])
+  await open(page)
+  await page.getByTestId('talk').click()
+  await expect(page.getByTestId('stage-error')).toContainText('sends no sound', { timeout: 15_000 })
+  const choice = page.getByTestId('mic-choice')
+  await expect(choice).toHaveText('Use Microphone (USB Audio)')
+  await choice.click()
+  await expect.poll(() => page.evaluate(() => window.__micUsed), { timeout: 10_000 }).toBe('Microphone (USB Audio)')
+  await expect(page.getByTestId('stage-error')).toHaveCount(0)
+  await page.waitForTimeout(6500)                                // the new microphone passes the check
+  await expect(page.getByTestId('stage-error')).toHaveCount(0)
 })
