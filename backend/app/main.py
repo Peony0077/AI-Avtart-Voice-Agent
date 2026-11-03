@@ -154,6 +154,20 @@ def _read_metrics(path, keep: int = 2000) -> list[dict]:
     return rows
 
 
+class _Frontend(StaticFiles):
+    """The built page. The page itself is checked with the server on every load ("no-cache"): kept by
+    the browser without it, a customer's Chrome ran the code from before a fix (3 Nov 2026). The scripts
+    and styles in assets/ have their content's hash in the name, so they are kept for good."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if path.startswith("assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 _dist = REPO_ROOT / "frontend" / "dist"
 if _dist.exists():
-    app.mount("/", StaticFiles(directory=_dist, html=True), name="frontend")
+    app.mount("/", _Frontend(directory=_dist, html=True), name="frontend")
