@@ -11,6 +11,21 @@ export function pcm16ToFloat(pcm16Buffer) {
   return f32
 }
 
+
+// The microphone chosen in this browser, exactly that one: asked for as a preference ("ideal"), Chrome gave
+// a customer Windows' default input ("CABLE Output (VB-Audio Virtual Cable)", silence) even after they
+// picked their Yeti microphone (3 Nov 2026). Gone (unplugged): the default one.
+async function openMicrophone(deviceId) {
+  const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
+  if (!deviceId) return navigator.mediaDevices.getUserMedia({ audio })
+  try {
+    return await navigator.mediaDevices.getUserMedia({ audio: { ...audio, deviceId: { exact: deviceId } } })
+  } catch (err) {
+    if (!['OverconstrainedError', 'NotFoundError', 'NotReadableError', 'AbortError'].includes(err?.name)) throw err
+    return navigator.mediaDevices.getUserMedia({ audio })
+  }
+}
+
 export class AudioEngine extends EventTarget {
   constructor() {
     super()
@@ -94,11 +109,7 @@ export class AudioEngine extends EventTarget {
     ctx.resume().catch(() => {})                    // inside the click
     try {
       try {
-        const deviceId = preferredMic()
-        this.stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1,
-            ...(deviceId ? { deviceId: { ideal: deviceId } } : {}) },     // the one chosen in this browser, if still there
-        })
+        this.stream = await openMicrophone(preferredMic())
       } catch (err) {
         throw new MicError(err?.name || 'Error', err?.message)
       }
@@ -120,7 +131,7 @@ export class AudioEngine extends EventTarget {
       // reported to the server log: what the browser really does with the microphone
       this.micInfo = { contextRate: ctx.sampleRate, deviceRate: s.sampleRate ?? null, channels: s.channelCount ?? null,
         echoCancellation: s.echoCancellation ?? null, noiseSuppression: s.noiseSuppression ?? null,
-        autoGainControl: s.autoGainControl ?? null, device: track?.label ?? '', playbackRate: this.playCtx?.sampleRate ?? null,
+        autoGainControl: s.autoGainControl ?? null, device: track?.label ?? '', deviceId: s.deviceId ?? null, playbackRate: this.playCtx?.sampleRate ?? null,
         userAgent: navigator.userAgent }
       this.micPeak = 0
       capture.port.onmessage = (e) => {

@@ -77,8 +77,10 @@ function fakeMicrophones(page, devices, loud) {
     navigator.mediaDevices.enumerateDevices = async () =>
       devices.map((d) => ({ kind: 'audioinput', groupId: 'g', toJSON() { return this }, ...d }))
     navigator.mediaDevices.getUserMedia = async (constraints) => {
-      const wanted = constraints?.audio?.deviceId?.ideal
-      const device = devices.find((d) => d.deviceId === wanted) ?? devices[0]
+      // like the customer's Chrome: only an exact device is honoured ("ideal" gave the default input)
+      const wanted = constraints?.audio?.deviceId?.exact
+      const device = wanted ? devices.find((d) => d.deviceId === wanted) : devices[0]
+      if (!device) throw new DOMException('no such microphone', 'OverconstrainedError')
       const ctx = new AudioContext()
       const out = ctx.createMediaStreamDestination()
       if (loud.includes(device.deviceId)) {                    // a real microphone: a voice-loud tone
@@ -90,6 +92,7 @@ function fakeMicrophones(page, devices, loud) {
       }
       const track = out.stream.getAudioTracks()[0]
       Object.defineProperty(track, 'label', { value: device.label })
+      track.getSettings = () => ({ deviceId: device.deviceId, sampleRate: 48000, channelCount: 1 })
       window.__micUsed = device.label
       return out.stream
     }
@@ -127,5 +130,22 @@ test('a microphone that sends no sound offers the others, and one tap switches',
   await expect.poll(() => page.evaluate(() => window.__micUsed), { timeout: 10_000 }).toBe('Microphone (USB Audio)')
   await expect(page.getByTestId('stage-error')).toHaveCount(0)
   await page.waitForTimeout(6500)                                // the new microphone passes the check
+  await expect(page.getByTestId('stage-error')).toHaveCount(0)
+})
+
+test('a microphone chosen earlier but gone now: the default one, and a virtual cable is still skipped', async ({ page }) => {
+  await page.addInitScript(() => { try { localStorage.setItem('avatarMic', 'unplugged-usb-mic') } catch {} })
+  await fakeMicrophones(page, [
+    { deviceId: 'default', label: 'Default - CABLE Output (VB-Audio Virtual Cable)' },
+    { deviceId: 'cable', label: 'CABLE Output (VB-Audio Virtual Cable)' },
+    { deviceId: 'yeti', label: 'Microphone (Yeti Stereo Microphone) (046d:0ab7)' },
+    { deviceId: 'buds', label: 'Headset (2- OpenBuds P7) (Bluetooth)' },
+  ], ['yeti', 'buds'])
+  await open(page)
+  await page.getByTestId('talk').click()
+  await expect(page.getByTestId('listening')).toBeVisible({ timeout: 15_000 })
+  await expect.poll(() => page.evaluate(() => window.__micUsed), { timeout: 10_000 })
+    .toBe('Microphone (Yeti Stereo Microphone) (046d:0ab7)')
+  await page.waitForTimeout(6500)
   await expect(page.getByTestId('stage-error')).toHaveCount(0)
 })

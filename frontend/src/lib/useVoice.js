@@ -242,9 +242,9 @@ export function useVoice(conv) {
       send({ type: 'greet' })     // she says hello (once a session, only before anything else was said)
       setSpeaker(true)
       setActive(true)
-      // a virtual audio cable is no microphone: a real one instead, if this computer has one (and nobody
-      // chose the cable on purpose in this browser)
-      if (isVirtualMic(e.micInfo?.device) && !preferredMic()) {
+      // a virtual audio cable is no microphone: a real one instead, if this computer has one (unless the
+      // cable itself was chosen on purpose in this browser)
+      if (isVirtualMic(e.micInfo?.device) && !(preferredMic() && preferredMic() === e.micInfo?.deviceId)) {
         const real = (await otherMicrophones(e.micInfo?.device))[0]
         if (real) {
           setPreferredMic(real.deviceId)
